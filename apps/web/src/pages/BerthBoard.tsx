@@ -93,7 +93,7 @@ export default function BerthBoard() {
                         <Box sx={{ cursor: 'pointer' }} onClick={() => navigate(`/port-calls/${b.occupiedBy!.callId}`)}>
                           <Typography noWrap sx={{ fontWeight: 700, mt: 1 }}>{b.occupiedBy.vessel}</Typography>
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{b.occupiedBy.vcn} · berthed {fmtDT(b.occupiedBy.atb)}</Typography>
-                          <Typography variant="caption" sx={{ color: 'primary.main', fontWeight: 600 }}>ETD {fromNow(b.occupiedBy.etd)}</Typography>
+                          <Typography variant="caption" sx={{ color: 'primary.dark', fontWeight: 600 }}>ETD {fromNow(b.occupiedBy.etd)}</Typography>
                         </Box>
                       ) : <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>{b.status === 'MAINTENANCE' ? b.name : `${b.name} — available`}</Typography>}
                       {canManage && (
@@ -123,7 +123,7 @@ export default function BerthBoard() {
                     <TableCell sx={{ fontFamily: MONO, fontWeight: 600 }}>{b.code}</TableCell><TableCell>{b.terminal}</TableCell><TableCell>{b.berthType}</TableCell>
                     <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{b.loaMax ?? '—'} m</TableCell><TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{b.draftMax ?? '—'} m</TableCell>
                     <TableCell><OccChip b={b} /></TableCell>
-                    <TableCell>{b.occupiedBy ? <Typography sx={{ fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'primary.main' }} onClick={() => navigate(`/port-calls/${b.occupiedBy!.callId}`)}>{b.occupiedBy.vessel}</Typography> : '—'}</TableCell>
+                    <TableCell>{b.occupiedBy ? <Typography sx={{ fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'primary.dark' }} onClick={() => navigate(`/port-calls/${b.occupiedBy!.callId}`)}>{b.occupiedBy.vessel}</Typography> : '—'}</TableCell>
                     <TableCell>{b.occupiedBy ? fmtDT(b.occupiedBy.etd) : '—'}</TableCell>
                     <TableCell><StatusChip value={b.status} map={BERTH_STATUS_META} /></TableCell>
                     {canManage && (

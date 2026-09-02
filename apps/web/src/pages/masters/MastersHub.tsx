@@ -12,9 +12,9 @@ import { MONO } from '../../theme';
 
 /* Data Studio home — every configuration master as an icon card, grouped, with live record counts. */
 const DEDICATED = [
-  { key: '_berths', name: 'Berths & Terminals', icon: AnchorRoundedIcon, color: '#0797A5', desc: 'The berth master behind the board and the twin', group: 'Marine', to: '/masters/berths' },
+  { key: '_berths', name: 'Berths & Terminals', icon: AnchorRoundedIcon, color: '#06737E', desc: 'The berth master behind the board and the twin', group: 'Marine', to: '/masters/berths' },
   { key: '_tariffs', name: 'Tariff Items', icon: PriceChangeRoundedIcon, color: '#BD3861', desc: 'Rate card behind invoicing', group: 'Commercial', to: '/masters/tariffs' },
-  { key: '_checklists', name: 'Checklist Templates', icon: ChecklistRoundedIcon, color: '#9C6412', desc: 'Built in the Survey & Audit Cell builder', group: 'Compliance', to: '/checklist-builder' },
+  { key: '_checklists', name: 'Checklist Templates', icon: ChecklistRoundedIcon, color: '#8A5810', desc: 'Built in the Survey & Audit Cell builder', group: 'Compliance', to: '/checklist-builder' },
 ];
 export default function MastersHub() {
   const navigate = useNavigate();

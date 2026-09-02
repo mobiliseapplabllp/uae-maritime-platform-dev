@@ -47,7 +47,7 @@ export interface ModuleDef { key: string; name: string; short: string; color: st
 export const MODULES: ModuleDef[] = [
   { key: 'home', name: 'Command Centre', short: 'Home', color: '#0B74B0', desc: 'Port-wide KPIs, throughput, berth occupancy and live activity', icon: DashboardRoundedIcon, perm: 'dashboard.view', home: '/',
     nav: [{ header: 'Overview', items: [{ to: '/', label: 'Command Centre', icon: DashboardRoundedIcon, perm: 'dashboard.view', end: true }] }] },
-  { key: 'ops', name: 'Harbour Operations', short: 'Harbour', color: '#0797A5', desc: 'Vessel calls, quay view, day schedule, berthing and marine craft', icon: ViewTimelineRoundedIcon, perm: 'portcalls.view', home: '/port-calls',
+  { key: 'ops', name: 'Harbour Operations', short: 'Harbour', color: '#06737E', desc: 'Vessel calls, quay view, day schedule, berthing and marine craft', icon: ViewTimelineRoundedIcon, perm: 'portcalls.view', home: '/port-calls',
     nav: [{ header: 'Marine operations', items: [
       { to: '/port-calls', label: 'Vessel Calls', icon: ViewTimelineRoundedIcon, perm: 'portcalls.view' },
       { to: '/berth-board', label: 'Berth Board', icon: AnchorRoundedIcon, perm: 'portcalls.view' },
@@ -79,7 +79,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/incidents/risk-matrix', label: 'Risk Matrix', icon: GridViewRoundedIcon, perm: 'incidents.view' },
       { to: '/incidents', label: 'Incident Register', icon: CrisisAlertRoundedIcon, perm: 'incidents.view', end: true },
     ] }] },
-  { key: 'inspect', name: 'Survey & Audit Cell', short: 'Surveys', color: '#9C6412', desc: 'PSC, FSI, ISM, ISPS and MLC surveys with findings and targeting', icon: FactCheckRoundedIcon, perm: 'inspections.view', home: '/inspections',
+  { key: 'inspect', name: 'Survey & Audit Cell', short: 'Surveys', color: '#8A5810', desc: 'PSC, FSI, ISM, ISPS and MLC surveys with findings and targeting', icon: FactCheckRoundedIcon, perm: 'inspections.view', home: '/inspections',
     nav: [{ header: 'Surveys', items: [
       { to: '/inspections/overview', label: 'Audit Dashboard', icon: SpaceDashboardRoundedIcon, perm: 'inspections.view' },
       { to: '/inspections', label: 'Survey Register', icon: FactCheckRoundedIcon, perm: 'inspections.view', end: true },

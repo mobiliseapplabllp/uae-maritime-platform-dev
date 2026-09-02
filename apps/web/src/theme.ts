@@ -12,7 +12,7 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
     palette: {
       mode,
       // Platform accent: #0B74B0 blue -> #75479C purple -> #BD3861 magenta
-      primary: { main: dark ? '#57B0E3' : '#0B74B0', contrastText: dark ? '#06181F' : '#FFFFFF' },
+      primary: { main: dark ? '#57B0E3' : '#0B74B0', dark: dark ? '#7CC4EC' : '#085A8A', contrastText: dark ? '#06181F' : '#FFFFFF' },
       secondary: { main: dark ? '#A87FD1' : '#75479C' },
       success: { main: dark ? '#5FC191' : '#2C6E52' },
       warning: { main: dark ? '#E0A64E' : '#8A5810' },
