@@ -154,10 +154,10 @@ export default function AppShell() {
         <Box sx={{ width: 30, height: 30, borderRadius: '8px', bgcolor: activeModule.color, display: 'grid', placeItems: 'center', flexShrink: 0 }}><ActiveIcon sx={{ fontSize: 17, color: '#fff' }} /></Box>
         <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{activeModule.name}</Typography><Typography noWrap sx={{ fontSize: 10, color: '#7C9BB5' }}>{t('app.activeModule')}</Typography></Box>
       </Box>
-      <List sx={{ flex: 1, overflowY: 'auto', px: 1, py: 0.5 }} dense>
+      <List component="div" sx={{ flex: 1, overflowY: 'auto', px: 1, py: 0.5 }} dense>
         {activeModule.nav.map((group) => (
           <Box key={group.header}>
-            {group.items.some((i) => hasPerm(user, i.perm)) && <ListSubheader disableSticky sx={{ bgcolor: 'transparent', color: '#5B7C99', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', lineHeight: '30px' }}>{group.header}</ListSubheader>}
+            {group.items.some((i) => hasPerm(user, i.perm)) && <ListSubheader component="div" disableSticky sx={{ bgcolor: 'transparent', color: '#7C9BB5', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', lineHeight: '30px' }}>{group.header}</ListSubheader>}
             {group.items.filter((i) => hasPerm(user, i.perm)).map((item) => { const ItemIcon = item.icon; return (
               <ListItemButton key={item.to} component={NavLink} to={item.to} end={item.end} sx={navSx}>
                 <ListItemIcon sx={{ '& svg': { fontSize: 19 } }}><ItemIcon /></ListItemIcon>

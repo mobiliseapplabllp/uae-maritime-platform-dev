@@ -53,11 +53,11 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
         {!q.trim() && (
           <>
             {recents.length > 0 && (
-              <List dense subheader={<Sub>Recent</Sub>}>
+              <List component="div" dense subheader={<Sub>Recent</Sub>}>
                 {recents.map((r, i) => <ListItemButton key={i} onClick={() => go(r)}><ListItemText primary={r.label} secondary={r.sub} primaryTypographyProps={{ fontSize: 13.5 }} secondaryTypographyProps={{ fontSize: 11.5 }} /></ListItemButton>)}
               </List>
             )}
-            <List dense subheader={<Sub>Modules</Sub>}>
+            <List component="div" dense subheader={<Sub>Modules</Sub>}>
               {navCommands.map((c) => { const Icon = c.icon; return (
                 <ListItemButton key={c.to} onClick={() => go(c)}>
                   <Box sx={{ width: 26, height: 26, borderRadius: '7px', bgcolor: c.color, display: 'grid', placeItems: 'center', mr: 1.25, flexShrink: 0 }}><Icon sx={{ fontSize: 15, color: '#fff' }} /></Box>
@@ -70,7 +70,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
         {q.trim() && (
           <>
             {filteredNav.length > 0 && (
-              <List dense subheader={<Sub>Go to</Sub>}>
+              <List component="div" dense subheader={<Sub>Go to</Sub>}>
                 {filteredNav.map((c) => <ListItemButton key={c.to} onClick={() => go(c)}><ArrowForwardRoundedIcon sx={{ fontSize: 16, mr: 1.25, color: 'text.secondary' }} /><ListItemText primary={c.label} primaryTypographyProps={{ fontSize: 13.5 }} /></ListItemButton>)}
               </List>
             )}
@@ -79,7 +79,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
             {!busy && results && results.map((g) => (
               <Box key={g.type}>
                 <Divider />
-                <List dense subheader={<Sub>{g.label}</Sub>}>
+                <List component="div" dense subheader={<Sub>{g.label}</Sub>}>
                   {g.items.map((it) => <ListItemButton key={it.id} onClick={() => go({ label: it.label, sub: g.label, to: it.to })}><ListItemText primary={it.label} secondary={it.sub} primaryTypographyProps={{ fontSize: 13.5 }} secondaryTypographyProps={{ fontSize: 11.5 }} /></ListItemButton>)}
                 </List>
               </Box>

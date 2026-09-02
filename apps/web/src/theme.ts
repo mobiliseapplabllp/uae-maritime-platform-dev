@@ -15,7 +15,7 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
       primary: { main: dark ? '#57B0E3' : '#0B74B0', contrastText: dark ? '#06181F' : '#FFFFFF' },
       secondary: { main: dark ? '#A87FD1' : '#75479C' },
       success: { main: dark ? '#5FC191' : '#2C6E52' },
-      warning: { main: dark ? '#E0A64E' : '#9C6412' },
+      warning: { main: dark ? '#E0A64E' : '#8A5810' },
       error: { main: dark ? '#E4736A' : '#A33229' },
       info: { main: dark ? '#7FA6E0' : '#3B6FB6' },
       background: { default: dark ? '#071620' : '#F1F4F3', paper },
@@ -28,7 +28,7 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
       h5: { ...heading, fontSize: '1.35rem' }, h6: { ...heading, fontSize: '1.05rem' },
       subtitle2: { fontWeight: 600 },
       button: { textTransform: 'none', fontWeight: 600 },
-      caption: { color: dark ? '#89A5B0' : '#6B838E' },
+      caption: { color: dark ? '#89A5B0' : '#5A7280' },
     },
     shape: { borderRadius: 10 },
     components: {
