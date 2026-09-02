@@ -28,7 +28,7 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
       h5: { ...heading, fontSize: '1.35rem' }, h6: { ...heading, fontSize: '1.05rem' },
       subtitle2: { fontWeight: 600 },
       button: { textTransform: 'none', fontWeight: 600 },
-      caption: { color: dark ? '#89A5B0' : '#5A7280' },
+      caption: { color: dark ? '#89A5B0' : '#4A6070' },
     },
     shape: { borderRadius: 10 },
     components: {
