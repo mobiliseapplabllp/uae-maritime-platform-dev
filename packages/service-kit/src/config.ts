@@ -26,11 +26,27 @@ export const baseEnvSchema = z.object({
 });
 export type BaseEnv = z.infer<typeof baseEnvSchema>;
 
+export const DEV_DEFAULTS = { JWT_SECRET: 'development-only-secret-change-me', SERVICE_TOKEN: 'development-service-token' } as const;
+
+/** Production refuses to start on development defaults: no dev JWT secret, no dev service token, no local password auth. */
+export function assertProductionSafe(env: Record<string, unknown>): string[] {
+  if (env.NODE_ENV !== 'production') return [];
+  const problems: string[] = [];
+  if (!env.JWT_SECRET || env.JWT_SECRET === DEV_DEFAULTS.JWT_SECRET || String(env.JWT_SECRET).length < 32) problems.push('JWT_SECRET must be set to a strong value (32+ characters)');
+  if (!env.SERVICE_TOKEN || env.SERVICE_TOKEN === DEV_DEFAULTS.SERVICE_TOKEN || String(env.SERVICE_TOKEN).length < 32) problems.push('SERVICE_TOKEN must be set to a strong value (32+ characters)');
+  if (env.AUTH_MODE !== 'keycloak') problems.push('AUTH_MODE must be keycloak in production');
+  if (env.AUTH_MODE === 'keycloak' && !env.KEYCLOAK_ISSUER) problems.push('KEYCLOAK_ISSUER is required in production');
+  if (typeof env.DATABASE_URL === 'string' && /maritime:maritime@/.test(env.DATABASE_URL)) problems.push('DATABASE_URL still uses the development credentials');
+  return problems;
+}
+
 export function loadEnv<S extends z.ZodTypeAny>(schema: S, source: NodeJS.ProcessEnv = process.env): z.infer<S> {
   const parsed = schema.safeParse(source);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
     throw new Error(`Invalid environment: ${issues}`);
   }
+  const problems = assertProductionSafe(parsed.data as Record<string, unknown>);
+  if (problems.length) throw new Error(`Unsafe production configuration: ${problems.join('; ')}`);
   return parsed.data;
 }

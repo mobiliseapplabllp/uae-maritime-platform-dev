@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { assertProductionSafe, loadEnv, baseEnvSchema } from '../src/config';
 import { signHS256, verifyJwt, decodeJwt } from '../src/auth/jwt';
 import { parsePage } from '../src/http/pagination';
 import { MemoryBus } from '../src/events/bus';
@@ -52,5 +53,16 @@ describe('audit and config', () => {
     const env = loadEnv(baseEnvSchema, { PORT: '5555' } as never);
     expect(env.PORT).toBe(5555); expect(env.AUTH_MODE).toBe('local');
     expect(() => loadEnv(baseEnvSchema, { PORT: 'x' } as never)).toThrow('Invalid environment');
+  });
+});
+
+describe('production configuration guard', () => {
+  it('refuses development defaults in production and accepts a hardened configuration', () => {
+    const base = { NODE_ENV: 'production', AUTH_MODE: 'keycloak', KEYCLOAK_ISSUER: 'https://sso.example/realms/maritime', DATABASE_URL: 'postgres://svc:s3cret@db/maritime_x' };
+    expect(assertProductionSafe({ ...base, JWT_SECRET: 'development-only-secret-change-me', SERVICE_TOKEN: 'development-service-token' })).toHaveLength(2);
+    expect(assertProductionSafe({ ...base, JWT_SECRET: 'x'.repeat(40), SERVICE_TOKEN: 'y'.repeat(40) })).toEqual([]);
+    expect(assertProductionSafe({ ...base, AUTH_MODE: 'local', JWT_SECRET: 'x'.repeat(40), SERVICE_TOKEN: 'y'.repeat(40) })).toContain('AUTH_MODE must be keycloak in production');
+    expect(() => loadEnv(baseEnvSchema, { NODE_ENV: 'production' } as never)).toThrow(/Unsafe production configuration/);
+    expect(assertProductionSafe({ NODE_ENV: 'development' })).toEqual([]);
   });
 });
