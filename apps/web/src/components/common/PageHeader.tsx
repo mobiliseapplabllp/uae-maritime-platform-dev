@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { SvgIconComponent } from '@mui/icons-material';
 
 export interface Crumb { label: string; to?: string }
-interface Props { title: string; sub?: React.ReactNode; crumbs?: Crumb[]; actions?: React.ReactNode; icon?: SvgIconComponent; iconColor?: string }
+interface Props { title: React.ReactNode; sub?: React.ReactNode; crumbs?: Crumb[]; actions?: React.ReactNode; icon?: SvgIconComponent; iconColor?: string }
 export default function PageHeader({ title, sub, crumbs = [], actions, icon: Icon, iconColor = '#0B74B0' }: Props) {
   return (
     <Box sx={{ mb: 2.5, display: 'flex', flexWrap: 'wrap', gap: 1.5, alignItems: 'flex-end', justifyContent: 'space-between' }}>

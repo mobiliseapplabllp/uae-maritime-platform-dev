@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Grid, Card, Box, Typography, List, ListItemButton, ListItemText, Button, Checkbox, Table, TableHead, TableRow, TableCell, TableBody, Chip, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Skeleton, Divider, IconButton } from '@mui/material';
+import { Grid, Card, Box, Typography, List, ListItem, ListItemButton, ListItemText, Button, Checkbox, Table, TableHead, TableRow, TableCell, TableBody, Chip, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Skeleton, Divider, IconButton } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
@@ -51,11 +51,12 @@ export default function RolesPage() {
           <Card>
             <List dense disablePadding aria-label="Roles">
               {roles.map((r) => (
-                <ListItemButton key={r.id} selected={selected?.id === r.id} onClick={() => { setSelected(r); setPerms(r.permissions); setDirty(false); }}>
-                  <ListItemText primary={<Stack direction="row" spacing={1} alignItems="center"><span style={{ fontWeight: 600 }}>{r.name}</span>{r.system && <Chip size="small" variant="outlined" label="system" sx={{ height: 18, fontSize: 10 }} />}</Stack>}
-                    secondary={`${r.usersCount} user(s) · ${r.permissions.includes('*') ? 'all permissions' : `${r.permissions.length} permissions`}`} />
-                  {canManage && !r.system && <IconButton size="small" color="error" aria-label={`Delete ${r.name}`} onClick={(e) => { e.stopPropagation(); setDeleting(r); }}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton>}
-                </ListItemButton>
+                <ListItem key={r.id} disablePadding secondaryAction={canManage && !r.system ? <IconButton size="small" color="error" edge="end" aria-label={`Delete ${r.name}`} onClick={() => setDeleting(r)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton> : undefined}>
+                  <ListItemButton selected={selected?.id === r.id} onClick={() => { setSelected(r); setPerms(r.permissions); setDirty(false); }}>
+                    <ListItemText primary={<Stack direction="row" spacing={1} alignItems="center"><span style={{ fontWeight: 600 }}>{r.name}</span>{r.system && <Chip size="small" variant="outlined" label="system" sx={{ height: 18, fontSize: 10 }} />}</Stack>}
+                      secondary={`${r.usersCount} user(s) · ${r.permissions.includes('*') ? 'all permissions' : `${r.permissions.length} permissions`}`} />
+                  </ListItemButton>
+                </ListItem>
               ))}
             </List>
           </Card>

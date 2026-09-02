@@ -37,7 +37,7 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
       MuiTableCell: {
         styleOverrides: {
           root: { borderColor: dark ? '#152F3D' : '#E4EAE9' },
-          head: { fontFamily: '"IBM Plex Mono",monospace', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600, color: dark ? '#89A5B0' : '#5A7280', whiteSpace: 'nowrap', backgroundColor: dark ? '#102D3B' : '#EEF2F1' },
+          head: { fontFamily: '"IBM Plex Mono",monospace', fontSize: 11, letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 600, color: dark ? '#89A5B0' : '#4A6070', whiteSpace: 'nowrap', backgroundColor: dark ? '#102D3B' : '#EEF2F1' },
         },
       },
       MuiChip: { styleOverrides: { root: { fontWeight: 600 } } },
