@@ -207,6 +207,20 @@ describe('cross-cutting behaviour', () => {
   });
 });
 
+describe('openapi aggregation', () => {
+  it('merges upstream documents under the public prefixes and drops internal-only paths', async () => {
+    const { publicPath, mergeOpenApi, renderDocsPage } = await import('../src/openapi');
+    const routes = [{ prefix: '/api/lookups', service: 'mdm', url: 'http://x', rewritePrefix: '/lookups', blocked: false, bodyLimit: 1 }, { prefix: '/api/internal', service: 'mdm', url: 'http://x', rewritePrefix: '/internal', blocked: true, bodyLimit: 1 }] as never;
+    expect(publicPath('mdm', '/lookups/categories', routes)).toBe('/api/lookups/categories');
+    expect(publicPath('mdm', '/internal/settings/x', routes)).toBeNull();
+    expect(publicPath('mdm', '/health', routes)).toBeNull();
+    const doc = await mergeOpenApi([], routes, { timeoutMs: 100, ttlMs: 0 });
+    expect(doc.openapi).toBe('3.0.3'); expect(doc.servers[0].url).toBe('/api');
+    const html = renderDocsPage({ ...doc, paths: { '/lookups': { get: { summary: 'List <b>lookups</b>', tags: ['mdm'] } } } });
+    expect(html).toContain('/api/lookups'); expect(html).toContain('&lt;b&gt;'); expect(html).not.toContain('<b>lookups');
+  });
+});
+
 describe('renderers share the route table', () => {
   const render = (script: string, ...args: string[]) =>
     execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', join(REPO_ROOT, 'tools', 'gateway', script), ...args], { cwd: REPO_ROOT, encoding: 'utf8', env: { ...process.env, MDM_URL: 'http://mdm:5402' } });

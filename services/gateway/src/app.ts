@@ -8,6 +8,7 @@ import httpProxy from '@fastify/http-proxy';
 import rateLimit from '@fastify/rate-limit';
 import pino, { type Logger } from 'pino';
 import { aggregateHealth } from './health';
+import { mergeOpenApi, renderDocsPage } from './openapi';
 import { type Env, parseTrustProxy } from './env';
 import { DEFAULT_BODY_LIMIT, type ResolvedRoute, resolveRoutes, resolveServices } from './routes';
 
@@ -132,6 +133,13 @@ export async function buildGateway(env: Env, opts: GatewayOptions = {}): Promise
   const started = Date.now();
   app.get('/health', async () => ({ success: true, data: { status: 'ok', service: env.SERVICE_NAME, uptimeSec: Math.round((Date.now() - started) / 1000), time: new Date().toISOString() } }));
   app.get('/api/health', async () => ({ success: true, data: await aggregateHealth(services, env.HEALTH_TIMEOUT_MS) }));
+  const openApi = () => mergeOpenApi(services, routes, { timeoutMs: env.HEALTH_TIMEOUT_MS, ttlMs: 60_000 });
+  app.get('/api/openapi.json', async () => openApi());
+  app.get('/api/docs', async (_req, reply) => {
+    reply.header('content-type', 'text/html; charset=utf-8');
+    reply.header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
+    return renderDocsPage(await openApi());
+  });
 
   const blocked = async (_req: FastifyRequest, reply: FastifyReply) => reply.code(404).send(NOT_FOUND);
   const rewriteRequestHeaders = (req: ProxiedRequest, headers: IncomingHttpHeaders): IncomingHttpHeaders => {
