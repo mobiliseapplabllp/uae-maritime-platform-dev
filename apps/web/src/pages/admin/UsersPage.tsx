@@ -24,7 +24,7 @@ export default function UsersPage() {
     <>
       <CrudPage<UserRow>
         statsScope="users" icon={GroupRoundedIcon} iconColor="#0A2239" title="Users" sub="Portal accounts and their roles" entityName="user" endpoint="/users" defaultSort="name"
-        perms={{ create: 'users.manage', edit: 'users.manage', del: 'users.manage' }} searchPlaceholder="Search name, email…" exportName="users"
+        perms={{ create: 'users.manage', edit: 'users.manage', del: 'users.manage' }} searchPlaceholder="Search name, email…"
         columns={[
           { key: 'name', label: 'Name', render: (r) => <EntityHover type="user" id={r.id}><b>{r.name}</b></EntityHover> },
           { key: 'email', label: 'Email', mono: true },

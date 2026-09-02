@@ -48,7 +48,7 @@ export function buildPortCalls(rng: Prng, vessels: WorldVessel[], berths: WorldB
       const eta = new Date(now.getTime() + (status === 'BERTHED' ? -rng.int(6, 40) * H : status === 'AT_ANCHORAGE' ? -rng.int(2, 20) * H : status === 'CONFIRMED' ? rng.int(6, 48) * H : rng.int(48, 120) * H));
       const berthed = status === 'BERTHED';
       if (berthed) usedBerths.add(b.code);
-      out.push({ id: stableId('portcall', `${eta.toISOString()}:${v.imo}:${status}`), vcn: next(eta), vesselId: v.id, vesselName: v.name, agentCode: v.agentCode, status, eta: eta.toISOString(), etb: new Date(eta.getTime() + 6 * H).toISOString(), etd: new Date(eta.getTime() + rng.int(30, 80) * H).toISOString(),
+      out.push({ id: stableId('portcall', `live:${status}:${k}:${v.imo}`), vcn: next(eta), vesselId: v.id, vesselName: v.name, agentCode: v.agentCode, status, eta: eta.toISOString(), etb: new Date(eta.getTime() + 6 * H).toISOString(), etd: new Date(eta.getTime() + rng.int(30, 80) * H).toISOString(),
         ata: berthed || status === 'AT_ANCHORAGE' ? eta.toISOString() : null, atb: berthed ? new Date(eta.getTime() + 5 * H).toISOString() : null, atd: null, berthCode: berthed || status === 'CONFIRMED' ? b.code : null, prevPort: rng.pick(PORTS), nextPort: rng.pick(PORTS), cargoOps: cargoFor(rng, v.type) });
     }
   }

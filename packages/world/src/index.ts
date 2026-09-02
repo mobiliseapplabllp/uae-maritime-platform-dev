@@ -14,6 +14,7 @@ import { buildLegalInstruments, type WorldLegalInstrument } from './legislation'
 import { buildLicences, type WorldLicence } from './instruments';
 import { buildRegistrations, type WorldRegistration, type WorldRegistryEntry } from './registry';
 import { buildServiceDefinitions, buildServiceRequests, type WorldServiceDefinition, type WorldServiceRequest } from './services';
+import { buildRuleSets, type WorldRuleSet } from './rules';
 import { buildAgents, type WorldAgentConfig, type WorldAiDecision } from './agents';
 import { buildIncidents, type WorldIncident } from './incidents';
 import { buildSurveillance, type WorldPosition, type WorldMdaAlert } from './surveillance';
@@ -22,7 +23,7 @@ import { ROLE_CATALOGUE, DEFAULT_JURISDICTION, type RoleDefinition } from '@mari
 export interface World {
   profile: string; seed: number; now: string; histStart: string; roles: RoleDefinition[]; users: WorldUser[]; lookups: WorldLookup[]; companies: WorldCompany[]; berths: WorldBerth[]; vessels: WorldVessel[]; portCalls: WorldPortCall[]; settings: WorldSetting[];
   vesselCertificates: WorldVesselCertificate[]; tariffs: WorldTariff[]; checklistTemplates: WorldChecklistTemplate[]; berthOutages: WorldBerthOutage[]; resources: WorldResource[]; invoices: WorldInvoice[]; inspections: WorldInspection[];
-  seafarers: WorldSeafarer[]; legalInstruments: WorldLegalInstrument[]; licences: WorldLicence[]; registrations: WorldRegistration[]; registry: WorldRegistryEntry[]; serviceDefinitions: WorldServiceDefinition[]; serviceRequests: WorldServiceRequest[];
+  seafarers: WorldSeafarer[]; legalInstruments: WorldLegalInstrument[]; licences: WorldLicence[]; registrations: WorldRegistration[]; registry: WorldRegistryEntry[]; serviceDefinitions: WorldServiceDefinition[]; serviceRequests: WorldServiceRequest[]; ruleSets: WorldRuleSet[];
   agentConfigs: WorldAgentConfig[]; aiDecisions: WorldAiDecision[]; incidents: WorldIncident[]; positions: WorldPosition[]; mdaAlerts: WorldMdaAlert[];
 }
 
@@ -51,12 +52,13 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const vesselCertificates = buildVesselCertificates(root.fork('certificates'), profile, vessels, licences, registry, now);
   const serviceDefinitions = buildServiceDefinitions(profile);
   const serviceRequests = buildServiceRequests(root.fork('services'), profile, serviceDefinitions, licences, users, companies, vessels, seafarers, berths, now);
+  const ruleSets = buildRuleSets(profile, tariffs, serviceDefinitions);
   const incidents = buildIncidents(root.fork('incidents'), profile, users, vessels, berths, portCalls, now);
   const resources = buildResources(root.fork('resources'), profile, users, portCalls, berths, vessels, incidents, now);
   const { positions, mdaAlerts } = buildSurveillance(root.fork('surveillance'), profile, users, vessels, portCalls, now);
   const { agentConfigs, aiDecisions } = buildAgents(root.fork('agents'), profile, { users, vessels, vesselCertificates, inspections, licences, serviceDefinitions, serviceRequests, legalInstruments, incidents }, now);
   return { profile, seed, now: now.toISOString(), histStart: HIST_START.toISOString(), roles: ROLE_CATALOGUE, users, lookups, companies, berths, vessels, portCalls, settings,
-    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, agentConfigs, aiDecisions, incidents, positions, mdaAlerts };
+    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, ruleSets, agentConfigs, aiDecisions, incidents, positions, mdaAlerts };
 }
 export const DEMO_PASSWORD = 'Demo@2026';
 export * from './prng';
@@ -77,6 +79,7 @@ export * from './legislation';
 export * from './instruments';
 export * from './registry';
 export * from './services';
+export * from './rules';
 export * from './agents';
 export * from './incidents';
 export * from './surveillance';

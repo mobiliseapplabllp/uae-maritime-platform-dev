@@ -52,12 +52,12 @@ export default function Login() {
               <Box sx={{ width: 44, height: 44, borderRadius: '12px', background: BRAND_GRADIENT, display: 'grid', placeItems: 'center', boxShadow: '0 4px 18px rgba(0,0,0,0.4)' }}><AnchorRoundedIcon sx={{ color: '#fff' }} /></Box>
               <Box>
                 <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 19, color: '#fff', lineHeight: 1.1 }}>{t('app.name')}</Typography>
-                <Typography sx={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', color: 'rgba(234,242,250,0.75)' }}>{profile.authority.toUpperCase()} · {t('app.tag')}</Typography>
+                <Typography sx={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.18em', color: 'rgba(234,242,250,0.75)' }}>{t('login.portalTag')} · {profile.name.toUpperCase()}</Typography>
               </Box>
             </Box>
           </Box>
           <Box>
-            <Typography component="h1" sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 44, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#fff', maxWidth: 480, textShadow: '0 2px 24px rgba(0,0,0,0.45)' }}>
+            <Typography component="h1" sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 44, lineHeight: 1.04, letterSpacing: '-0.02em', color: '#fff', maxWidth: 540, textShadow: '0 2px 24px rgba(0,0,0,0.45)' }}>
               {t('login.headline1')}<br />{t('login.headline2')}<br />{t('login.headline3')}
             </Typography>
             <Stack spacing={0.9} sx={{ mt: 3 }}>

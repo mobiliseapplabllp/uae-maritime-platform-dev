@@ -96,10 +96,11 @@ export function buildInvoices(rng: Prng, profile: string, portCalls: WorldPortCa
   for (const call of sailed) {
     const v = vById.get(call.vesselId); if (!v || v.real) continue;
     const totals = computeTotals(buildInvoiceLines(call, v, servicesFor(rng, call, v), byCode), j.tax.ratePct);
-    const issuedAt = new Date(new Date(call.atd!).getTime() + 2 * D); const y = yearOf(issuedAt);
+    // billed on departure day: the statement of facts closes with the sailing, so the invoice follows within hours
+    const issuedAt = new Date(new Date(call.atd!).getTime() + 6 * H); const y = yearOf(issuedAt);
     const ageD = (now.getTime() - issuedAt.getTime()) / D; const payLag = rng.int(7, 30);
-    // an invoice can only be PAID once its payment lag has actually elapsed
-    const status: WorldInvoice['status'] = ageD > 45 ? 'PAID' : ageD > payLag ? (rng.chance(0.6) ? 'PAID' : 'ISSUED') : ageD > 5 ? 'ISSUED' : 'DRAFT';
+    // an invoice can only be PAID once its payment lag has actually elapsed; one not yet issued is a draft
+    const status: WorldInvoice['status'] = ageD > 45 ? 'PAID' : ageD > payLag ? (rng.chance(0.6) ? 'PAID' : 'ISSUED') : ageD > 0 ? 'ISSUED' : 'DRAFT';
     const agent = agentByCode.get(call.agentCode); const paidAt = status === 'PAID' ? new Date(issuedAt.getTime() + payLag * D) : null;
     out.push({
       id: stableId('invoice', call.id), number: `${j.tax.invoicePrefix}/${y}/${seq(String(y))}`, portCallId: call.id, vcn: call.vcn, vesselId: v.id, vesselName: v.name,
@@ -108,6 +109,16 @@ export function buildInvoices(rng: Prng, profile: string, portCalls: WorldPortCa
       status, issuedAt: status === 'DRAFT' ? null : iso(issuedAt), dueAt: status === 'DRAFT' ? null : iso(issuedAt.getTime() + 30 * D), paidAt: paidAt ? iso(paidAt) : null,
       paymentRef: paidAt ? `${ae ? 'FT' : 'NEFT'}-${rng.int(100000, 999999)}` : '', notes: '', createdAt: iso(issuedAt),
     });
+  }
+  // pro-forma drafts for the vessels alongside right now — raised at berthing, issued on sailing
+  for (const call of portCalls.filter((c) => c.status === 'BERTHED' && c.atb)) {
+    const v = vById.get(call.vesselId); if (!v || v.real) continue;
+    const totals = computeTotals(buildInvoiceLines(call, v, servicesFor(rng, call, v), byCode), j.tax.ratePct);
+    const createdAt = new Date(new Date(call.atb!).getTime() + 2 * H); const y = yearOf(createdAt); const agent = agentByCode.get(call.agentCode);
+    out.push({ id: stableId('invoice', call.id), number: `${j.tax.invoicePrefix}/${y}/${seq(String(y))}`, portCallId: call.id, vcn: call.vcn, vesselId: v.id, vesselName: v.name,
+      billTo: { companyId: agent?.id ?? null, name: agent?.name ?? call.agentCode, address: agent?.address ?? '', taxId: agent?.taxId ?? '', taxIdLabel: j.tax.registrationLabel },
+      lines: totals.lines, subtotal: totals.subtotal, taxName: j.tax.name, taxRatePct: j.tax.ratePct, taxAmount: totals.taxAmount, total: totals.total, currency: j.currency.code,
+      status: 'DRAFT', issuedAt: null, dueAt: null, paidAt: null, paymentRef: '', notes: 'Pro-forma — issued on sailing', createdAt: iso(createdAt) });
   }
   // the cancellation path, exercised: the two oldest still-issued invoices were disputed and cancelled — a paid invoice can never be cancelled
   out.filter((d) => d.status === 'ISSUED').slice(0, 2).forEach((d) => { d.status = 'CANCELLED'; d.paidAt = null; d.paymentRef = ''; d.notes = 'Disputed by the agent — cancelled and re-raised'; });
