@@ -1,0 +1,12 @@
+{
+  "name": "@maritime/world",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The shared fictional world every service seeds from — deterministic, profile-driven (AE default, IN for parity)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit", "test": "vitest run", "lint": "echo lint-ok" },
+  "dependencies": { "@maritime/contracts": "workspace:*" },
+  "devDependencies": { "typescript": "5.9.3", "vitest": "4.1.11" }
+}

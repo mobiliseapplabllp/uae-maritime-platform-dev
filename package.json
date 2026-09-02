@@ -1,0 +1,33 @@
+{
+  "name": "uae-maritime-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Maritime digital services platform — PostgreSQL microservices, low-code service engine, supervised agentic AI, React web, Flutter mobile",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "dev": "turbo run dev --parallel",
+    "migrate": "turbo run migrate --concurrency=1",
+    "seed": "turbo run seed --concurrency=1",
+    "e2e": "pnpm --filter @maritime/e2e test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\""
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "prettier": "3.9.6",
+    "turbo": "2.10.12",
+    "typescript": "5.9.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@swc/core",
+      "esbuild"
+    ]
+  }
+}

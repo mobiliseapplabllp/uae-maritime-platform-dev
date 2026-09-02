@@ -1,0 +1,15 @@
+# Package ownership mirrors the fourteen scope packages of the work split.
+# Platform core, AI, environments, security, mobile, training — Mobilise App Lab.
+/packages/            @mobiliseapplabllp
+/services/            @mobiliseapplabllp
+/ai/                  @mobiliseapplabllp
+/infra/               @mobiliseapplabllp
+/security/            @mobiliseapplabllp
+/apps/                @mobiliseapplabllp
+/runbooks/            @mobiliseapplabllp
+# Service configuration per drop (P4–P6), adapters (P8), migration (P9) and independent verification (P12)
+# are the prime contractor's surfaces; they interact with the core only through published contracts.
+/definitions/                         @mobiliseapplabllp
+/services/integration-hub/adapters/   @mobiliseapplabllp
+/tools/migration/                     @mobiliseapplabllp
+/tests/                               @mobiliseapplabllp
