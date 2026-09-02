@@ -17,7 +17,11 @@ export const EVENTS = {
     definitionApproved: 'workflow.definition.approved', definitionPublished: 'workflow.definition.published', definitionRetired: 'workflow.definition.retired',
   },
   rules: { rulesetCreated: 'rules.ruleset.created', versionDrafted: 'rules.ruleset.drafted', versionUpdated: 'rules.ruleset.updated', published: 'rules.ruleset.published', retired: 'rules.ruleset.retired' },
-  instruments: { issued: 'instruments.instrument.issued', revoked: 'instruments.instrument.revoked', suspended: 'instruments.instrument.suspended' },
+  instruments: {
+    applied: 'instruments.instrument.applied', issued: 'instruments.instrument.issued', reinstated: 'instruments.instrument.reinstated', rejected: 'instruments.instrument.rejected',
+    suspended: 'instruments.instrument.suspended', revoked: 'instruments.instrument.revoked', updated: 'instruments.instrument.updated', deleted: 'instruments.instrument.deleted',
+    audited: 'instruments.instrument.audited', endorsed: 'instruments.instrument.endorsed', endorsementRefused: 'instruments.instrument.endorsement-refused', expiring: 'instruments.instrument.expiring',
+  },
   ships: { vesselRegistered: 'ships.vessel.registered', certIssued: 'ships.certificate.issued', registryClosed: 'ships.registry.closed' },
   seafarers: { certificateIssued: 'seafarers.certificate.issued', endorsed: 'seafarers.endorsed', seaServiceVerified: 'seafarers.sea-service.verified' },
   legislation: { instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn' },
