@@ -1,0 +1,140 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $root := . -}}
+{{- $ext := .Values.external -}}
+---
+# Default deny for every platform pod, both directions.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "maritime.fullname" . }}-default-deny
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: maritime
+  policyTypes: [Ingress, Egress]
+---
+# DNS for every platform pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "maritime.fullname" . }}-allow-dns
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: maritime
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.dnsNamespaceSelector | nindent 14 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# The ingress controller may reach the gateway; the gateway may reach every service.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "maritime.fullname" . }}-gateway
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .Values.gateway.ingressNamespaceSelector | nindent 14 }}
+      ports:
+        {{- range .Values.services }}{{ if eq .name "gateway" }}
+        - protocol: TCP
+          port: {{ .port }}
+        {{- end }}{{ end }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: maritime
+              maritime.io/tier: ai
+      ports:
+        {{- range .Values.services }}{{ if eq .name "gateway" }}
+        - protocol: TCP
+          port: {{ .port }}
+        {{- end }}{{ end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: maritime
+      ports:
+        {{- range .Values.services }}{{ if ne .name "gateway" }}
+        - protocol: TCP
+          port: {{ .port }}
+        {{- end }}{{ end }}
+---
+# Services accept traffic from the gateway and from each other (principal resolution, settings, events),
+# and may reach PostgreSQL, NATS and Keycloak.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "maritime.fullname" . }}-services
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/part-of
+        operator: In
+        values: [maritime]
+      - key: app.kubernetes.io/name
+        operator: NotIn
+        values: [gateway]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: maritime
+      ports:
+        {{- range .Values.services }}{{ if ne .name "gateway" }}
+        - protocol: TCP
+          port: {{ .port }}
+        {{- end }}{{ end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: maritime
+      ports:
+        {{- range .Values.services }}
+        - protocol: TCP
+          port: {{ .port }}
+        {{- end }}
+    - to:
+        - ipBlock:
+            cidr: {{ $ext.postgres.cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ $ext.postgres.port }}
+    - to:
+        - ipBlock:
+            cidr: {{ $ext.nats.cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ $ext.nats.port }}
+    - to:
+        - ipBlock:
+            cidr: {{ $ext.keycloak.cidr }}
+      ports:
+        - protocol: TCP
+          port: {{ $ext.keycloak.port }}
+{{- end }}

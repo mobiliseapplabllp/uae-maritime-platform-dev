@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "maritime.fullname" . }}-config
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
+  NATS_URL: {{ .Values.external.nats.url | quote }}
+  KEYCLOAK_ISSUER: {{ .Values.external.keycloak.issuer | quote }}
+  KEYCLOAK_JWKS_URI: {{ .Values.external.keycloak.jwksUri | quote }}
+  KEYCLOAK_AUDIENCE: {{ .Values.external.keycloak.audience | quote }}
+  KEYCLOAK_BASE_URL: {{ .Values.external.keycloak.internalUrl | quote }}
+  KEYCLOAK_REALM: {{ .Values.external.keycloak.realm | quote }}
+  IDENTITY_URL: "http://identity-access:5401"
+  MDM_URL: "http://mdm:5402"

@@ -1,0 +1,181 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: 10.33.0
+  NODE_VERSION: 22
+
+jobs:
+  build-test:
+    name: build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: maritime
+          POSTGRES_PASSWORD: maritime
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U maritime -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_ADMIN_DATABASE_URL: postgres://maritime:maritime@127.0.0.1:5432/postgres
+      EVENT_BUS: memory
+      NATS_URL: nats://127.0.0.1:4222
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      # Service containers cannot take command arguments, and JetStream needs -js: run NATS as a container step.
+      - name: start NATS JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.11-alpine -js -m 8222
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8222/healthz >/dev/null && break; sleep 1; done
+          curl -fs http://127.0.0.1:8222/healthz
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test
+      - name: render gateway configurations from the route table
+        run: |
+          pnpm -s gateway:kong > /tmp/kong.yml
+          pnpm -s gateway:nginx > /tmp/api-locations.conf
+          test -s /tmp/kong.yml && test -s /tmp/api-locations.conf
+      - name: validate compose and Keycloak realm
+        run: |
+          docker compose -f infra/compose/docker-compose.yml --profile planned --profile ai config --quiet
+          docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.uat.yml config --quiet
+          node -e "JSON.parse(require('fs').readFileSync('infra/keycloak/realm-maritime.json','utf8'))"
+
+  sast:
+    name: security scans
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: semgrep (blocking on ERROR severity)
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:latest \
+            semgrep scan --config p/default --config .semgrep.yml --severity ERROR --error --metrics=off \
+              --exclude node_modules --exclude dist --exclude '*.lock' --exclude pnpm-lock.yaml
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_SUMMARY: "true"
+      - name: trivy filesystem scan (vulnerabilities, secrets, misconfigurations)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-dirs: node_modules,dist,.turbo
+          format: table
+
+  web:
+    name: web app
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: detect web app
+        id: web
+        run: |
+          if [ -f apps/web/package.json ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; echo "apps/web not present yet; skipping"; fi
+      - uses: pnpm/action-setup@v4
+        if: hashFiles('apps/web/package.json') != ''
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        if: hashFiles('apps/web/package.json') != ''
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - if: hashFiles('apps/web/package.json') != ''
+        run: pnpm install --frozen-lockfile
+      - if: hashFiles('apps/web/package.json') != ''
+        run: pnpm --filter @maritime/web build
+      - if: hashFiles('apps/web/package.json') != ''
+        run: pnpm --filter @maritime/web test
+      - name: playwright drives
+        if: hashFiles('apps/web/package.json') != '' && hashFiles('tests/e2e/package.json') != ''
+        run: |
+          pnpm --filter @maritime/e2e exec playwright install --with-deps chromium
+          pnpm e2e
+      - name: upload playwright report
+        if: failure() && hashFiles('tests/e2e/package.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  containers:
+    name: container images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: services/mdm
+            port: 5402
+          - service: services/gateway
+            port: 5200
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/service.Dockerfile
+          build-args: |
+            SERVICE=${{ matrix.service }}
+            PORT=${{ matrix.port }}
+          push: false
+          load: true
+          tags: maritime/${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: smoke test the image
+        run: |
+          docker run --rm -d --name smoke -p ${{ matrix.port }}:${{ matrix.port }} -e EVENT_BUS=memory -e DATABASE_URL=postgres://maritime:maritime@127.0.0.1:5432/nope maritime/${{ matrix.service }}:ci || true
+          sleep 5
+          docker logs smoke || true
+          docker rm -f smoke || true

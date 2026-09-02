@@ -1,11 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorld, isRealLiner, imoCheck } from '../src';
+import { buildWorld, isRealLiner, imoCheck, forceState, certStatus, type World } from '../src';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/;
+const now = new Date('2026-09-02T12:00:00Z');
+const w = buildWorld({ profile: 'AE', now });
+const SECTIONS = ['users', 'companies', 'berths', 'vessels', 'portCalls', 'vesselCertificates', 'tariffs', 'checklistTemplates', 'berthOutages', 'resources', 'invoices', 'inspections', 'seafarers', 'legalInstruments', 'licences', 'registrations',
+  'serviceDefinitions', 'serviceRequests', 'agentConfigs', 'aiDecisions', 'incidents', 'positions', 'mdaAlerts'] as const;
+const ids = (rows: { id: string }[]) => new Set(rows.map((r) => r.id));
+const realIds = new Set(w.vessels.filter((v) => v.real).map((v) => v.id));
 
 describe('world', () => {
-  const now = new Date('2026-09-02T12:00:00Z');
-  const w = buildWorld({ profile: 'AE', now });
-  it('makes valid, stable UUIDs', () => { expect(w.users[0].id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/); expect(new Set(w.users.map((u) => u.id)).size).toBe(w.users.length); });
-  it('is deterministic', () => { const w2 = buildWorld({ profile: 'AE', now }); expect(w2.users.map((u) => u.email)).toEqual(w.users.map((u) => u.email)); expect(w2.portCalls.length).toBe(w.portCalls.length); });
+  it('makes valid, unique UUIDs in every section', () => {
+    for (const s of SECTIONS) { const rows = w[s] as { id: string }[]; expect(rows.length, s).toBeGreaterThan(0); for (const r of rows) expect(r.id, s).toMatch(UUID); expect(ids(rows).size, s).toBe(rows.length); }
+  });
+  it('is deterministic — two builds are deep-equal', () => { expect(buildWorld({ profile: 'AE', now })).toEqual(w); });
   it('seeds the seven login accounts, staff and a directory of about 130 users with unique emails', () => {
     expect(w.users.filter((u) => u.login)).toHaveLength(7);
     expect(w.users.length).toBeGreaterThanOrEqual(125);
@@ -24,9 +32,101 @@ describe('world', () => {
     expect(w.portCalls[0].eta < '2023-02-01').toBe(true);
     expect(isRealLiner('MSC Anna')).toBe(true);
   });
-  it('switches jurisdiction by profile', () => {
-    const inw = buildWorld({ profile: 'IN', now });
+  it('keeps every foreign key resolvable', () => {
+    const users = ids(w.users); const vessels = ids(w.vessels); const berths = ids(w.berths); const companies = ids(w.companies); const calls = ids(w.portCalls); const licences = ids(w.licences); const seafarers = ids(w.seafarers);
+    const defs = ids(w.serviceDefinitions); const templates = ids(w.checklistTemplates); const agents = new Set(w.agentConfigs.map((a) => a.agentId)); const refNos = new Set(w.legalInstruments.map((i) => i.refNo));
+    const subjects: Record<string, Set<string>> = { Company: companies, Vessel: vessels, Seafarer: seafarers, Berth: berths };
+    const has = (set: Set<string>, id: string | null | undefined, what: string) => { if (id != null) expect(set.has(id), `${what} ${id}`).toBe(true); };
+    for (const c of w.vesselCertificates) { has(vessels, c.vesselId, 'cert.vessel'); has(licences, c.instrumentId, 'cert.instrument'); }
+    for (const t of w.tariffs) for (const r of t.revisions) expect(refNos.has(r.circular), r.circular).toBe(true);
+    for (const o of w.berthOutages) has(berths, o.berthId, 'outage.berth');
+    for (const r of w.resources) { has(users, r.userId, 'resource.user'); for (const j of r.jobs) has(calls, j.portCallId, 'job.call'); }
+    for (const i of w.invoices) { has(calls, i.portCallId, 'invoice.call'); has(vessels, i.vesselId, 'invoice.vessel'); has(companies, i.billTo.companyId, 'invoice.billTo'); }
+    for (const i of w.inspections) { has(vessels, i.vesselId, 'inspection.vessel'); has(calls, i.portCallId, 'inspection.call'); has(users, i.inspectorId, 'inspection.inspector'); has(templates, i.templateId, 'inspection.template'); }
+    for (const s of w.seafarers) { has(vessels, s.currentVesselId, 'seafarer.vessel'); for (const ss of s.seaService) has(vessels, ss.vesselId, 'service.vessel'); }
+    for (const i of w.legalInstruments) { has(users, i.draftedById, 'instrument.drafter'); has(users, i.approvedById, 'instrument.approver'); for (const a of i.acknowledgedBy) has(users, a.userId, 'ack.user'); if (i.supersedes) expect(refNos.has(i.supersedes), i.supersedes).toBe(true); }
+    for (const l of w.licences) { if (l.subjectId) { expect(l.subjectModel).toBeTruthy(); has(subjects[l.subjectModel!], l.subjectId, `licence.subject ${l.subjectModel}`); } for (const a of l.audits) has(users, a.auditorId, 'audit.auditor'); }
+    for (const r of w.registrations) { has(vessels, r.vesselId, 'registration.vessel'); has(users, r.assignedToId, 'registration.assignee'); }
+    for (const r of w.registry) has(vessels, r.vesselId, 'registry.vessel');
+    for (const r of w.serviceRequests) { has(defs, r.serviceId, 'request.service'); if (r.subjectId) has(subjects[r.subjectModel!], r.subjectId, 'request.subject'); has(licences, r.issuedInstrumentId, 'request.instrument'); has(users, r.applicant.userId, 'request.applicant'); has(users, r.assignedToId, 'request.assignee'); }
+    const decisionSubjects = new Set([...vessels, ...ids(w.serviceRequests), ...ids(w.legalInstruments), 'national', '']);
+    for (const d of w.aiDecisions) { expect(agents.has(d.agentId)).toBe(true); expect(decisionSubjects.has(d.subjectId), d.subjectId).toBe(true); has(users, d.reviewedById, 'decision.reviewer'); }
+    for (const i of w.incidents) { has(vessels, i.vesselId, 'incident.vessel'); has(berths, i.berthId, 'incident.berth'); has(users, i.assignedToId, 'incident.assignee'); for (const t of i.tasks) has(users, t.assigneeId, 'task.assignee'); }
+    for (const p of w.positions) has(vessels, p.vesselId, 'position.vessel');
+    for (const a of w.mdaAlerts) { has(vessels, a.vesselId, 'alert.vessel'); has(users, a.acknowledgedById, 'alert.ack'); }
+  });
+  it('gives the documented liner callers clean records everywhere', () => {
+    expect(realIds.size).toBe(8);
+    for (const c of w.vesselCertificates.filter((c) => realIds.has(c.vesselId))) expect(c.state).toBe('VALID');
+    expect(w.inspections.some((i) => realIds.has(i.vesselId))).toBe(false);
+    expect(w.invoices.some((i) => realIds.has(i.vesselId))).toBe(false);
+    expect(w.incidents.some((i) => i.vesselId && realIds.has(i.vesselId))).toBe(false);
+    expect(w.mdaAlerts.some((a) => a.vesselId && realIds.has(a.vesselId))).toBe(false);
+    expect(w.licences.some((l) => l.subjectId && realIds.has(l.subjectId))).toBe(false);
+    expect(w.registrations.some((r) => realIds.has(r.vesselId))).toBe(false);
+    expect(w.registry.some((r) => realIds.has(r.vesselId))).toBe(false);
+    expect(w.serviceRequests.some((r) => r.subjectId && realIds.has(r.subjectId))).toBe(false);
+    expect(w.aiDecisions.some((d) => realIds.has(d.subjectId))).toBe(false);
+    expect(w.seafarers.some((s) => (s.currentVesselId && realIds.has(s.currentVesselId)) || s.seaService.some((x) => x.vesselId && realIds.has(x.vesselId)))).toBe(false);
+  });
+  it('keeps volumes within the expected ranges', () => {
+    const between = (n: number, lo: number, hi: number, what: string) => { expect(n, what).toBeGreaterThanOrEqual(lo); expect(n, what).toBeLessThanOrEqual(hi); };
+    between(w.vesselCertificates.length, 380, 420, 'certificates'); expect(w.tariffs).toHaveLength(11); expect(w.checklistTemplates).toHaveLength(8);
+    between(w.berthOutages.length, 100, 250, 'outages'); expect(w.resources).toHaveLength(17); between(w.invoices.length, 600, 1100, 'invoices');
+    between(w.inspections.length, 140, 230, 'inspections'); expect(w.seafarers).toHaveLength(150); between(w.legalInstruments.length, 55, 70, 'instruments');
+    between(w.licences.length, 220, 330, 'licences'); between(w.registrations.length, 18, 24, 'registrations'); expect(w.registry).toHaveLength(23);
+    between(w.serviceDefinitions.length, 75, 85, 'definitions'); between(w.serviceRequests.length, 170, 240, 'requests'); expect(w.agentConfigs).toHaveLength(16);
+    between(w.aiDecisions.length, 260, 340, 'decisions'); between(w.incidents.length, 110, 125, 'incidents'); between(w.positions.length, 12, 40, 'positions'); expect(w.mdaAlerts).toHaveLength(44);
+    const bad = w.vesselCertificates.filter((c) => c.state !== 'VALID').length / w.vesselCertificates.length; between(bad, 0.06, 0.14, 'expiring share');
+    expect(w.seafarers.filter((s) => s.currentVesselId).length / w.seafarers.length).toBeCloseTo(0.55, 1);
+    expect(w.seafarers.every((s) => s.seaService.length && s.seaService[s.seaService.length - 1].from < '2023-06-01')).toBe(true);
+    const months = new Set(w.inspections.filter((i) => i.status === 'CLOSED').map((i) => i.startedAt!.slice(0, 7))); expect(months.size).toBeGreaterThanOrEqual(40);
+    expect(w.incidents.filter((i) => !['RESOLVED', 'CLOSED'].includes(i.status)).length).toBeGreaterThanOrEqual(6);
+  });
+  it('bills with the reference invoice maths and the jurisdiction tax', () => {
+    for (const i of w.invoices) {
+      expect(i.taxName).toBe('VAT'); expect(i.taxRatePct).toBe(5); expect(i.currency).toBe('AED'); expect(i.billTo.taxIdLabel).toBe('TRN'); expect(i.billTo.taxId).toContain('(sample)');
+      expect(Math.round((i.subtotal + i.taxAmount) * 100)).toBe(Math.round(i.total * 100));
+      expect(Math.round(i.lines.reduce((s, l) => s + Math.round(l.amount * 100), 0))).toBe(Math.round(i.subtotal * 100));
+      for (const l of i.lines) expect(l.amount).toBe(Math.round(l.qty * l.rate * 100) / 100);
+      if (i.status === 'PAID') expect(i.paidAt).toBeTruthy(); if (i.status === 'DRAFT') expect(i.issuedAt).toBeNull();
+    }
+    expect(new Set(w.invoices.map((i) => i.status))).toEqual(new Set(['DRAFT', 'ISSUED', 'PAID', 'CANCELLED']));
+    expect(w.invoices.every((i) => i.number.startsWith('MAR/INV/'))).toBe(true);
+  });
+  it('runs the statutory survey regime so a few certificates are not in force, and mirrors them onto the ships', () => {
+    const statutory = w.licences.filter((l) => l.endorsements.length || l.entityType === 'DOCUMENT_OF_COMPLIANCE');
+    expect(statutory.length).toBeGreaterThan(80);
+    const notInForce = statutory.filter((l) => !forceState(l, now).inForce);
+    expect(notInForce.length).toBeGreaterThanOrEqual(1); expect(notInForce.length).toBeLessThan(statutory.length * 0.2);
+    expect(w.licences.some((l) => l.endorsements.some((e) => e.kind === 'RENEWAL'))).toBe(true);
+    expect(w.licences.every((l) => l.signature === null)).toBe(true);
+    const mirrored = w.vesselCertificates.filter((c) => c.instrumentId); expect(mirrored.length).toBeGreaterThan(60);
+    for (const c of mirrored) { const l = w.licences.find((x) => x.id === c.instrumentId)!; expect(c.number).toBe(l.licenseNo); expect(c.expiryDate).toBe(l.expiryDate); }
+    expect(certStatus(new Date(now.getTime() - 1), now)).toBe('EXPIRED');
+  });
+  it('keeps the registers coherent', () => {
+    expect(w.registry.filter((r) => r.state === 'REGISTERED')).toHaveLength(14); expect(w.registry.filter((r) => r.state === 'PROVISIONAL')).toHaveLength(1);
+    const numbers = w.registrations.filter((r) => r.officialNumber).map((r) => Number(r.officialNumber)); expect(new Set(numbers).size).toBe(numbers.length); expect(Math.min(...numbers)).toBe(700001);
+    expect(new Set(w.registrations.map((r) => r.kind))).toEqual(new Set(['PERMANENT', 'PROVISIONAL', 'AMENDMENT', 'DELETION']));
+    expect(w.registrations.filter((r) => r.kind === 'DELETION' && r.status === 'APPROVED').every((r) => !w.invoices.some((i) => i.vesselId === r.vesselId && i.status === 'ISSUED'))).toBe(true);
+    for (const r of w.serviceRequests.filter((x) => x.status === 'ISSUED')) expect(r.issuedInstrumentId).toBeTruthy();
+    for (const i of w.legalInstruments) { if (i.status !== 'DRAFT') expect(i.approvedById).not.toBe(i.draftedById); else expect(i.approvedById).toBeNull(); }
+    expect(w.legalInstruments.filter((i) => i.ackRequired).every((i) => i.acknowledgedBy.length > 0)).toBe(true);
+    expect(w.legalInstruments.every((i) => i.titleAr)).toBe(true); expect(w.serviceDefinitions.every((d) => d.nameAr)).toBe(true);
+    expect(w.seafarers.every((s) => s.cdcNo && s.seafarerId && s.nationalId.endsWith('(sample)'))).toBe(true);
+    expect(w.resources.filter((r) => r.type === 'PILOT').every((r) => r.userId)).toBe(true); expect(w.resources.reduce((s, r) => s + r.jobs.length, 0)).toBeGreaterThan(5000);
+    expect(new Set(w.aiDecisions.map((d) => d.disposition)).size).toBeGreaterThanOrEqual(4); expect(w.agentConfigs.every((a) => a.stats.decisions > 0)).toBe(true);
+    expect(w.positions.some((p) => p.navStatus === 'RESTRICTED')).toBe(true); expect(w.mdaAlerts.filter((a) => !a.acknowledged)).toHaveLength(6);
+  });
+  it('switches jurisdiction by profile and still builds every section for IN', () => {
+    const inw: World = buildWorld({ profile: 'IN', now });
     expect(inw.settings.find((s) => s.key === 'billing')?.value.taxName).toBe('GST');
     expect(w.settings.find((s) => s.key === 'billing')?.value.taxName).toBe('VAT');
+    for (const s of SECTIONS) expect((inw[s] as unknown[]).length, s).toBeGreaterThan(0);
+    expect(inw.invoices[0].taxRatePct).toBe(18); expect(inw.invoices[0].currency).toBe('INR'); expect(inw.invoices[0].number.startsWith('REF/INV/')).toBe(true);
+    expect(inw.registry.filter((r) => r.state === 'REGISTERED')).toHaveLength(14); expect(Math.min(...inw.registrations.filter((r) => r.officialNumber).map((r) => Number(r.officialNumber)))).toBe(900001);
+    expect(inw.legalInstruments.some((i) => i.refNo === 'MSA-1958')).toBe(true); expect(inw.legalInstruments.every((i) => i.titleAr === undefined)).toBe(true);
+    expect(inw.seafarers.every((s) => s.seafarerIdLabel === 'INDoS')).toBe(true);
   });
 });

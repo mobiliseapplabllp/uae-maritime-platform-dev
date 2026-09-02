@@ -1,0 +1,324 @@
+# Developer-laptop stack: PostgreSQL 16 (PostGIS + pgvector), NATS JetStream, Keycloak 26 with the maritime realm,
+# every platform/domain service built from infra/docker/service.Dockerfile, the gateway and the web app.
+#   docker compose -f infra/compose/docker-compose.yml up --build
+#   docker compose -f infra/compose/docker-compose.yml --profile planned --profile ai up --build
+# Profiles: services whose source is not in the repository yet carry `planned` (remove the line when the service
+# lands); the AI services carry `ai`. Variables come from infra/compose/.env (see .env.example); every one has a
+# development default here.
+name: maritime
+
+x-postgres-url: &pg-prefix "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432"
+
+x-common-env: &common-env
+  NODE_ENV: development
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  EVENT_BUS: nats
+  NATS_URL: nats://nats:4222
+  AUTH_MODE: ${AUTH_MODE:-local}
+  KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER:-http://localhost:8180/realms/maritime}
+  KEYCLOAK_JWKS_URI: http://keycloak:8080/realms/maritime/protocol/openid-connect/certs
+  KEYCLOAK_AUDIENCE: maritime-platform
+  KEYCLOAK_BASE_URL: http://keycloak:8080
+  KEYCLOAK_REALM: maritime
+  SERVICE_TOKEN: ${SERVICE_TOKEN:-development-service-token}
+  JWT_SECRET: ${JWT_SECRET:-development-only-secret-change-me}
+  IDENTITY_URL: http://identity-access:5401
+  MDM_URL: http://mdm:5402
+  CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5300,http://127.0.0.1:5300}
+
+x-service: &service
+  restart: unless-stopped
+  init: true
+  depends_on:
+    postgres:
+      condition: service_healthy
+    nats:
+      condition: service_started
+  networks: [maritime]
+
+x-build: &build
+  context: ../..
+  dockerfile: infra/docker/service.Dockerfile
+
+services:
+  postgres:
+    image: maritime/postgres:16-3.4
+    build:
+      context: ../docker
+      dockerfile: postgres.Dockerfile
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-maritime}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-maritime}
+      POSTGRES_DB: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-maritime} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [maritime]
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222", "-p", "4222"]
+    ports: ["4222:4222", "8222:8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [maritime]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    command: ["start-dev", "--import-realm", "--http-port=8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-maritime}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-maritime}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-admin}
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_PROXY_HEADERS: xforwarded
+      KC_GATEWAY_CLIENT_SECRET: ${KC_GATEWAY_CLIENT_SECRET:-development-gateway-secret}
+    ports: ["8180:8080"]
+    volumes:
+      - ../keycloak/realm-maritime.json:/opt/keycloak/data/import/realm-maritime.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks: [maritime]
+
+  # ---- platform services -------------------------------------------------------------------------------
+  identity-access:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: services/identity-access, PORT: "5401" } }
+    image: maritime/identity-access:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: identity-access, PORT: "5401", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_identity" }
+    ports: ["5401:5401"]
+  mdm:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: services/mdm, PORT: "5402" } }
+    image: maritime/mdm:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: mdm, PORT: "5402", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_mdm" }
+    ports: ["5402:5402"]
+  audit-ledger:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: services/audit-ledger, PORT: "5403" } }
+    image: maritime/audit-ledger:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: audit-ledger, PORT: "5403", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_audit" }
+    ports: ["5403:5403"]
+  notifications:
+    <<: *service
+    build: { <<: *build, args: { SERVICE: services/notifications, PORT: "5404" } }
+    image: maritime/notifications:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: notifications, PORT: "5404", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_notifications" }
+    ports: ["5404:5404"]
+  scheduler:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/scheduler, PORT: "5405" } }
+    image: maritime/scheduler:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: scheduler, PORT: "5405", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_scheduler" }
+    ports: ["5405:5405"]
+  reporting:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/reporting, PORT: "5406" } }
+    image: maritime/reporting:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: reporting, PORT: "5406", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_reporting" }
+    ports: ["5406:5406"]
+  workflow:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/workflow, PORT: "5407" } }
+    image: maritime/workflow:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: workflow, PORT: "5407", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_workflow" }
+    ports: ["5407:5407"]
+  rules:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/rules, PORT: "5408" } }
+    image: maritime/rules:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: rules, PORT: "5408", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_rules" }
+    ports: ["5408:5408"]
+  instruments:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/instruments, PORT: "5409" } }
+    image: maritime/instruments:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: instruments, PORT: "5409", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_instruments" }
+    ports: ["5409:5409"]
+  documents:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/documents, PORT: "5410" } }
+    image: maritime/documents:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: documents, PORT: "5410", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_documents" }
+    ports: ["5410:5410"]
+    volumes:
+      - documents-data:/app/storage
+  integration-hub:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/integration-hub, PORT: "5411" } }
+    image: maritime/integration-hub:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: integration-hub, PORT: "5411", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_integration" }
+    ports: ["5411:5411"]
+
+  # ---- domain services ---------------------------------------------------------------------------------
+  ships:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/ships, PORT: "5421" } }
+    image: maritime/ships:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ships, PORT: "5421", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ships" }
+    ports: ["5421:5421"]
+  seafarers:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/seafarers, PORT: "5422" } }
+    image: maritime/seafarers:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: seafarers, PORT: "5422", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_seafarers" }
+    ports: ["5422:5422"]
+  legislation:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/legislation, PORT: "5423" } }
+    image: maritime/legislation:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: legislation, PORT: "5423", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_legislation" }
+    ports: ["5423:5423"]
+  maritime-centre:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/maritime-centre, PORT: "5424" } }
+    image: maritime/maritime-centre:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: maritime-centre, PORT: "5424", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_centre" }
+    ports: ["5424:5424"]
+  inspection:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/inspection, PORT: "5425" } }
+    image: maritime/inspection:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: inspection, PORT: "5425", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_inspection" }
+    ports: ["5425:5425"]
+  ports:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/ports, PORT: "5426" } }
+    image: maritime/ports:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ports, PORT: "5426", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ports" }
+    ports: ["5426:5426"]
+  facilities:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/facilities, PORT: "5427" } }
+    image: maritime/facilities:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: facilities, PORT: "5427", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_facilities" }
+    ports: ["5427:5427"]
+  revenue:
+    <<: *service
+    profiles: [planned]
+    build: { <<: *build, args: { SERVICE: services/revenue, PORT: "5428" } }
+    image: maritime/revenue:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: revenue, PORT: "5428", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_revenue" }
+    ports: ["5428:5428"]
+
+  # ---- AI layer (Python/FastAPI; each service ships its own Dockerfile under ai/<name>) -------------------
+  ai-assistant:
+    <<: *service
+    profiles: [ai]
+    build: { context: ../.., dockerfile: ai/ai-assistant/Dockerfile }
+    image: maritime/ai-assistant:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ai-assistant, PORT: "5501", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ai", AI_TOOL_GATEWAY_URL: http://gateway:5200 }
+    ports: ["5501:5501"]
+  ai-agents:
+    <<: *service
+    profiles: [ai]
+    build: { context: ../.., dockerfile: ai/ai-agents/Dockerfile }
+    image: maritime/ai-agents:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ai-agents, PORT: "5502", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ai", AI_TOOL_GATEWAY_URL: http://gateway:5200 }
+    ports: ["5502:5502"]
+  insights-api:
+    <<: *service
+    profiles: [ai]
+    build: { context: ../.., dockerfile: ai/insights-api/Dockerfile }
+    image: maritime/insights-api:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: insights-api, PORT: "5503", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ai" }
+    ports: ["5503:5503"]
+
+  # ---- edge --------------------------------------------------------------------------------------------
+  gateway:
+    build: { <<: *build, args: { SERVICE: services/gateway, PORT: "5200" } }
+    image: maritime/gateway:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: "5200"
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5300,http://127.0.0.1:5300}
+      RATE_LIMIT_PER_MIN: "600"
+      TRUST_PROXY: "false"
+      IDENTITY_URL: http://identity-access:5401
+      MDM_URL: http://mdm:5402
+      AUDIT_URL: http://audit-ledger:5403
+      NOTIFICATIONS_URL: http://notifications:5404
+      REPORTING_URL: http://reporting:5406
+      WORKFLOW_URL: http://workflow:5407
+      RULES_URL: http://rules:5408
+      INSTRUMENTS_URL: http://instruments:5409
+      DOCUMENTS_URL: http://documents:5410
+      SHIPS_URL: http://ships:5421
+      SEAFARERS_URL: http://seafarers:5422
+      LEGISLATION_URL: http://legislation:5423
+      MARITIME_CENTRE_URL: http://maritime-centre:5424
+      INSPECTION_URL: http://inspection:5425
+      PORTS_URL: http://ports:5426
+      FACILITIES_URL: http://facilities:5427
+      REVENUE_URL: http://revenue:5428
+      AI_ASSISTANT_URL: http://ai-assistant:5501
+      AI_AGENTS_URL: http://ai-agents:5502
+      INSIGHTS_URL: http://insights-api:5503
+    ports: ["5200:5200"]
+    depends_on:
+      identity-access:
+        condition: service_started
+      mdm:
+        condition: service_started
+    networks: [maritime]
+
+  web:
+    build: { context: ../.., dockerfile: infra/docker/web.Dockerfile }
+    image: maritime/web:${IMAGE_TAG:-dev}
+    restart: unless-stopped
+    environment:
+      GATEWAY_URL: http://gateway:5200
+    ports: ["5300:8080"]
+    depends_on:
+      gateway:
+        condition: service_started
+    networks: [maritime]
+
+volumes:
+  postgres-data:
+  nats-data:
+  documents-data:
+
+networks:
+  maritime:
+    name: maritime

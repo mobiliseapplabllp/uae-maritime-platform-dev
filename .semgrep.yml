@@ -1,0 +1,89 @@
+# Repository rules layered on top of Semgrep's default registry rules (CI: blocking on ERROR severity).
+rules:
+  - id: maritime-hardcoded-secret
+    message: Secret-looking literal assigned to a password/secret/token/key. Read it from the environment; only the documented development defaults are allowed.
+    severity: ERROR
+    languages: [typescript, javascript, python, yaml, json, bash, generic]
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/test/**"
+        - "**/tests/**"
+        - "**/.env.example"
+        - "pnpm-lock.yaml"
+    patterns:
+      - pattern-regex: '(?i)(password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?token|client[_-]?secret)["'']?\s*[:=]\s*["''][^"''$]{8,}["'']'
+      - pattern-not-regex: '(?i)(development-service-token|development-gateway-secret|development-only-secret-change-me|Demo@2026|replace-before-enabling|maritime:maritime)'
+      - pattern-not-regex: '["'']\$\{'
+      - pattern-not-regex: '(?i)(passwordHash|password_hash|secretData|credentialData|hashIterations)'
+
+  - id: maritime-no-eval
+    message: Dynamic code evaluation is not allowed (eval / new Function / vm.runInThisContext).
+    severity: ERROR
+    languages: [typescript, javascript]
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: vm.runInThisContext(...)
+      - pattern: vm.runInNewContext(...)
+
+  - id: maritime-no-shell-string
+    message: Shell command built from a string; use execFile/spawn with an argument array.
+    severity: WARNING
+    languages: [typescript, javascript]
+    pattern-either:
+      - pattern: child_process.exec($CMD, ...)
+      - pattern: child_process.execSync($CMD, ...)
+      - pattern: exec($CMD, ...)
+      - pattern: execSync($CMD, ...)
+
+  - id: maritime-sql-string-concat
+    message: SQL built by string concatenation; use parameter placeholders ($1, $2) with a values array.
+    severity: ERROR
+    languages: [typescript, javascript]
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/test/**"
+        - "**/migrate.ts"
+        - "**/seed.ts"
+    pattern-either:
+      - pattern: $DB.query("..." + $EXPR, ...)
+      - pattern: $DB.query($EXPR + "...", ...)
+      - pattern: $DB.query($SQL.concat(...), ...)
+
+  - id: maritime-sql-template-interpolation
+    message: SQL template literal with interpolation; acceptable only for identifiers validated against an allow-list (column/table names), never for values.
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      exclude:
+        - "**/*.test.ts"
+        - "**/test/**"
+        - "**/migrate.ts"
+        - "**/seed.ts"
+    pattern: $DB.query(`...${$EXPR}...`, ...)
+
+  - id: maritime-no-model-identifiers
+    message: Model identifiers must not appear in committed code or comments (repository rule 4).
+    severity: ERROR
+    languages: [generic]
+    paths:
+      exclude:
+        - ".semgrep.yml"
+        - "**/node_modules/**"
+    pattern-regex: '(?i)\b(claude-[a-z0-9-]+-\d|gpt-[3-5][a-z0-9.-]*|gemini-\d|llama-?\d)\b'
+
+  - id: maritime-service-token-from-client
+    message: The x-service-token header must never be read from an external request or forwarded from clients; only services set it.
+    severity: WARNING
+    languages: [typescript, javascript]
+    paths:
+      include:
+        - "services/gateway/**"
+        - "apps/**"
+    pattern-either:
+      - pattern: |
+          $H['x-service-token'] = $V
+      - pattern: |
+          headers: { 'x-service-token': $V }

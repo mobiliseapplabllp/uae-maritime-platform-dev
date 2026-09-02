@@ -1,0 +1,21 @@
+{{- $root := . -}}
+{{- range $svc := .Values.services }}
+{{- $ctx := dict "root" $root "svc" $svc -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "maritime.labels" $root | nindent 4 }}
+    {{- include "maritime.selectorLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ $svc.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "maritime.selectorLabels" $ctx | nindent 4 }}
+{{- end }}

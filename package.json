@@ -16,7 +16,9 @@
     "migrate": "turbo run migrate --concurrency=1",
     "seed": "turbo run seed --concurrency=1",
     "e2e": "pnpm --filter @maritime/e2e test",
-    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\""
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
+    "gateway:kong": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tools/gateway/render-kong.ts",
+    "gateway:nginx": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tools/gateway/render-nginx.ts"
   },
   "devDependencies": {
     "@types/node": "22.15.3",

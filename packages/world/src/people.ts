@@ -82,6 +82,12 @@ const emailOf = (n: string) => `${n.toLowerCase().replace(/\(.*\)/, '').replace(
 const phoneOf = (profile: string, i: number) => profile === 'AE' ? `+971 5${String(0 + (i % 9))} ${String(1000000 + i * 3517).slice(0, 3)} ${String(1000000 + i * 3517).slice(3, 7)}` : `+91 98${String(79210000 + i * 3517).slice(0, 8)}`;
 const deptOfRole = (role: string) => ({ 'Harbour Master': 'Marine Operations', 'NMC Duty Officer': 'Marine Operations', 'Marine Surveyor': 'Surveys & Compliance', 'Legal Officer': 'Legal & Regulatory', Approver: 'Legal & Regulatory', 'Finance Officer': 'Finance & Billing', 'Registrar of Ships': 'Ship Registry', 'Super Admin': 'IT & Systems', 'Shipping Agent': 'External' } as Record<string, string>)[role] ?? 'General';
 
+/** The profile name pools, shared with every generator that names a person (crew, craft masters, contacts). */
+export const NAME_POOLS: Record<string, { first: string[]; last: string[] }> = { AE: { first: FIRST.AE, last: LAST.AE }, IN: { first: FIRST.IN, last: LAST.IN } };
+export const personName = (rng: Prng, profile: string): string => { const p = NAME_POOLS[profile] ?? NAME_POOLS.AE; return `${rng.pick(p.first)} ${rng.pick(p.last)}`; };
+export const usersByRole = (users: WorldUser[], role: string): WorldUser[] => users.filter((u) => u.roleName === role);
+export const userNamed = (users: WorldUser[], needle: RegExp): WorldUser | undefined => users.find((u) => needle.test(u.name) || needle.test(u.designation));
+
 export function buildPeople(rng: Prng, profile: string, now: Date): WorldUser[] {
   const p = LOGIN_USERS[profile] ? profile : 'AE';
   const out: WorldUser[] = [];

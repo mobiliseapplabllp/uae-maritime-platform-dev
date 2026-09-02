@@ -1,0 +1,139 @@
+# Values for the maritime chart. Each entry in `services` renders a Deployment, a Service and (optionally)
+# an HPA; the gateway additionally receives the Ingress. Databases, NATS and Keycloak are external endpoints:
+# per-service DATABASE_URLs and the service token live in an existing Secret (see `secrets`).
+global:
+  imageRegistry: ""            # e.g. registry.example.com/maritime — prefixed to every image repository
+  imageTag: "0.1.0"
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+  environment: dev             # dev | uat | prod (label only)
+  podLabels: {}
+  podAnnotations: {}
+
+# External endpoints (never deployed by this chart).
+external:
+  postgres:
+    host: postgres.data.svc.cluster.local
+    port: 5432
+    cidr: 10.0.0.0/8           # egress allowed by the network policy
+  nats:
+    url: nats://nats.messaging.svc.cluster.local:4222
+    host: nats.messaging.svc.cluster.local
+    port: 4222
+    cidr: 10.0.0.0/8
+  keycloak:
+    issuer: https://id.maritime.example/realms/maritime      # `iss` claim as seen by browsers
+    internalUrl: http://keycloak.identity.svc.cluster.local:8080
+    jwksUri: http://keycloak.identity.svc.cluster.local:8080/realms/maritime/protocol/openid-connect/certs
+    audience: maritime-platform
+    realm: maritime
+    host: keycloak.identity.svc.cluster.local
+    port: 8080
+    cidr: 10.0.0.0/8
+
+# Existing Secret holding DATABASE_URL_<SERVICE_NAME_UPPER_SNAKE>, SERVICE_TOKEN and JWT_SECRET keys.
+secrets:
+  existingSecret: maritime-platform
+
+# Common runtime configuration rendered into a ConfigMap and injected into every service.
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  EVENT_BUS: nats
+  AUTH_MODE: keycloak
+  CORS_ORIGIN: https://app.maritime.example
+  RATE_LIMIT_PER_MIN: "600"
+
+gateway:
+  ingress:
+    enabled: true
+    className: nginx
+    host: api.maritime.example
+    path: /api
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-body-size: 50m
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    tls:
+      enabled: true
+      secretName: maritime-api-tls
+  # Namespace label selector of the ingress controller allowed to reach the gateway.
+  ingressNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+
+networkPolicy:
+  enabled: true
+  dnsNamespaceSelector:
+    kubernetes.io/metadata.name: kube-system
+
+serviceDefaults:
+  replicas: 2
+  readinessPath: /ready
+  livenessPath: /health
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 512Mi }
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+  terminationGracePeriodSeconds: 30
+
+# name, port, image (repository), optional replicas/resources/autoscaling/env/readinessPath/database/tier.
+# `database: false` skips the DATABASE_URL secret key; `tier: platform|domain|ai|edge` is a label.
+services:
+  - name: gateway
+    tier: edge
+    port: 5200
+    image: maritime/gateway
+    database: false
+    readinessPath: /health
+    replicas: 2
+    resources:
+      requests: { cpu: 200m, memory: 256Mi }
+      limits: { cpu: "1", memory: 512Mi }
+    autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 8, targetCPUUtilizationPercentage: 65 }
+    env:
+      TRUST_PROXY: "true"
+      IDENTITY_URL: http://identity-access:5401
+      MDM_URL: http://mdm:5402
+      AUDIT_URL: http://audit-ledger:5403
+      NOTIFICATIONS_URL: http://notifications:5404
+      REPORTING_URL: http://reporting:5406
+      WORKFLOW_URL: http://workflow:5407
+      RULES_URL: http://rules:5408
+      INSTRUMENTS_URL: http://instruments:5409
+      DOCUMENTS_URL: http://documents:5410
+      SHIPS_URL: http://ships:5421
+      SEAFARERS_URL: http://seafarers:5422
+      LEGISLATION_URL: http://legislation:5423
+      MARITIME_CENTRE_URL: http://maritime-centre:5424
+      INSPECTION_URL: http://inspection:5425
+      PORTS_URL: http://ports:5426
+      FACILITIES_URL: http://facilities:5427
+      REVENUE_URL: http://revenue:5428
+      AI_ASSISTANT_URL: http://ai-assistant:5501
+      AI_AGENTS_URL: http://ai-agents:5502
+      INSIGHTS_URL: http://insights-api:5503
+  - { name: identity-access, tier: platform, port: 5401, image: maritime/identity-access, env: { KEYCLOAK_CLIENT_ID: web } }
+  - { name: mdm, tier: platform, port: 5402, image: maritime/mdm }
+  - { name: audit-ledger, tier: platform, port: 5403, image: maritime/audit-ledger }
+  - { name: notifications, tier: platform, port: 5404, image: maritime/notifications }
+  - { name: scheduler, tier: platform, port: 5405, image: maritime/scheduler, replicas: 1 }
+  - { name: reporting, tier: platform, port: 5406, image: maritime/reporting }
+  - { name: workflow, tier: platform, port: 5407, image: maritime/workflow }
+  - { name: rules, tier: platform, port: 5408, image: maritime/rules }
+  - { name: instruments, tier: platform, port: 5409, image: maritime/instruments }
+  - { name: documents, tier: platform, port: 5410, image: maritime/documents }
+  - { name: integration-hub, tier: platform, port: 5411, image: maritime/integration-hub }
+  - { name: ships, tier: domain, port: 5421, image: maritime/ships }
+  - { name: seafarers, tier: domain, port: 5422, image: maritime/seafarers }
+  - { name: legislation, tier: domain, port: 5423, image: maritime/legislation }
+  - { name: maritime-centre, tier: domain, port: 5424, image: maritime/maritime-centre }
+  - { name: inspection, tier: domain, port: 5425, image: maritime/inspection }
+  - { name: ports, tier: domain, port: 5426, image: maritime/ports }
+  - { name: facilities, tier: domain, port: 5427, image: maritime/facilities }
+  - { name: revenue, tier: domain, port: 5428, image: maritime/revenue }
+  - { name: ai-assistant, tier: ai, port: 5501, image: maritime/ai-assistant, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
+  - { name: ai-agents, tier: ai, port: 5502, image: maritime/ai-agents, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
+  - { name: insights-api, tier: ai, port: 5503, image: maritime/insights-api }

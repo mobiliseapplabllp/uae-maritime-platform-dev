@@ -1,0 +1,30 @@
+{{- $root := . -}}
+{{- $defaults := .Values.serviceDefaults -}}
+{{- range $svc := .Values.services }}
+{{- $ctx := dict "root" $root "svc" $svc -}}
+{{- $autoscaling := mergeOverwrite (deepCopy $defaults.autoscaling) (default (dict) $svc.autoscaling) -}}
+{{- if $autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $svc.name }}
+  labels:
+    {{- include "maritime.labels" $root | nindent 4 }}
+    {{- include "maritime.selectorLabels" $ctx | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $svc.name }}
+  minReplicas: {{ $autoscaling.minReplicas }}
+  maxReplicas: {{ $autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}
+{{- end }}

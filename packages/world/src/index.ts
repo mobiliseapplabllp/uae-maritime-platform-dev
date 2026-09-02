@@ -5,31 +5,79 @@ import { buildCompanies, buildBerths, type WorldCompany, type WorldBerth } from 
 import { buildVessels, type WorldVessel, REAL_LINERS, isRealLiner } from './vessels';
 import { buildPortCalls, type WorldPortCall } from './operations';
 import { buildSettings, type WorldSetting } from './settings';
+import { buildVesselCertificates, type WorldVesselCertificate } from './certificates';
+import { buildTariffs, buildInvoices, type WorldTariff, type WorldInvoice } from './finance';
+import { buildChecklistTemplates, buildInspections, type WorldChecklistTemplate, type WorldInspection } from './inspection';
+import { buildBerthOutages, buildResources, type WorldBerthOutage, type WorldResource } from './ports';
+import { buildSeafarers, type WorldSeafarer } from './crew';
+import { buildLegalInstruments, type WorldLegalInstrument } from './legislation';
+import { buildLicences, type WorldLicence } from './instruments';
+import { buildRegistrations, type WorldRegistration, type WorldRegistryEntry } from './registry';
+import { buildServiceDefinitions, buildServiceRequests, type WorldServiceDefinition, type WorldServiceRequest } from './services';
+import { buildAgents, type WorldAgentConfig, type WorldAiDecision } from './agents';
+import { buildIncidents, type WorldIncident } from './incidents';
+import { buildSurveillance, type WorldPosition, type WorldMdaAlert } from './surveillance';
 import { ROLE_CATALOGUE, DEFAULT_JURISDICTION, type RoleDefinition } from '@maritime/contracts';
 
-export interface World { profile: string; seed: number; now: string; histStart: string; roles: RoleDefinition[]; users: WorldUser[]; lookups: WorldLookup[]; companies: WorldCompany[]; berths: WorldBerth[]; vessels: WorldVessel[]; portCalls: WorldPortCall[]; settings: WorldSetting[] }
+export interface World {
+  profile: string; seed: number; now: string; histStart: string; roles: RoleDefinition[]; users: WorldUser[]; lookups: WorldLookup[]; companies: WorldCompany[]; berths: WorldBerth[]; vessels: WorldVessel[]; portCalls: WorldPortCall[]; settings: WorldSetting[];
+  vesselCertificates: WorldVesselCertificate[]; tariffs: WorldTariff[]; checklistTemplates: WorldChecklistTemplate[]; berthOutages: WorldBerthOutage[]; resources: WorldResource[]; invoices: WorldInvoice[]; inspections: WorldInspection[];
+  seafarers: WorldSeafarer[]; legalInstruments: WorldLegalInstrument[]; licences: WorldLicence[]; registrations: WorldRegistration[]; registry: WorldRegistryEntry[]; serviceDefinitions: WorldServiceDefinition[]; serviceRequests: WorldServiceRequest[];
+  agentConfigs: WorldAgentConfig[]; aiDecisions: WorldAiDecision[]; incidents: WorldIncident[]; positions: WorldPosition[]; mdaAlerts: WorldMdaAlert[];
+}
 
-/** Builds the whole fictional world deterministically. Every service seeds its own slice from this one object. */
+/** Builds the whole fictional world deterministically. Every section draws from its own forked stream, so every service seeds its own slice from one stable object. */
 export function buildWorld(opts: { profile?: string; seed?: number; now?: Date } = {}): World {
   const profile = (opts.profile ?? process.env.WORLD_PROFILE ?? DEFAULT_JURISDICTION).toUpperCase();
   const seed = opts.seed ?? DEFAULT_SEED;
   const now = opts.now ?? new Date();
-  const rng = new Prng(seed);
-  const users = buildPeople(rng, profile, now);
+  const root = new Prng(seed);
+  const users = buildPeople(root.fork('people'), profile, now);
   const lookups = buildLookups(profile);
-  const companies = buildCompanies(rng, profile, now);
+  const companies = buildCompanies(root.fork('companies'), profile, now);
   const berths = buildBerths();
-  const vessels = buildVessels(rng, profile);
-  const portCalls = buildPortCalls(rng, vessels, berths, now, profile === 'AE' ? 'MAR' : 'REF');
+  const vessels = buildVessels(root.fork('vessels'), profile);
+  const portCalls = buildPortCalls(root.fork('portcalls'), vessels, berths, now, profile === 'AE' ? 'MAR' : 'REF');
   const settings = buildSettings(profile);
-  return { profile, seed, now: now.toISOString(), histStart: HIST_START.toISOString(), roles: ROLE_CATALOGUE, users, lookups, companies, berths, vessels, portCalls, settings };
+  const tariffs = buildTariffs(profile, now);
+  const checklistTemplates = buildChecklistTemplates(profile);
+  const berthOutages = buildBerthOutages(root.fork('outages'), profile, berths, now);
+  const { registrations, registry, closureVesselId } = buildRegistrations(root.fork('registry'), profile, vessels, users, now);
+  const invoices = buildInvoices(root.fork('invoices'), profile, portCalls, vessels, companies, tariffs, now, closureVesselId);
+  const inspections = buildInspections(root.fork('inspections'), portCalls, vessels, checklistTemplates, users, lookups, now);
+  const seafarers = buildSeafarers(root.fork('seafarers'), profile, vessels, now);
+  const legalInstruments = buildLegalInstruments(root.fork('legislation'), profile, users, now);
+  const licences = buildLicences(root.fork('licences'), profile, companies, vessels, seafarers, berths, registry, users, now);
+  const vesselCertificates = buildVesselCertificates(root.fork('certificates'), profile, vessels, licences, registry, now);
+  const serviceDefinitions = buildServiceDefinitions(profile);
+  const serviceRequests = buildServiceRequests(root.fork('services'), profile, serviceDefinitions, licences, users, companies, vessels, seafarers, berths, now);
+  const incidents = buildIncidents(root.fork('incidents'), profile, users, vessels, berths, portCalls, now);
+  const resources = buildResources(root.fork('resources'), profile, users, portCalls, berths, vessels, incidents, now);
+  const { positions, mdaAlerts } = buildSurveillance(root.fork('surveillance'), profile, users, vessels, portCalls, now);
+  const { agentConfigs, aiDecisions } = buildAgents(root.fork('agents'), profile, { users, vessels, vesselCertificates, inspections, licences, serviceDefinitions, serviceRequests, legalInstruments, incidents }, now);
+  return { profile, seed, now: now.toISOString(), histStart: HIST_START.toISOString(), roles: ROLE_CATALOGUE, users, lookups, companies, berths, vessels, portCalls, settings,
+    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, agentConfigs, aiDecisions, incidents, positions, mdaAlerts };
 }
 export const DEMO_PASSWORD = 'Demo@2026';
 export * from './prng';
+export * from './common';
+export * from './geo';
 export * from './people';
 export * from './reference';
 export * from './organisations';
 export * from './vessels';
 export * from './operations';
 export * from './settings';
+export * from './certificates';
+export * from './finance';
+export * from './inspection';
+export * from './ports';
+export * from './crew';
+export * from './legislation';
+export * from './instruments';
+export * from './registry';
+export * from './services';
+export * from './agents';
+export * from './incidents';
+export * from './surveillance';
 export { REAL_LINERS, isRealLiner };

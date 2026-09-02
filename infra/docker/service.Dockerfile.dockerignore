@@ -1,0 +1,14 @@
+# Build-context ignore rules for service.Dockerfile (BuildKit reads <Dockerfile>.dockerignore).
+.git
+.turbo
+.local
+**/node_modules
+**/dist
+**/coverage
+**/.env
+**/.env.*
+!**/.env.example
+apps/mobile/build
+apps/mobile/.dart_tool
+**/__pycache__
+**/.venv

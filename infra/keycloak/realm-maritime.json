@@ -1,0 +1,701 @@
+{
+  "realm": "maritime",
+  "displayName": "Maritime Platform",
+  "displayNameHtml": "<b>Maritime Platform</b>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": false,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "maxTemporaryLockouts": 0,
+  "bruteForceStrategy": "MULTIPLE",
+  "maxFailureWaitSeconds": 900,
+  "minimumQuickLoginWaitSeconds": 60,
+  "waitIncrementSeconds": 60,
+  "quickLoginCheckMilliSeconds": 1000,
+  "maxDeltaTimeSeconds": 43200,
+  "failureFactor": 10,
+  "passwordPolicy": "length(12) and upperCase(1) and lowerCase(1) and digits(1) and notUsername and notEmail",
+  "defaultSignatureAlgorithm": "RS256",
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
+  "accessTokenLifespan": 43200,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 43200,
+  "ssoSessionMaxLifespan": 604800,
+  "ssoSessionIdleTimeoutRememberMe": 0,
+  "ssoSessionMaxLifespanRememberMe": 0,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespanEnabled": false,
+  "clientSessionIdleTimeout": 0,
+  "clientSessionMaxLifespan": 0,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "actionTokenGeneratedByAdminLifespan": 43200,
+  "actionTokenGeneratedByUserLifespan": 300,
+  "oauth2DeviceCodeLifespan": 600,
+  "oauth2DevicePollingInterval": 5,
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyInitialCounter": 0,
+  "otpPolicyDigits": 6,
+  "otpPolicyLookAheadWindow": 1,
+  "otpPolicyPeriod": 30,
+  "otpPolicyCodeReusable": false,
+  "otpSupportedApplications": [
+    "totpAppFreeOTPName",
+    "totpAppGoogleName",
+    "totpAppMicrosoftAuthenticatorName"
+  ],
+  "internationalizationEnabled": true,
+  "supportedLocales": [
+    "en",
+    "ar"
+  ],
+  "defaultLocale": "en",
+  "eventsEnabled": true,
+  "eventsExpiration": 7776000,
+  "enabledEventTypes": [],
+  "adminEventsEnabled": true,
+  "adminEventsDetailsEnabled": true,
+  "browserFlow": "browser-staff-mfa",
+  "directGrantFlow": "direct grant",
+  "clientAuthenticationFlow": "clients",
+  "resetCredentialsFlow": "reset credentials",
+  "registrationFlow": "registration",
+  "dockerAuthenticationFlow": "docker auth",
+  "firstBrokerLoginFlow": "first broker login",
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-user",
+        "description": "Any authenticated platform user (staff or external); fine-grained permissions come from identity-access",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "platform-staff",
+        "description": "Ministry, port and centre staff; MFA applies to members who opt in through the mfa attribute (mandatory outside demos)",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "name": "platform-admin",
+        "description": "Platform administrators (roles matrix, settings, service studio publishing)",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "staff",
+      "path": "/staff",
+      "attributes": {},
+      "realmRoles": [
+        "platform-user",
+        "platform-staff"
+      ],
+      "clientRoles": {},
+      "subGroups": []
+    },
+    {
+      "name": "external",
+      "path": "/external",
+      "attributes": {},
+      "realmRoles": [
+        "platform-user"
+      ],
+      "clientRoles": {},
+      "subGroups": []
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "web",
+      "name": "Maritime web application",
+      "description": "React/MUI web app; PKCE authorization code for browsers and the direct-access grant behind the existing login page",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "rootUrl": "http://localhost:5300",
+      "baseUrl": "/",
+      "redirectUris": [
+        "http://localhost:5300/*",
+        "http://127.0.0.1:5300/*"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "fullScopeAllowed": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5300/*##http://127.0.0.1:5300/*",
+        "use.refresh.tokens": "true",
+        "backchannel.logout.session.required": "true",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "department",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "department",
+            "claim.name": "department",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "designation",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "designation",
+            "claim.name": "designation",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "platform-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "maritime-platform",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "mobile",
+      "name": "Maritime mobile apps",
+      "description": "Flutter apps; PKCE authorization code with a custom-scheme callback",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "maritime://callback"
+      ],
+      "webOrigins": [],
+      "fullScopeAllowed": true,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "maritime://callback",
+        "use.refresh.tokens": "true",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "department",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "department",
+            "claim.name": "department",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "designation",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "designation",
+            "claim.name": "designation",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true",
+            "lightweight.claim": "false"
+          }
+        },
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "platform-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "maritime-platform",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "gateway",
+      "name": "API gateway",
+      "description": "Confidential client used only for token introspection; it issues no tokens of its own",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${KC_GATEWAY_CLIENT_SECRET:development-gateway-secret}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "fullScopeAllowed": false,
+      "attributes": {
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false"
+      }
+    }
+  ],
+  "identityProviders": [
+    {
+      "alias": "uaepass",
+      "displayName": "UAE PASS",
+      "providerId": "oidc",
+      "enabled": false,
+      "updateProfileFirstLoginMode": "on",
+      "trustEmail": false,
+      "storeToken": false,
+      "addReadTokenRoleOnCreate": false,
+      "authenticateByDefault": false,
+      "linkOnly": false,
+      "hideOnLogin": false,
+      "firstBrokerLoginFlowAlias": "first broker login",
+      "config": {
+        "clientId": "uaepass-client-id-placeholder",
+        "clientSecret": "${UAEPASS_CLIENT_SECRET:replace-before-enabling}",
+        "clientAuthMethod": "client_secret_post",
+        "authorizationUrl": "https://id.uaepass.ae/idshub/authorize",
+        "tokenUrl": "https://id.uaepass.ae/idshub/token",
+        "userInfoUrl": "https://id.uaepass.ae/idshub/userinfo",
+        "logoutUrl": "https://id.uaepass.ae/idshub/logout",
+        "issuer": "https://id.uaepass.ae",
+        "defaultScope": "urn:uae:digitalid:profile:general",
+        "validateSignature": "false",
+        "useJwksUrl": "false",
+        "pkceEnabled": "true",
+        "pkceMethod": "S256",
+        "syncMode": "IMPORT",
+        "acrValues": "urn:safelayer:tws:policies:authentication:level:low"
+      }
+    }
+  ],
+  "authenticationFlows": [
+    {
+      "alias": "browser-staff-mfa",
+      "description": "Browser flow: cookie or identity provider, otherwise username/password with OTP required for staff who opted in (mfa=required)",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-cookie",
+          "requirement": "ALTERNATIVE",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "authenticator": "identity-provider-redirector",
+          "requirement": "ALTERNATIVE",
+          "priority": 20,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "flowAlias": "browser-staff-mfa forms",
+          "requirement": "ALTERNATIVE",
+          "priority": 30,
+          "authenticatorFlow": true,
+          "autheticatorFlow": true,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "browser-staff-mfa forms",
+      "description": "Username, password and conditional OTP",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "auth-username-password-form",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false
+        },
+        {
+          "flowAlias": "browser-staff-mfa conditional otp",
+          "requirement": "CONDITIONAL",
+          "priority": 20,
+          "authenticatorFlow": true,
+          "autheticatorFlow": true,
+          "userSetupAllowed": false
+        }
+      ]
+    },
+    {
+      "alias": "browser-staff-mfa conditional otp",
+      "description": "OTP when the user holds platform-staff and has mfa=required",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {
+          "authenticator": "conditional-user-role",
+          "requirement": "REQUIRED",
+          "priority": 10,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticatorConfig": "staff-role-condition"
+        },
+        {
+          "authenticator": "conditional-user-attribute",
+          "requirement": "REQUIRED",
+          "priority": 20,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": false,
+          "authenticatorConfig": "mfa-opt-in-condition"
+        },
+        {
+          "authenticator": "auth-otp-form",
+          "requirement": "REQUIRED",
+          "priority": 30,
+          "authenticatorFlow": false,
+          "autheticatorFlow": false,
+          "userSetupAllowed": true
+        }
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {
+      "alias": "staff-role-condition",
+      "config": {
+        "condition_user_role": "platform-staff",
+        "negate": "false"
+      }
+    },
+    {
+      "alias": "mfa-opt-in-condition",
+      "config": {
+        "attribute_name": "mfa",
+        "attribute_expected_value": "required",
+        "not": "false",
+        "include_group_attributes": "false"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "email": "admin@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Platform",
+      "lastName": "Administrator",
+      "attributes": {
+        "department": [
+          "Digital Services"
+        ],
+        "designation": [
+          "Platform Administrator"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [
+        "platform-admin"
+      ],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"kmucg08F/HvtGT9VV0YZupskQ99DpS7FUzQ2zivLtcI5k5nRWvpvxxNX/A5p19QYthGASe3nrTU8et/Qmgo9yA==\",\"salt\":\"dYvZU1YDfGzbD9YYZ+AgOQ==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "harbour",
+      "email": "harbour@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Harbour",
+      "lastName": "Master",
+      "attributes": {
+        "department": [
+          "Harbour Operations"
+        ],
+        "designation": [
+          "Harbour Master"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"xhM+Ngdy9JRCl4BSDYdtzIvazG1aikAEErLXbd2WrqF2aG4to2hpHycg1Xhe8rUc8vBeqBO2EveEpKo1WmJlrw==\",\"salt\":\"SzsdPkloI5QuNO5tVND/Ig==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "surveyor",
+      "email": "surveyor@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Marine",
+      "lastName": "Surveyor",
+      "attributes": {
+        "department": [
+          "Ship Registration and Survey"
+        ],
+        "designation": [
+          "Marine Surveyor"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"lzghsAVJTpuyHVtOdd0HHfdpL9QT3fFaFRs5LYcI3iirf2ZInFHIJMkTMXylfSaqhbKiSDRQI2R1Wdjw3mlLmg==\",\"salt\":\"7aS4wJlo5WpomW82E5Tc0Q==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "finance",
+      "email": "finance@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Finance",
+      "lastName": "Officer",
+      "attributes": {
+        "department": [
+          "Revenue and Finance"
+        ],
+        "designation": [
+          "Revenue Officer"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"ynRq/ouQj+VmdpqnPDkYW6TV6XUQAeqBaS2rp31Kklt40lez+hcQP2XPgHBKEl7SILFn4Tk6rPl9b+MElC08EQ==\",\"salt\":\"svxLcYZix+yqCMzz6NU86g==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "agent",
+      "email": "agent@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Shipping",
+      "lastName": "Agent",
+      "attributes": {
+        "department": [
+          "Shipping Agency (sample)"
+        ],
+        "designation": [
+          "Port Agent"
+        ]
+      },
+      "groups": [
+        "/external"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"hYQA6k3SlU86Wan7xxnuJzXgYOBkF4oL0RgLgaGX3pLb8V86ZPXEjzuDxqjxSbL3OGj7DVc4W0viziGZCWaRdw==\",\"salt\":\"7igsp60EYc8IXeLJ2AngBA==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "ops2",
+      "email": "ops2@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Operations",
+      "lastName": "Officer",
+      "attributes": {
+        "department": [
+          "Port Operations"
+        ],
+        "designation": [
+          "Operations Officer"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"K4x2gW1vUUGZqrmyoidQpNNdhc57kbB9GYarEEJo/gjKxkHy6fmaz0GyrOxBYUnb5sZcotBnbvUeTotOYxr4gQ==\",\"salt\":\"/OK3kSnZ0A/oJR8gIT1rKA==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    },
+    {
+      "username": "nmc",
+      "email": "nmc@maritime.example",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Centre",
+      "lastName": "Operator",
+      "attributes": {
+        "department": [
+          "National Maritime Centre"
+        ],
+        "designation": [
+          "Duty Officer"
+        ]
+      },
+      "groups": [
+        "/staff"
+      ],
+      "realmRoles": [],
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "userLabel": "demo",
+          "temporary": false,
+          "secretData": "{\"value\":\"Nr3z4KSfbUS+AL7xC4djaPs4tOhZIeWfxplggtuJPmMI7V0lcBigKVpVCmh3Jd/+Hs6i0k3/O19h0eafr2njHw==\",\"salt\":\"RRA74qaM4hRtHTm6vhfOvQ==\",\"additionalParameters\":{}}",
+          "credentialData": "{\"hashIterations\":210000,\"algorithm\":\"pbkdf2-sha512\",\"additionalParameters\":{}}"
+        }
+      ]
+    }
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"required\":{\"roles\":[\"user\"]},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"department\",\"displayName\":\"Department\",\"validations\":{\"length\":{\"max\":120}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false,\"group\":\"organisation\"},{\"name\":\"designation\",\"displayName\":\"Designation\",\"validations\":{\"length\":{\"max\":120}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\"]},\"multivalued\":false,\"group\":\"organisation\"},{\"name\":\"mfa\",\"displayName\":\"MFA (set to required to enforce OTP for this staff member)\",\"validations\":{\"options\":{\"options\":[\"required\",\"optional\"]}},\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false,\"group\":\"organisation\"}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"},{\"name\":\"organisation\",\"displayHeader\":\"Organisation\",\"displayDescription\":\"Department, designation and MFA opt-in maintained by platform administrators\"}],\"unmanagedAttributePolicy\":\"ADMIN_EDIT\"}"
+          ]
+        }
+      }
+    ]
+  },
+  "attributes": {
+    "frontendUrl": "",
+    "acr.loa.map": "{}"
+  }
+}

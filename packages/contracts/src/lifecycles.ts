@@ -114,3 +114,31 @@ export const DEFINITION_TRANSITIONS: TransitionTable<DefinitionStatus> = {
   PROMOTED: ['RETIRED'],
   RETIRED: [],
 };
+
+/** Service-definition *version* lifecycle of the low-code engine, per environment; a version is promoted DEV → UAT → PROD and published in each. */
+export const DEFINITION_ENVIRONMENTS = ['DEV', 'UAT', 'PROD'] as const;
+export type DefinitionEnvironment = (typeof DEFINITION_ENVIRONMENTS)[number];
+export const DEFINITION_VERSION_STATUS = ['DRAFT', 'IN_REVIEW', 'APPROVED', 'PUBLISHED', 'RETIRED'] as const;
+export type DefinitionVersionStatus = (typeof DEFINITION_VERSION_STATUS)[number];
+export const DEFINITION_VERSION_TRANSITIONS: TransitionTable<DefinitionVersionStatus> = {
+  DRAFT: ['IN_REVIEW', 'RETIRED'],
+  IN_REVIEW: ['APPROVED', 'DRAFT'],
+  APPROVED: ['PUBLISHED', 'DRAFT'],
+  PUBLISHED: ['RETIRED'],
+  RETIRED: [],
+};
+export const WORKFLOW_STATE_KINDS = ['START', 'TASK', 'DECISION', 'END'] as const;
+export const WORKFLOW_EFFECT_TYPES = ['computeFee', 'issueInstrument', 'notify', 'setField', 'requireDocuments', 'callService'] as const;
+export const REQUEST_OPEN_STATUS: readonly RequestStatus[] = ['SUBMITTED', 'UNDER_ASSESSMENT', 'INFO_REQUESTED'];
+export const REQUEST_CLOSED_STATUS: readonly RequestStatus[] = ['APPROVED', 'REJECTED', 'ISSUED', 'WITHDRAWN'];
+
+/** Rule sets of the rules service: eligibility and validation checks, fee schedules and SLA clocks, each versioned. */
+export const RULE_SET_KINDS = ['ELIGIBILITY', 'VALIDATION', 'FEE', 'SLA'] as const;
+export type RuleSetKind = (typeof RULE_SET_KINDS)[number];
+export const RULE_VERSION_STATUS = ['DRAFT', 'PUBLISHED', 'RETIRED'] as const;
+export type RuleVersionStatus = (typeof RULE_VERSION_STATUS)[number];
+export const RULE_VERSION_TRANSITIONS: TransitionTable<RuleVersionStatus> = {
+  DRAFT: ['PUBLISHED', 'RETIRED'],
+  PUBLISHED: ['RETIRED'],
+  RETIRED: [],
+};

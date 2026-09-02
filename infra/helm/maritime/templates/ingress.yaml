@@ -1,0 +1,35 @@
+{{- if .Values.gateway.ingress.enabled }}
+{{- $ing := .Values.gateway.ingress -}}
+{{- $gateway := dict "port" 5200 -}}
+{{- range .Values.services }}{{ if eq .name "gateway" }}{{ $_ := set $gateway "port" .port }}{{ end }}{{ end -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "maritime.fullname" . }}-gateway
+  labels:
+    {{- include "maritime.labels" . | nindent 4 }}
+  {{- with $ing.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $ing.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if $ing.tls.enabled }}
+  tls:
+    - hosts: [{{ $ing.host | quote }}]
+      secretName: {{ $ing.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ $ing.host | quote }}
+      http:
+        paths:
+          - path: {{ $ing.path }}
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: {{ $gateway.port }}
+{{- end }}

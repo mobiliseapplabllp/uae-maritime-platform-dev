@@ -1,0 +1,65 @@
+# UAT overlay: no developer ports (only the gateway and web are published, on loopback for the TLS proxy),
+# two replicas for stateless services, resource limits, production runtime settings and Keycloak in
+# production mode behind a TLS-terminating proxy.
+#   docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.uat.yml up -d
+x-uat-service: &uat-service
+  restart: always
+  deploy:
+    replicas: 2
+    resources:
+      limits: { cpus: "1.0", memory: 512M }
+      reservations: { cpus: "0.25", memory: 256M }
+  environment:
+    NODE_ENV: production
+    LOG_LEVEL: ${LOG_LEVEL:-warn}
+    AUTH_MODE: ${AUTH_MODE:-keycloak}
+
+services:
+  postgres:
+    restart: always
+    ports: !reset []
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 4G }
+  nats:
+    restart: always
+    ports: !reset []
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 1G }
+  keycloak:
+    restart: always
+    ports: !override ["127.0.0.1:8180:8080"]
+    command: ["start", "--import-realm", "--http-port=8080", "--http-enabled=true", "--proxy-headers=xforwarded"]
+    environment:
+      KC_HOSTNAME: ${KC_HOSTNAME:-id.uat.maritime.example}
+      KC_HOSTNAME_STRICT: "true"
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: 2G }
+  identity-access:
+    <<: *uat-service
+    ports: !reset []
+  mdm:
+    <<: *uat-service
+    ports: !reset []
+  audit-ledger:
+    <<: *uat-service
+    ports: !reset []
+  notifications:
+    <<: *uat-service
+    ports: !reset []
+  gateway:
+    <<: *uat-service
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-warn}
+      TRUST_PROXY: "true"
+    ports: !override ["127.0.0.1:5200:5200"]
+  web:
+    restart: always
+    ports: !override ["127.0.0.1:5300:8080"]
+    deploy:
+      replicas: 2
+      resources:
+        limits: { cpus: "0.5", memory: 128M }

@@ -1,0 +1,9 @@
+apiVersion: v2
+name: maritime
+description: Maritime digital-services platform — API gateway and the platform, domain and AI services (PostgreSQL, NATS and Keycloak are external endpoints)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords: [maritime, gateway, microservices]
+maintainers:
+  - name: Mobilise App Lab

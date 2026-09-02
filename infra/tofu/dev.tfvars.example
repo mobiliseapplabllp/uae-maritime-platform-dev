@@ -1,0 +1,7 @@
+region      = "me-central-1"
+environment = "dev"
+kubernetes_cluster = {
+  name       = "maritime-dev"
+  node_count = 3
+}
+database_tier = "small"

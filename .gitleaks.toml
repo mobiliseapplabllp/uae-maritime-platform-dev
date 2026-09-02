@@ -1,0 +1,29 @@
+# Gitleaks configuration: default rules plus an allowlist for the documented development defaults, which are
+# not secrets (they only work against the local runtime) and for the pre-hashed demo credentials in the realm file.
+title = "maritime platform"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "documented development defaults and generated material"
+regexTarget = "line"
+regexes = [
+  '''development-service-token''',
+  '''development-gateway-secret''',
+  '''development-only-secret-change-me''',
+  '''Demo@2026''',
+  '''maritime:maritime@''',
+  '''KC_BOOTSTRAP_ADMIN_PASSWORD''',
+  '''KC_ADMIN_PASSWORD''',
+  '''--password admin''',
+  '''replace-before-enabling''',
+  '''uaepass-client-id-placeholder''',
+  '''\$\{[A-Z][A-Z0-9_]*(:[^}]*)?\}''',
+  '''"secretData"\s*:\s*"\{\\"value\\":\\"[A-Za-z0-9+/=]+\\",\\"salt\\":\\"[A-Za-z0-9+/=]+\\"''',
+]
+paths = [
+  '''pnpm-lock\.yaml''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+]
