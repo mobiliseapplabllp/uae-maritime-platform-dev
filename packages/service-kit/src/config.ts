@@ -15,7 +15,7 @@ export const baseEnvSchema = z.object({
   JWT_REFRESH_EXPIRES_IN_SEC: z.coerce.number().default(7 * 24 * 3600),
   KEYCLOAK_ISSUER: z.string().optional(),
   KEYCLOAK_JWKS_URI: z.string().optional(),
-  KEYCLOAK_AUDIENCE: z.string().optional(),
+  KEYCLOAK_AUDIENCE: z.string().default('maritime-platform'),
   SERVICE_TOKEN: z.string().default('development-service-token'),
   IDENTITY_URL: z.string().default('http://127.0.0.1:5401'),
   MDM_URL: z.string().default('http://127.0.0.1:5402'),
