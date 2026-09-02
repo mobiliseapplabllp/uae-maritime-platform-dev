@@ -57,3 +57,8 @@ user as documents and are not in git.
 3. Decide whether the analytics portal stays a separate `apps/insights` or folds into the web app.
 4. Document reconciliations listed in the plan's appendix D (currency, credits, ownership, totals,
    hosting stack wording) — outside this repository.
+
+### Progress log (latest first)
+- Foundation green: contracts, service-kit, world (all registers), identity-access, mdm, audit-ledger, notifications, gateway (16 tests), reporting (read models fed by `readmodel.upserted` events, seeded through the same projections). Web: shell + login + command centre + admin + Data Studio + settings + berth board; module pages in progress.
+- Operational notes: the sandbox was OOM-killed once when six build agents ran in parallel — keep concurrent builds to three. Native runtime: `infra/local/runtime.sh start`, then `infra/local/services.sh seed && infra/local/services.sh start`.
+- Read-model contract: every domain service publishes `readmodel.upserted { kind, entity }` (kinds in `services/reporting/src/consumer.ts`) after each write, plus its business event; reporting/search/cards/dashboards read only their projections.
