@@ -71,7 +71,7 @@ export class AuthService {
     await withTx(this.pool, async (c) => {
       await c.query('INSERT INTO refresh_tokens(user_id, token_hash, expires_at) VALUES ($1, $2, now() + ($3::int * interval \'1 second\'))', [user.id, sha256(refresh), this.env.JWT_REFRESH_EXPIRES_IN_SEC]);
       await c.query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
-      await this.audit.record(c, { action: 'LOGIN', entity: 'User', entityId: user.id, entityLabel: user.email, note: ip ?? undefined });
+      await this.audit.record(c, { action: 'LOGIN', entity: 'User', entityId: user.id, entityLabel: user.email, note: ip ?? undefined, actor: { id: user.id, name: user.name, email: user.email, kind: 'user' } });
     });
     return { user: toSafe(user), token, refreshToken: refresh };
   }
