@@ -1,0 +1,43 @@
+{
+  "name": "@maritime/documents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Documents: the evidence and document store every module attaches files to — local or S3 storage, virus scanning, audience permissions, signed URLs, versions, legal hold and retention",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "swc src -d dist --config-file ../../.swcrc.template.json --strip-leading-paths && tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js",
+    "dev": "node --watch dist/main.js",
+    "migrate": "node dist/migrate.js",
+    "seed": "node dist/seed.js",
+    "test": "vitest run",
+    "lint": "echo lint-ok"
+  },
+  "dependencies": {
+    "@maritime/contracts": "workspace:*",
+    "@maritime/service-kit": "workspace:*",
+    "@maritime/world": "workspace:*",
+    "@nestjs/common": "11.2.3",
+    "@nestjs/core": "11.2.3",
+    "@nestjs/platform-express": "11.2.3",
+    "@nestjs/swagger": "11.4.7",
+    "multer": "2.2.0",
+    "pg": "8.23.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@swc/cli": "0.8.1",
+    "@swc/core": "1.16.1",
+    "@types/express": "5.0.3",
+    "@types/multer": "2.2.0",
+    "@types/pg": "8.23.1",
+    "@types/supertest": "7.2.1",
+    "supertest": "7.2.2",
+    "typescript": "5.9.3",
+    "unplugin-swc": "1.5.11",
+    "vitest": "4.1.11"
+  }
+}

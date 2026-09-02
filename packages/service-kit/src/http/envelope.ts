@@ -49,7 +49,7 @@ export class ApiExceptionFilter implements ExceptionFilter {
         body = { ...o, success: false, message: status === 404 && /^Cannot [A-Z]+ /.test(String(msg)) ? 'API route not found' : msg };
         delete body.statusCode; delete body.error;
       }
-    } else if (exception instanceof ZodError) {
+    } else if (isZodError(exception)) {
       status = 400;
       body = { success: false, message: exception.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; ') };
     } else if (isPgError(exception)) {
@@ -64,4 +64,6 @@ export class ApiExceptionFilter implements ExceptionFilter {
     res.status(status).json(body);
   }
 }
+/** Duck-typed: a ZodError raised by a service's own zod instance (ESM under vitest) must still map to 400. */
+const isZodError = (e: unknown): e is ZodError => e instanceof ZodError || (!!e && typeof e === 'object' && (e as { name?: unknown }).name === 'ZodError' && Array.isArray((e as { issues?: unknown }).issues));
 const isPgError = (e: unknown): boolean => !!e && typeof e === 'object' && typeof (e as { code?: unknown }).code === 'string' && /^[0-9A-Z]{5}$/.test((e as { code: string }).code);
