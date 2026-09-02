@@ -1,0 +1,27 @@
+# dependencies and builds
+node_modules/
+dist/
+build/
+coverage/
+.turbo/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# environment and secrets — never commit
+.env
+.env.*
+!.env.example
+!.env.*.example
+# local runtime (symlink to the container's native runtime)
+.local
+.local/
+# editor and OS
+.DS_Store
+.idea/
+.vscode/
+*.log
+# mobile
+apps/mobile/build/
+apps/mobile/.dart_tool/
