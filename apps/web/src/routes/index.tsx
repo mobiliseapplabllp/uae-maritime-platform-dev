@@ -18,6 +18,7 @@ import { routes as invoiceRoutes } from '../pages/invoices/routes';
 import { routes as misRoutes } from '../pages/mis/routes';
 import { routes as incidentRoutes } from '../pages/incidents/routes';
 import { routes as inspectionRoutes } from '../pages/inspections/routes';
+import { routes as agentRoutes } from '../pages/agents/routes';
 
 export interface RouteDef { path: string; perm?: string; element?: ReactNode; redirect?: string }
 const L = (f: () => Promise<{ default: React.ComponentType<any> }>) => { const C = lazy(f); return <C />; };
@@ -52,5 +53,5 @@ export const ROUTES: RouteDef[] = [
   { path: '/profile', element: L(() => import('../pages/ProfilePage')) },
   ...vesselRoutes, ...registryRoutes, ...riskRoutes, ...portCallRoutes, ...opsRoutes, ...nmcRoutes,
   ...seafarerRoutes, ...legislationRoutes, ...facilitiesRoutes, ...invoiceRoutes, ...misRoutes,
-  ...incidentRoutes, ...inspectionRoutes,
+  ...incidentRoutes, ...inspectionRoutes, ...agentRoutes,
 ];

@@ -16,6 +16,8 @@ import HubRoundedIcon from '@mui/icons-material/HubRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
+import PendingActionsRoundedIcon from '@mui/icons-material/PendingActionsRounded';
+import VerifiedUserRoundedIcon from '@mui/icons-material/VerifiedUserRounded';
 import AnchorRoundedIcon from '@mui/icons-material/AnchorRounded';
 import WorkspacePremiumRoundedIcon from '@mui/icons-material/WorkspacePremiumRounded';
 import ListAltRoundedIcon from '@mui/icons-material/ListAltRounded';
@@ -113,10 +115,12 @@ export const MODULES: ModuleDef[] = [
       { to: '/masters/berths', label: 'Berths & Terminals', icon: AnchorRoundedIcon, perm: 'masters.view' },
       { to: '/masters/lookups', label: 'Raw Lookups', icon: ListAltRoundedIcon, perm: 'masters.view' },
     ] }] },
-  { key: 'agents', name: 'AI Agent Operations', short: 'AI Agents', color: '#75479C', desc: 'Agent registry, autonomy and the AI decision register', icon: SmartToyRoundedIcon, perm: 'agents.view', home: '/agents',
+  { key: 'agents', name: 'AI Agent Operations', short: 'AI Agents', color: '#75479C', desc: 'Agent registry, autonomy, the decision register, the escalation queue and assurance', icon: SmartToyRoundedIcon, perm: 'agents.view', home: '/agents',
     nav: [{ header: 'AI Agents', items: [
       { to: '/agents', label: 'Agent Operations', icon: SmartToyRoundedIcon, perm: 'agents.view' },
       { to: '/agents/decisions', label: 'Decision Register', icon: FactCheckRoundedIcon, perm: 'agents.view' },
+      { to: '/agents/escalations', label: 'Escalation Queue', icon: PendingActionsRoundedIcon, perm: 'agents.view' },
+      { to: '/agents/assurance', label: 'Assurance', icon: VerifiedUserRoundedIcon, perm: 'agents.view' },
     ] }] },
   { key: 'admin', name: 'Administration', short: 'Admin', color: '#0A2239', desc: 'Users, roles, audit log and settings', icon: AdminPanelSettingsRoundedIcon, perm: 'users.view', home: '/admin/users',
     nav: [{ header: 'Administration', items: [
