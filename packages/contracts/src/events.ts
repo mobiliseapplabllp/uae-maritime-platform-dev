@@ -40,8 +40,22 @@ export const EVENTS = {
     signedOn: 'seafarers.signed-on', signedOff: 'seafarers.signed-off',
   },
   legislation: { instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn' },
-  maritimeCentre: { alertRaised: 'maritime-centre.alert.raised', positionUpdated: 'maritime-centre.position.updated', incidentOpened: 'maritime-centre.incident.opened', restrictionProposed: 'maritime-centre.restriction.proposed' },
-  inspection: { closed: 'inspection.inspection.closed', deficiency: 'inspection.deficiency.raised', detention: 'inspection.detention.ordered', riskScored: 'inspection.risk.scored' },
+  maritimeCentre: {
+    alertRaised: 'maritime-centre.alert.raised', positionUpdated: 'maritime-centre.position.updated', incidentOpened: 'maritime-centre.incident.opened', restrictionProposed: 'maritime-centre.restriction.proposed',
+    // added by the maritime-centre service: every change to a case file, to the threads hanging off it, and to the surveillance picture
+    incidentUpdated: 'maritime-centre.incident.updated', incidentTransitioned: 'maritime-centre.incident.transitioned', incidentAssigned: 'maritime-centre.incident.assigned',
+    incidentResolved: 'maritime-centre.incident.resolved', incidentClosed: 'maritime-centre.incident.closed', incidentDeleted: 'maritime-centre.incident.deleted',
+    incidentCommLogged: 'maritime-centre.incident.comm-logged', incidentTaskAdded: 'maritime-centre.incident.task-added', incidentTaskUpdated: 'maritime-centre.incident.task-updated',
+    incidentDocumentAdded: 'maritime-centre.incident.document-added', incidentNoted: 'maritime-centre.incident.noted',
+    alertAcknowledged: 'maritime-centre.alert.acknowledged', restrictionDecided: 'maritime-centre.restriction.decided',
+  },
+  inspection: {
+    closed: 'inspection.inspection.closed', deficiency: 'inspection.deficiency.raised', detention: 'inspection.detention.ordered', riskScored: 'inspection.risk.scored',
+    // added by the inspection service: every step of a survey, its findings, its detention and the checklist templates it is worked from
+    planned: 'inspection.inspection.planned', updated: 'inspection.inspection.updated', started: 'inspection.inspection.started', deleted: 'inspection.inspection.deleted',
+    detentionReleased: 'inspection.detention.released', deficiencyUpdated: 'inspection.deficiency.updated', deficiencyRectified: 'inspection.deficiency.rectified', deficiencyWithdrawn: 'inspection.deficiency.withdrawn',
+    checklistScored: 'inspection.checklist.scored', templateCreated: 'inspection.template.created', templateUpdated: 'inspection.template.updated', templateActivated: 'inspection.template.activated', templateDeleted: 'inspection.template.deleted',
+  },
   ports: {
     portCallScheduled: 'ports.portcall.scheduled', berthed: 'ports.portcall.berthed', socIssued: 'ports.soc.issued',
     // added by the ports service: every lifecycle step of a call, and the estate and marine-craft changes the harbour desk makes
