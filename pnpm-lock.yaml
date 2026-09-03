@@ -8,9 +8,18 @@ importers:
 
   .:
     devDependencies:
+      '@eslint/js':
+        specifier: 9.39.5
+        version: 9.39.5
       '@types/node':
         specifier: 22.15.3
         version: 22.15.3
+      eslint:
+        specifier: 9.39.5
+        version: 9.39.5
+      eslint-plugin-react-hooks:
+        specifier: 7.1.1
+        version: 7.1.1(eslint@9.39.5)
       prettier:
         specifier: 3.9.6
         version: 3.9.6
@@ -20,6 +29,9 @@ importers:
       typescript:
         specifier: 5.9.3
         version: 5.9.3
+      typescript-eslint:
+        specifier: 8.69.0
+        version: 8.69.0(eslint@9.39.5)(typescript@5.9.3)
 
   apps/web:
     dependencies:

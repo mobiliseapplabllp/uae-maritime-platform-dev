@@ -111,7 +111,7 @@ export type InstrumentApi = ReturnType<typeof instrumentApi>;
 
 export interface CompanyExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; history?: ReturnType<typeof statusEntryApi>[]; facilities?: FacilityApi[] }
 /** The company as the directory, the detail screen and every read-model event see it. */
-export function companyApi(c: CompanyRow, extra: CompanyExtras = {}, now = new Date()) {
+export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
   const instruments = extra.instruments ?? [];
   const audits = extra.audits ?? [];
   const obligations = extra.obligations ?? [];

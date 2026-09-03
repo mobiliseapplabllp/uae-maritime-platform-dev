@@ -47,7 +47,6 @@ export const meanConfidence = (decisions: MetricDecision[]): number =>
 export function performance(agents: MetricAgent[], decisions: MetricDecision[], now: Date, windowDays = 30) {
   const since = now.getTime() - windowDays * D;
   const recent = decisions.filter((d) => ms(d.at) >= since);
-  const reviewed = decisions.filter(REVIEWED);
   const auto = decisions.filter((d) => d.disposition === 'AUTO_APPLIED');
   const byAgent = new Map<string, MetricDecision[]>();
   for (const d of decisions) { const l = byAgent.get(d.agentId) ?? []; l.push(d); byAgent.set(d.agentId, l); }

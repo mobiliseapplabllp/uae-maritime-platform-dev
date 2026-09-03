@@ -22,7 +22,6 @@ const put = (p: string, body: unknown, t = admin) => request(server as never).pu
 const del = (p: string, t = admin) => request(server as never).delete(p).set('authorization', t);
 const outbox = async (type: string) => (await pool.query('SELECT payload FROM outbox WHERE subject = $1 ORDER BY id', [subjectFor(type)])).rows.map((r) => r.payload as { type: string; subject?: string; data: Record<string, any> });
 const clearOutbox = () => pool.query('DELETE FROM outbox');
-const H = 3_600_000;
 
 beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });

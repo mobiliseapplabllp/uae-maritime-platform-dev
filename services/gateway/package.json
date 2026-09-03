@@ -10,7 +10,7 @@
     "start": "node dist/main.js",
     "dev": "node --watch dist/main.js",
     "test": "vitest run",
-    "lint": "echo lint-ok"
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",

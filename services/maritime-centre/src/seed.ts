@@ -61,7 +61,6 @@ export async function seedMaritimeCentre(databaseUrl: string, profile = 'AE') {
     let comms = 0; let tasks = 0; let documents = 0; let logs = 0; let history = 0;
     for (const i of world.incidents as WorldIncident[]) {
       const berth = i.berthId ? berthById.get(i.berthId) : undefined;
-      const officer = userByName.get(i.assignedTo);
       const responding = i.statusHistory.find((h) => h.to === 'RESPONDING')?.at ?? null;
       await c.query(`INSERT INTO incidents(id, number, category, type, severity, priority, status, title, description, vessel_id, vessel_name, berth_id, berth_code, berth_terminal,
           location, reported_at, reported_by, source, assigned_to_id, assigned_to, assets, injuries, pollution_tier, weather, rca,

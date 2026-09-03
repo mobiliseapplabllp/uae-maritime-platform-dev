@@ -110,7 +110,7 @@ export class CompaniesController {
   }
 
   @RequirePerm('facilities.manage') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>, @CurrentUser() user?: Principal) {
+  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>) {
     return withTx(this.pool, async (c) => {
       const before = await loadCompany(c, id, true);
       if (b.status && b.status !== before.status) throw conflict('A company\'s standing is changed through its status endpoint, with the reason it was changed for');

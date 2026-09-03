@@ -76,7 +76,6 @@ export async function seedWorkflow(databaseUrl: string, profile?: string) {
     for (const r of world.serviceRequests) {
       const d = defByCode.get(r.serviceCode)!; const definitionId = idByCode.get(r.serviceCode)!;
       const m = /^SR-(\d{4})-(\d+)$/.exec(r.requestNo); if (m) maxSeq.set(m[1], Math.max(maxSeq.get(m[1]) ?? 0, Number(m[2])));
-      const open = ['SUBMITTED', 'UNDER_ASSESSMENT', 'INFO_REQUESTED'].includes(r.status);
       const lines = d.feeLines.map((l) => ({ code: l.code, description: l.label, descriptionAr: l.labelAr ?? null, unit: 'application', qty: 1, rate: l.amount, amount: l.amount, taxable: true }));
       const subtotalM = lines.reduce((s, l) => s + Math.round(l.amount * 100), 0); const taxM = Math.round((subtotalM * j.tax.ratePct) / 100);
       const fees = r.submittedAt ? { lines, subtotal: subtotalM / 100, taxRatePct: j.tax.ratePct, taxAmount: taxM / 100, total: (subtotalM + taxM) / 100, currency, ruleSetKey: d.feeLines.length ? `fee.${d.key}` : null, ruleSetVersion: d.feeLines.length ? 1 : null, computedAt: r.submittedAt } : {};

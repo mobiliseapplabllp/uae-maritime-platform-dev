@@ -10,7 +10,7 @@
  * CORS_ORIGIN and RATE_LIMIT_PER_MIN are honoured the same way. No dependencies: runs with Node's
  * type stripping (node --experimental-strip-types tools/gateway/render-kong.ts).
  */
-import { API_PREFIX, DEFAULT_BODY_LIMIT, ROUTES, SERVICES, UPSTREAM_TIMEOUT_MS, resolveRoutes, type ResolvedRoute } from '../../services/gateway/src/routes.ts';
+import { API_PREFIX, DEFAULT_BODY_LIMIT, SERVICES, UPSTREAM_TIMEOUT_MS, resolveRoutes, type ResolvedRoute } from '../../services/gateway/src/routes.ts';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');

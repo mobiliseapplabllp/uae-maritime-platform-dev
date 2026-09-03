@@ -125,7 +125,7 @@ export function buildServiceRequests(rng: Prng, profile: string, defs: WorldServ
   const docsFor = (def: WorldServiceDefinition, at: Date, verified: boolean): WorldRequestDoc[] => def.requiredDocuments.map((d) => ({ key: d.key, label: d.label, fileName: `${d.key}.pdf`, uploadedAt: iso(at), verified, verifiedBy: verified ? 'Registry' : '', verifiedAt: verified ? iso(at.getTime() + 2 * D) : null, notes: '' }));
   const out: WorldServiceRequest[] = [];
   const push = (def: WorldServiceDefinition, kind: SubjectKind, subjectId: string | null, subjectModel: WorldServiceRequest['subjectModel'], subjectLabel: string, status: RequestStatus, created: Date, submitted: Date | null, closed: Date | null, formData: Record<string, unknown>, instrument?: WorldLicence) => {
-    const app = applicantFor(kind, subjectId); const who = assignee(kind); const open = !['ISSUED', 'REJECTED', 'APPROVED', 'WITHDRAWN', 'DRAFT'].includes(status);
+    const app = applicantFor(kind, subjectId); const who = assignee(kind);
     const timeline: WorldHistoryEntry[] = [hist('', 'DRAFT', created, app.name, 'Application started')];
     if (submitted) timeline.push(hist('DRAFT', 'SUBMITTED', submitted, app.name, 'Application lodged'));
     if (submitted && !['SUBMITTED', 'DRAFT'].includes(status) && status !== 'WITHDRAWN') timeline.push(hist('SUBMITTED', 'UNDER_ASSESSMENT', submitted.getTime() + D, who.name));

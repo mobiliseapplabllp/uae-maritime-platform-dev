@@ -81,7 +81,7 @@ export class PortFacilitiesController {
   }
 
   @RequirePerm('facilities.manage') @Post()
-  async create(@Body(zod(body)) b: z.infer<typeof body>, @CurrentUser() user?: Principal) {
+  async create(@Body(zod(body)) b: z.infer<typeof body>) {
     return withTx(this.pool, async (c) => {
       const code = b.code?.trim() || await nextNumber(c, `${this.env.FACILITY_PREFIX}-code`, `${this.env.FACILITY_PREFIX}-`, 4);
       const dupe = await c.query('SELECT id FROM port_facilities WHERE upper(code) = upper($1)', [code]);
@@ -100,7 +100,7 @@ export class PortFacilitiesController {
   }
 
   @RequirePerm('facilities.manage') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>, @CurrentUser() user?: Principal) {
+  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>) {
     return withTx(this.pool, async (c) => {
       const before = await loadFacility(c, id, true);
       if (b.code && b.code.toUpperCase() !== before.code.toUpperCase()) {
@@ -128,7 +128,7 @@ export class PortFacilitiesController {
 
   /** Where the facility stands under the ISPS Code, and until when. */
   @RequirePerm('facilities.manage') @Post(':id/isps')
-  async isps(@Param('id') id: string, @Body(zod(ispsBody)) b: z.infer<typeof ispsBody>, @CurrentUser() user?: Principal) {
+  async isps(@Param('id') id: string, @Body(zod(ispsBody)) b: z.infer<typeof ispsBody>) {
     return withTx(this.pool, async (c) => {
       const before = await loadFacility(c, id, true);
       if (before.isps_status === b.ispsStatus && !b.socNo && b.ispsLevel === undefined) throw conflict(`${before.name} is already recorded as ${b.ispsStatus.toLowerCase().replace(/_/g, ' ')}`);

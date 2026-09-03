@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Inject, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, ENDORSEMENT_KINDS, ENDORSEMENT_RESULTS, INSTRUMENT_CLASSES, LICENSE_STATUS, LICENSE_TRANSITIONS, LICENSE_TYPES, LICENSE_TYPES_BY_SUBJECT, SUBJECT_KINDS, hasPerm, instrumentClassOf, typeAllowedFor, type LicenseStatus, type PageQuery, type SubjectKind } from '@maritime/contracts';

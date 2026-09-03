@@ -293,7 +293,7 @@ export class SeafarersController {
    * a medical that lapses next month is a medical that lapses at sea. The gate answers 422 with the failed
    * checks so the desk can see them; an officer may override, and the override is recorded against them. */
   @RequirePerm('seafarers.edit') @Post(':id/sign-on')
-  async signOn(@Param('id') id: string, @Body(zod(signOnBody)) body: z.infer<typeof signOnBody>, @CurrentUser() user?: Principal) {
+  async signOn(@Param('id') id: string, @Body(zod(signOnBody)) body: z.infer<typeof signOnBody>) {
     return withTx(this.pool, async (c) => {
       const found = await c.query<SeafarerRow>('SELECT * FROM seafarers WHERE id::text = $1 FOR UPDATE', [id]);
       const s = found.rows[0];

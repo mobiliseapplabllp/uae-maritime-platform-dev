@@ -12,7 +12,7 @@
     "migrate": "node dist/migrate.js",
     "seed": "node dist/seed.js",
     "test": "vitest run",
-    "lint": "echo lint-ok"
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
     "@maritime/contracts": "workspace:*",

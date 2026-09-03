@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "e2e": "playwright test",
-    "lint": "eslint src --max-warnings 0"
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
     "@emotion/cache": "11.14.0",

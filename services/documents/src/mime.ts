@@ -56,6 +56,7 @@ export const contentMatches = (mime: string, buffer: Buffer): boolean => ALLOWED
 /** A file name safe for storage metadata and Content-Disposition: no path segments, no control characters, bounded length. */
 export function safeFileName(name: string | undefined | null, fallback = 'document'): string {
   const base = String(name ?? '').split(/[\\/]/).pop() ?? '';
+  // eslint-disable-next-line no-control-regex -- stripping control characters is the point of this sanitiser.
   const cleaned = base.replace(/[\u0000-\u001f\u007f"]/g, '').trim();
   return (cleaned || fallback).slice(0, 200);
 }

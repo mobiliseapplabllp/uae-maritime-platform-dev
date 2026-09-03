@@ -4,7 +4,7 @@ import { addMonths, certStatus, stableId, type WorldEndorsement } from '@maritim
 import type { Env } from './env';
 import type { Signature, SigningService, Verification } from './signing';
 import { forceState, isStatutory, nonExpiring, termMonthsOf, CERT_LABEL, CONVENTION, typeLabel, classLabel, type ForceState } from './statutory';
-import { checksFor, blockingFailures, resolveSubject, MODEL_BY_KIND, type Check } from './subjects';
+import { checksFor, blockingFailures, resolveSubject, type Check } from './subjects';
 
 /* The register row and everything the engine does to it that both the API and the event consumer need: numbering,
  * issue (checks, term, signature, mirror), transitions and the read-model snapshot every write publishes. */

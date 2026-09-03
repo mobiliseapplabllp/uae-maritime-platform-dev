@@ -31,7 +31,7 @@ export default function SignOnOffDialog({ seafarer, open, onClose, onDone }: { s
     const req = isSignOn ? api.post(`/seafarers/${seafarer.id}/sign-on`, body) : api.post<SignOffResult>(`/seafarers/${seafarer.id}/sign-off`, { remarks: vals.remarks || undefined });
     req.then((r) => {
       const vesselName = vessels.find((v) => v.id === vals.vesselId)?.name || seafarer.currentVesselName || 'vessel';
-      dispatch(notify(isSignOn ? t('seafarers.signedOn', { vessel: vesselName }) : t('seafarers.signedOff', { days: (r.data as SignOffResult).seaServiceDays })));
+      dispatch(notify(isSignOn ? t('seafarers.signedOnDone', { vessel: vesselName }) : t('seafarers.signedOffDone', { days: (r.data as SignOffResult).seaServiceDays })));
       onDone(); onClose();
     }).catch((e: ApiError) => {
       const payload = e.payload as { data?: SignOnGate } | undefined;

@@ -6,7 +6,7 @@ export interface BillTo { companyId?: string | null; name: string; address?: str
 export interface InvoiceRow {
   id: string; number: string; portCallId?: string | null; vcn?: string; vesselId?: string | null; vesselName?: string; billTo: BillTo;
   subtotal: number; taxName?: string; taxRatePct: number; taxAmount: number; total: number; currency?: string; status: InvoiceStatus;
-  issuedAt?: string | null; dueAt?: string | null; paidAt?: string | null; paymentRef?: string; notes?: string; createdAt?: string;
+  issuedAt?: string | null; dueAt?: string | null; paidAt?: string | null; paymentRef?: string; paidAmount?: number; balance?: number; notes?: string; createdAt?: string;
 }
 /** GET /invoices/:id — the row with its lines and, where the service joins them, the vessel and call particulars. */
 export interface Invoice extends InvoiceRow {
