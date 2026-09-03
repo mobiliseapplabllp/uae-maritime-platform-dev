@@ -39,7 +39,14 @@ export const EVENTS = {
     seaServiceAdded: 'seafarers.sea-service.added', seaServiceDeleted: 'seafarers.sea-service.deleted',
     signedOn: 'seafarers.signed-on', signedOff: 'seafarers.signed-off',
   },
-  legislation: { instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn' },
+  legislation: {
+    instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn',
+    // added by the legislation service: the drafting, review, clearance and approval chain, the register's own changes and the acknowledgement roll
+    instrumentDrafted: 'legislation.instrument.drafted', instrumentUpdated: 'legislation.instrument.updated', instrumentDeleted: 'legislation.instrument.deleted',
+    instrumentReviewed: 'legislation.instrument.reviewed', instrumentCleared: 'legislation.instrument.cleared', instrumentSuperseded: 'legislation.instrument.superseded',
+    instrumentLinked: 'legislation.instrument.linked', instrumentUnlinked: 'legislation.instrument.unlinked', instrumentAttached: 'legislation.instrument.attached',
+    acknowledgementRecorded: 'legislation.acknowledgement.recorded', acknowledgementRequested: 'legislation.acknowledgement.requested',
+  },
   maritimeCentre: {
     alertRaised: 'maritime-centre.alert.raised', positionUpdated: 'maritime-centre.position.updated', incidentOpened: 'maritime-centre.incident.opened', restrictionProposed: 'maritime-centre.restriction.proposed',
     // added by the maritime-centre service: every change to a case file, to the threads hanging off it, and to the surveillance picture
@@ -62,7 +69,16 @@ export const EVENTS = {
     confirmed: 'ports.portcall.confirmed', anchored: 'ports.portcall.anchored', sailed: 'ports.portcall.sailed', cancelled: 'ports.portcall.cancelled',
     updated: 'ports.portcall.updated', deleted: 'ports.portcall.deleted', berthChanged: 'ports.berth.changed', berthOutageRecorded: 'ports.berth.outage-recorded', resourceChanged: 'ports.resource.changed',
   },
-  facilities: { licenceIssued: 'facilities.licence.issued', licenceSuspended: 'facilities.licence.suspended' },
+  facilities: {
+    licenceIssued: 'facilities.licence.issued', licenceSuspended: 'facilities.licence.suspended',
+    // added by the facilities service: the regulated-company overlay on the golden record, the port-facility register and the compliance record kept on both
+    companyRegistered: 'facilities.company.registered', companyUpdated: 'facilities.company.updated', companyDeleted: 'facilities.company.deleted',
+    companyStatusChanged: 'facilities.company.status-changed', companySuspended: 'facilities.company.suspended', companyBlacklisted: 'facilities.company.blacklisted',
+    companyAudited: 'facilities.company.audited', companyRated: 'facilities.company.rated',
+    facilityRegistered: 'facilities.facility.registered', facilityUpdated: 'facilities.facility.updated', facilityDeleted: 'facilities.facility.deleted',
+    facilityIspsChanged: 'facilities.facility.isps-changed', facilityAudited: 'facilities.facility.audited',
+    obligationRaised: 'facilities.obligation.raised', obligationCleared: 'facilities.obligation.cleared', renewalDue: 'facilities.renewal.due',
+  },
   revenue: {
     invoiceIssued: 'revenue.invoice.issued', paymentReceived: 'revenue.payment.received',
     // added by the revenue service: the rest of the invoice lifecycle, the overdue sweep and rate-card changes
