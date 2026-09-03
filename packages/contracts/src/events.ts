@@ -86,7 +86,14 @@ export const EVENTS = {
   },
   integration: { externalSyncCompleted: 'integration.external-sync.completed' },
   scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit' },
-  ai: { draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded' },
+  ai: {
+    draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded',
+    // added by the agentic runtime: the escalation the autonomy ladder forced, the human outcome on it, and every change to what an agent is allowed to do
+    decisionEscalated: 'ai.decision.escalated', decisionReviewed: 'ai.decision.reviewed', decisionOverridden: 'ai.decision.overridden',
+    agentConfigured: 'ai.agent.configured', agentSuspended: 'ai.agent.suspended', agentRan: 'ai.agent.ran',
+    // added by the assistant: an answer given from the platform's own records, with the records it cited
+    answered: 'ai.assistant.answered', conversationStarted: 'ai.assistant.conversation-started',
+  },
   /** Read-model snapshots: every domain service publishes the API-shaped record after each change so reporting and search stay current. data = { kind, entity } / { kind, id }. */
   readModel: { upserted: 'readmodel.upserted', deleted: 'readmodel.deleted' },
 } as const;
