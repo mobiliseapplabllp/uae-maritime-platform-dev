@@ -157,7 +157,7 @@ afterAll(async () => { await pool?.end(); await app?.close(); });
 
 describe('workflow API', () => {
   it('seeds the catalogue with published PROD versions, studio drafts, the request register and the rule-set mirror', async () => {
-    expect(seeded).toMatchObject({ definitions: 78, versions: 78 * 3 + 3, drafts: 3, requests: 198, ruleSets: 78, profile: 'AE' });
+    expect(seeded).toMatchObject({ definitions: 78, versions: 78 * 3 + 3, drafts: 3, requests: world.serviceRequests.length, ruleSets: 78, profile: 'AE' });
     expect((await seedWorkflow(URL, 'AE')).requests).toBe(0);
     const cat = await get('/services/catalogue', viewer); expect(cat.status).toBe(200); expect(cat.body.data.total).toBe(78); expect(cat.body.data.environment).toBe('PROD');
     expect(cat.body.data.categories[0].category).toBe('Registration'); expect(cat.body.data.categories.map((c: { category: string }) => c.category)).toContain('Seafarers');
@@ -172,7 +172,7 @@ describe('workflow API', () => {
   });
   it('serves the dashboard and the eight stat cards', async () => {
     const d = await get('/services/dashboard', viewer); expect(d.status).toBe(200);
-    expect(d.body.data.total).toBe(198); expect(d.body.data.open).toBeGreaterThan(10); expect(d.body.data.issued).toBeGreaterThan(50); expect(d.body.data.slaCompliance).toBeLessThanOrEqual(100); expect(d.body.data.topServices.length).toBe(8); expect(d.body.data.byCategory[0].count).toBeGreaterThan(0);
+    expect(d.body.data.total).toBe(world.serviceRequests.length); expect(d.body.data.open).toBeGreaterThan(10); expect(d.body.data.issued).toBeGreaterThan(50); expect(d.body.data.slaCompliance).toBeLessThanOrEqual(100); expect(d.body.data.topServices.length).toBe(8); expect(d.body.data.byCategory[0].count).toBeGreaterThan(0);
     for (const p of ['/stats/services', '/services/stats']) {
       const s = await get(p, viewer); expect(s.status).toBe(200); expect(s.body.data).toHaveLength(8);
       for (const c of s.body.data) { expect(Object.keys(c).sort()).toEqual(['label', 'sub', 'tone', 'value']); expect(['default', 'success', 'warning', 'error', 'info']).toContain(c.tone); }
@@ -181,7 +181,7 @@ describe('workflow API', () => {
     }
   });
   it('lists requests with applicant scoping, filters and search', async () => {
-    const all = await get('/services/requests?limit=5'); expect(all.body.meta.total).toBe(198); expect(all.body.data[0].timeline).toBeUndefined(); expect(all.body.data[0].number).toMatch(/^SR-\d{4}-\d{5}$/);
+    const all = await get('/services/requests?limit=5'); expect(all.body.meta.total).toBe(world.serviceRequests.length); expect(all.body.data[0].timeline).toBeUndefined(); expect(all.body.data[0].number).toMatch(/^SR-\d{4}-\d{5}$/);
     const mine = world.serviceRequests.filter((r) => r.applicant.userId === agentUser.id).length; expect(mine).toBeGreaterThan(10);
     const ag = await get('/services/requests?limit=100', agent); expect(ag.body.meta.total).toBe(mine); expect(ag.body.data.every((r: { applicant: { userId: string } }) => r.applicant.userId === agentUser.id)).toBe(true);
     expect((await get('/services/requests', other)).body.meta.total).toBe(0);

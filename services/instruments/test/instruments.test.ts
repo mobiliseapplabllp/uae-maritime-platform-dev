@@ -4,6 +4,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
 import { EVENTS, makeEvent, subjectFor } from '@maritime/contracts';
 import { createApp, loadEnv, signHS256, withTx, StaticPrincipalResolver, PRINCIPAL_RESOLVER, AuditClient } from '@maritime/service-kit';
+import { buildWorld } from '@maritime/world';
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedInstruments } from '../src/seed';
@@ -11,6 +12,7 @@ import { SigningService, loadSigningMaterial, canonical } from '../src/signing';
 import { applyEvent, remindExpiring } from '../src/consumer';
 import { forceOf, type Row } from '../src/licences';
 
+const world = buildWorld({ profile: 'AE' });
 const DB = 'maritime_instruments_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret'; const SIGNING = 'instruments-test-signing-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let signing: SigningService;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
@@ -41,7 +43,7 @@ afterAll(async () => { await pool?.end(); await app?.close(); });
 
 describe('instruments', () => {
   it('seeds the polymorphic register with signed issued instruments and continues each numbering series', async () => {
-    const all = await g('/licenses?limit=1'); expect(all.body.meta.total).toBe(299);
+    const all = await g('/licenses?limit=1'); expect(all.body.meta.total).toBe(world.licences.length);
     const kinds = await Promise.all(['COMPANY', 'VESSEL', 'SEAFARER', 'PORT_FACILITY', 'MET_INSTITUTION'].map((k) => g(`/licenses?subjectKind=${k}&limit=1`).then((r) => r.body.meta.total)));
     expect(kinds.every((n) => n > 0)).toBe(true);
     const issued = await g('/licenses?status=ISSUED&limit=1'); const one = await g(`/licenses/${issued.body.data[0].id}`);
