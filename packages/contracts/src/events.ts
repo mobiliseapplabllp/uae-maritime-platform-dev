@@ -22,8 +22,23 @@ export const EVENTS = {
     suspended: 'instruments.instrument.suspended', revoked: 'instruments.instrument.revoked', updated: 'instruments.instrument.updated', deleted: 'instruments.instrument.deleted',
     audited: 'instruments.instrument.audited', endorsed: 'instruments.instrument.endorsed', endorsementRefused: 'instruments.instrument.endorsement-refused', expiring: 'instruments.instrument.expiring',
   },
-  ships: { vesselRegistered: 'ships.vessel.registered', certIssued: 'ships.certificate.issued', registryClosed: 'ships.registry.closed' },
-  seafarers: { certificateIssued: 'seafarers.certificate.issued', endorsed: 'seafarers.endorsed', seaServiceVerified: 'seafarers.sea-service.verified' },
+  ships: {
+    vesselRegistered: 'ships.vessel.registered', certIssued: 'ships.certificate.issued', registryClosed: 'ships.registry.closed',
+    // added by the ships service: every change to a ship, to its certificate list and to its file with the registrar
+    vesselCreated: 'ships.vessel.created', vesselUpdated: 'ships.vessel.updated', vesselDeleted: 'ships.vessel.deleted',
+    certUpdated: 'ships.certificate.updated', certDeleted: 'ships.certificate.deleted',
+    registrationLodged: 'ships.registration.lodged', registrationUpdated: 'ships.registration.updated', registrationTransitioned: 'ships.registration.transitioned',
+    registrationGranted: 'ships.registration.granted', registrationDeleted: 'ships.registration.deleted',
+    registryUpdated: 'ships.registry.updated', riskWeightsChanged: 'ships.risk.weights-changed',
+  },
+  seafarers: {
+    certificateIssued: 'seafarers.certificate.issued', endorsed: 'seafarers.endorsed', seaServiceVerified: 'seafarers.sea-service.verified',
+    // added by the seafarers service: the register itself, the document list, the service book and crew changes
+    created: 'seafarers.seafarer.created', updated: 'seafarers.seafarer.updated', deleted: 'seafarers.seafarer.deleted',
+    certificateUpdated: 'seafarers.certificate.updated', certificateDeleted: 'seafarers.certificate.deleted',
+    seaServiceAdded: 'seafarers.sea-service.added', seaServiceDeleted: 'seafarers.sea-service.deleted',
+    signedOn: 'seafarers.signed-on', signedOff: 'seafarers.signed-off',
+  },
   legislation: { instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn' },
   maritimeCentre: { alertRaised: 'maritime-centre.alert.raised', positionUpdated: 'maritime-centre.position.updated', incidentOpened: 'maritime-centre.incident.opened', restrictionProposed: 'maritime-centre.restriction.proposed' },
   inspection: { closed: 'inspection.inspection.closed', deficiency: 'inspection.deficiency.raised', detention: 'inspection.detention.ordered', riskScored: 'inspection.risk.scored' },

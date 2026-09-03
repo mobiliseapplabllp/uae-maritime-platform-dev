@@ -125,7 +125,7 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/incidents', service: 'maritime-centre' },
   { prefix: '/api/inspections', service: 'inspection' },
   { prefix: '/api/checklist-templates', service: 'inspection' },
-  { prefix: '/api/risk', service: 'inspection' },
+  { prefix: '/api/risk', service: 'ships' },
   { prefix: '/api/port-calls', service: 'ports' },
   { prefix: '/api/berths', service: 'ports' },
   { prefix: '/api/ops', service: 'ports' },
