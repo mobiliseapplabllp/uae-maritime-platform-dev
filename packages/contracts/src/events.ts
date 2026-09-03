@@ -27,9 +27,18 @@ export const EVENTS = {
   legislation: { instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn' },
   maritimeCentre: { alertRaised: 'maritime-centre.alert.raised', positionUpdated: 'maritime-centre.position.updated', incidentOpened: 'maritime-centre.incident.opened', restrictionProposed: 'maritime-centre.restriction.proposed' },
   inspection: { closed: 'inspection.inspection.closed', deficiency: 'inspection.deficiency.raised', detention: 'inspection.detention.ordered', riskScored: 'inspection.risk.scored' },
-  ports: { portCallScheduled: 'ports.portcall.scheduled', berthed: 'ports.portcall.berthed', socIssued: 'ports.soc.issued' },
+  ports: {
+    portCallScheduled: 'ports.portcall.scheduled', berthed: 'ports.portcall.berthed', socIssued: 'ports.soc.issued',
+    // added by the ports service: every lifecycle step of a call, and the estate and marine-craft changes the harbour desk makes
+    confirmed: 'ports.portcall.confirmed', anchored: 'ports.portcall.anchored', sailed: 'ports.portcall.sailed', cancelled: 'ports.portcall.cancelled',
+    updated: 'ports.portcall.updated', deleted: 'ports.portcall.deleted', berthChanged: 'ports.berth.changed', berthOutageRecorded: 'ports.berth.outage-recorded', resourceChanged: 'ports.resource.changed',
+  },
   facilities: { licenceIssued: 'facilities.licence.issued', licenceSuspended: 'facilities.licence.suspended' },
-  revenue: { invoiceIssued: 'revenue.invoice.issued', paymentReceived: 'revenue.payment.received' },
+  revenue: {
+    invoiceIssued: 'revenue.invoice.issued', paymentReceived: 'revenue.payment.received',
+    // added by the revenue service: the rest of the invoice lifecycle, the overdue sweep and rate-card changes
+    invoiceDrafted: 'revenue.invoice.drafted', invoiceUpdated: 'revenue.invoice.updated', invoicePaid: 'revenue.invoice.paid', invoiceCancelled: 'revenue.invoice.cancelled', invoiceDeleted: 'revenue.invoice.deleted', invoiceOverdue: 'revenue.invoice.overdue', tariffChanged: 'revenue.tariff.changed',
+  },
   integration: { externalSyncCompleted: 'integration.external-sync.completed' },
   scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit' },
   ai: { draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded' },
