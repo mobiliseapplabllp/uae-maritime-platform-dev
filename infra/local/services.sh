@@ -11,10 +11,17 @@ port_of() { node -e "const s=require('$ROOT/services/$1/dist/env.js'); console.l
 start_one() {
   local s="$1"; [ -f "$ROOT/services/$s/dist/main.js" ] || { echo "$s: not built"; return; }
   if [ -f "$RUN/$s.pid" ] && kill -0 "$(cat "$RUN/$s.pid")" 2>/dev/null; then echo "$s: already running"; return; fi
-  (cd "$ROOT/services/$s" && nohup node dist/main.js > "$LOG/$s.log" 2>&1 & echo $! > "$RUN/$s.pid")
+  # setsid detaches the service into its own session, so it survives the shell that started it
+  (cd "$ROOT/services/$s" && setsid nohup node dist/main.js > "$LOG/$s.log" 2>&1 < /dev/null & echo $! > "$RUN/$s.pid")
   echo "$s: started (:$(port_of "$s"))"
 }
-stop_one() { local s="$1"; [ -f "$RUN/$s.pid" ] && kill "$(cat "$RUN/$s.pid")" 2>/dev/null; rm -f "$RUN/$s.pid"; echo "$s: stopped"; }
+stop_one() {
+  local s="$1" p; p=$(port_of "$s")
+  [ -f "$RUN/$s.pid" ] && kill "$(cat "$RUN/$s.pid")" 2>/dev/null
+  # a stale pid file is common after a restart, so free the port itself as well
+  [ -n "$p" ] && fuser -k "$p/tcp" 2>/dev/null
+  rm -f "$RUN/$s.pid"; echo "$s: stopped"
+}
 status_one() {
   local s="$1" p; p=$(port_of "$s"); [ -n "$p" ] || { echo "$s: not built"; return; }
   if curl -fs "http://127.0.0.1:$p/health" >/dev/null 2>&1; then echo "$s: up (:$p)"; else echo "$s: down (:$p)"; fi
