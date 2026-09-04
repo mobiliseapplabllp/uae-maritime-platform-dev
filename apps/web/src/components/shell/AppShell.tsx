@@ -9,6 +9,7 @@ import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import LightModeRoundedIcon from '@mui/icons-material/LightModeRounded';
 import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
+import MenuOpenRoundedIcon from '@mui/icons-material/MenuOpenRounded';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import TranslateRoundedIcon from '@mui/icons-material/TranslateRounded';
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
@@ -18,7 +19,7 @@ import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import api from '../../api/client';
 import { hasPerm } from '../../utils/perms';
 import { useAppDispatch, useAppSelector, useUser } from '../../store';
-import { toggleMode, setLang } from '../../store/uiSlice';
+import { toggleMode, setLang, toggleNav } from '../../store/uiSlice';
 import { clearSession } from '../../store/authSlice';
 import { fromNow, initials } from '../../utils/format';
 import { BRAND_GRADIENT, MONO } from '../../theme';
@@ -31,6 +32,10 @@ import CommandPalette from './CommandPalette';
 import AiDock from './AiDock';
 
 const W = 236;
+/* Collapsed, the sidebar becomes an icon rail rather than disappearing: navigation stays one click
+ * away and the main content still has a fixed left edge to sit against. 68px is wide enough for a
+ * 38px target with the same 8px gutters the expanded list uses. */
+const W_RAIL = 68;
 const SEVERITY_COLOR: Record<string, string> = { info: 'info.main', success: 'success.main', warning: 'warning.main', error: 'error.main' };
 
 function Bell() {
@@ -123,6 +128,10 @@ export default function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const wide = useMediaQuery('(min-width:1000px)');
+  // Collapsing only means anything for the permanent drawer. The temporary one on a narrow screen
+  // is already an overlay, and an icon rail there would be strictly worse than the full list.
+  const rail = useAppSelector((st) => st.ui.navCollapsed) && wide;
+  const drawerWidth = rail ? W_RAIL : W;
   const openAi = () => (IS_DEMO ? setAiInfo(true) : openAiPortal());
 
   useEffect(() => {
@@ -140,60 +149,113 @@ export default function AppShell() {
   }, [activeModule.key]);
   const ActiveIcon = activeModule.icon;
   const navSx = { borderRadius: '8px', mb: 0.25, color: '#B7C9DA', minHeight: 38, '& .MuiListItemIcon-root': { color: '#7C9BB5', minWidth: 34 }, '&.active': { bgcolor: 'rgba(11,116,176,0.32)', color: '#fff', '& .MuiListItemIcon-root': { color: '#6EC1EF' } }, '&:hover': { bgcolor: 'rgba(255,255,255,0.06)' } };
+  // In the rail the icon is the whole control, so it centres and the label's gutter goes away.
+  const railSx = rail
+    ? { ...navSx, justifyContent: 'center', px: 0, '& .MuiListItemIcon-root': { ...navSx['& .MuiListItemIcon-root'], minWidth: 0, justifyContent: 'center' } }
+    : navSx;
 
   const drawer = (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: mode === 'dark' ? '#071A2E' : '#0A2239', color: '#D8E4EE' }} component="nav" aria-label="Module navigation">
-      <Box sx={{ px: 2.25, py: 2, display: 'flex', gap: 1.25, alignItems: 'center' }}>
-        <Box sx={{ width: 34, height: 34, borderRadius: '9px', background: BRAND_GRADIENT, display: 'grid', placeItems: 'center' }}><AnchorRoundedIcon sx={{ fontSize: 20, color: '#fff' }} /></Box>
-        <Box>
-          <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 15, lineHeight: 1.1, color: '#fff' }}>{t('app.name')}</Typography>
-          <Typography sx={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.14em', color: '#7C9BB5' }}>{t('app.tag')}</Typography>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%', bgcolor: mode === 'dark' ? '#071A2E' : '#0A2239', color: '#D8E4EE' }} component="nav" id="module-navigation" aria-label="Module navigation">
+      <Box sx={{ px: rail ? 0 : 2.25, py: 2, display: 'flex', gap: 1.25, alignItems: 'center', justifyContent: rail ? 'center' : 'flex-start' }}>
+        <Box sx={{ width: 34, height: 34, borderRadius: '9px', background: BRAND_GRADIENT, display: 'grid', placeItems: 'center', flexShrink: 0 }}><AnchorRoundedIcon sx={{ fontSize: 20, color: '#fff' }} /></Box>
+        {!rail && (
+          <Box>
+            <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 15, lineHeight: 1.1, color: '#fff' }}>{t('app.name')}</Typography>
+            <Typography sx={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.14em', color: '#7C9BB5' }}>{t('app.tag')}</Typography>
+          </Box>
+        )}
+      </Box>
+      <Tooltip title={rail ? `${activeModule.name} — ${t('app.activeModule')}` : ''} placement="right">
+        <Box sx={{ mx: rail ? 1 : 1.5, mb: 1, p: rail ? 0.75 : 1.25, borderRadius: 2.5, bgcolor: 'rgba(255,255,255,0.055)', display: 'flex', gap: 1.25, alignItems: 'center', justifyContent: rail ? 'center' : 'flex-start' }}>
+          <Box sx={{ width: 30, height: 30, borderRadius: '8px', bgcolor: activeModule.color, display: 'grid', placeItems: 'center', flexShrink: 0 }}><ActiveIcon sx={{ fontSize: 17, color: '#fff' }} /></Box>
+          {!rail && <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{activeModule.name}</Typography><Typography noWrap sx={{ fontSize: 10, color: '#7C9BB5' }}>{t('app.activeModule')}</Typography></Box>}
         </Box>
-      </Box>
-      <Box sx={{ mx: 1.5, mb: 1, p: 1.25, borderRadius: 2.5, bgcolor: 'rgba(255,255,255,0.055)', display: 'flex', gap: 1.25, alignItems: 'center' }}>
-        <Box sx={{ width: 30, height: 30, borderRadius: '8px', bgcolor: activeModule.color, display: 'grid', placeItems: 'center', flexShrink: 0 }}><ActiveIcon sx={{ fontSize: 17, color: '#fff' }} /></Box>
-        <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{activeModule.name}</Typography><Typography noWrap sx={{ fontSize: 10, color: '#7C9BB5' }}>{t('app.activeModule')}</Typography></Box>
-      </Box>
+      </Tooltip>
       <List component="div" sx={{ flex: 1, overflowY: 'auto', px: 1, py: 0.5 }} dense>
         {activeModule.nav.map((group) => (
           <Box key={group.header}>
-            {group.items.some((i) => hasPerm(user, i.perm)) && <ListSubheader component="div" disableSticky sx={{ bgcolor: 'transparent', color: '#7C9BB5', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', lineHeight: '30px' }}>{group.header}</ListSubheader>}
+            {group.items.some((i) => hasPerm(user, i.perm)) && (
+              rail
+                // A group label has nowhere to go in 68px; a rule keeps the grouping legible without it.
+                ? <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', my: 0.75 }} />
+                : <ListSubheader component="div" disableSticky sx={{ bgcolor: 'transparent', color: '#7C9BB5', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.15em', textTransform: 'uppercase', lineHeight: '30px' }}>{group.header}</ListSubheader>
+            )}
             {group.items.filter((i) => hasPerm(user, i.perm)).map((item) => { const ItemIcon = item.icon; return (
-              <ListItemButton key={item.to} component={NavLink} to={item.to} end={item.end} sx={navSx}>
-                <ListItemIcon sx={{ '& svg': { fontSize: 19 } }}><ItemIcon /></ListItemIcon>
-                <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} />
-              </ListItemButton>
+              <Tooltip key={item.to} title={rail ? item.label : ''} placement="right">
+                <ListItemButton component={NavLink} to={item.to} end={item.end} sx={railSx}>
+                  <ListItemIcon sx={{ '& svg': { fontSize: 19 } }}><ItemIcon /></ListItemIcon>
+                  {!rail && <ListItemText primary={item.label} primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} />}
+                </ListItemButton>
+              </Tooltip>
             ); })}
           </Box>
         ))}
         <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', my: 1 }} />
         {hasPerm(user, 'ai.use') && (
-          <ListItemButton onClick={openAi} sx={{ ...navSx, '& .MuiListItemIcon-root': { color: AI_PORTAL.color, minWidth: 34 } }}>
-            <ListItemIcon><AutoAwesomeRoundedIcon sx={{ fontSize: 19 }} /></ListItemIcon>
-            <ListItemText primary={AI_PORTAL.name} secondary="AI analytics" primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} secondaryTypographyProps={{ fontSize: 10.5, color: '#7C9BB5' }} />
-            <OpenInNewRoundedIcon sx={{ fontSize: 13, color: '#5B7C99' }} />
-          </ListItemButton>
+          <Tooltip title={rail ? AI_PORTAL.name : ''} placement="right">
+            <ListItemButton onClick={openAi} sx={{ ...railSx, '& .MuiListItemIcon-root': { color: AI_PORTAL.color, minWidth: rail ? 0 : 34 } }}>
+              <ListItemIcon><AutoAwesomeRoundedIcon sx={{ fontSize: 19 }} /></ListItemIcon>
+              {!rail && <>
+                <ListItemText primary={AI_PORTAL.name} secondary="AI analytics" primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} secondaryTypographyProps={{ fontSize: 10.5, color: '#7C9BB5' }} />
+                <OpenInNewRoundedIcon sx={{ fontSize: 13, color: '#5B7C99' }} />
+              </>}
+            </ListItemButton>
+          </Tooltip>
         )}
-        <ListItemButton onClick={() => setLauncher(true)} sx={navSx}>
-          <ListItemIcon><AppsRoundedIcon sx={{ fontSize: 19 }} /></ListItemIcon>
-          <ListItemText primary={t('app.allApplications')} primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} />
-        </ListItemButton>
+        <Tooltip title={rail ? t('app.allApplications') : ''} placement="right">
+          <ListItemButton onClick={() => setLauncher(true)} sx={railSx}>
+            <ListItemIcon><AppsRoundedIcon sx={{ fontSize: 19 }} /></ListItemIcon>
+            {!rail && <ListItemText primary={t('app.allApplications')} primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} />}
+          </ListItemButton>
+        </Tooltip>
       </List>
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
-      <Box sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.25 }}>
-        <Avatar sx={{ width: 32, height: 32, background: BRAND_GRADIENT, fontSize: 14, fontWeight: 700 }}>{initials(user?.name)}</Avatar>
-        <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{user?.name}</Typography><Typography noWrap sx={{ fontSize: 11, color: '#7C9BB5' }}>{user?.role?.name}</Typography></Box>
-      </Box>
+      <Tooltip title={rail ? `${user?.name ?? ''} — ${user?.role?.name ?? ''}` : ''} placement="right">
+        <Box sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.25, justifyContent: rail ? 'center' : 'flex-start' }}>
+          <Avatar sx={{ width: 32, height: 32, background: BRAND_GRADIENT, fontSize: 14, fontWeight: 700, flexShrink: 0 }}>{initials(user?.name)}</Avatar>
+          {!rail && <Box sx={{ minWidth: 0 }}><Typography noWrap sx={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>{user?.name}</Typography><Typography noWrap sx={{ fontSize: 11, color: '#7C9BB5' }}>{user?.role?.name}</Typography></Box>}
+        </Box>
+      </Tooltip>
     </Box>
   );
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      <Drawer variant={wide ? 'permanent' : 'temporary'} open={wide ? true : mobileOpen} onClose={() => setMobileOpen(false)} sx={{ width: W, flexShrink: 0, '& .MuiDrawer-paper': { width: W, border: 0 } }}>{drawer}</Drawer>
+      <Drawer
+        variant={wide ? 'permanent' : 'temporary'}
+        open={wide ? true : mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        sx={{
+          width: wide ? drawerWidth : W,
+          flexShrink: 0,
+          // Animate the width on both the slot and the paper, or the paper snaps while the space
+          // reserved for it eases, and the main content visibly tears away from the sidebar.
+          transition: (th) => th.transitions.create('width', { duration: th.transitions.duration.shorter }),
+          '& .MuiDrawer-paper': {
+            width: wide ? drawerWidth : W,
+            border: 0,
+            overflowX: 'hidden',
+            transition: (th) => th.transitions.create('width', { duration: th.transitions.duration.shorter }),
+          },
+        }}
+      >{drawer}</Drawer>
       <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <AppBar position="sticky" elevation={0} color="transparent" sx={{ bgcolor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
           <Toolbar variant="dense" sx={{ minHeight: 54, gap: 0.75 }}>
-            {!wide && <IconButton edge="start" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><MenuRoundedIcon /></IconButton>}
+            {/* One control at every width: it opens the overlay on a narrow screen and collapses the
+                sidebar to a rail on a wide one. aria-expanded reports the sidebar's real state. */}
+            <Tooltip title={wide ? (rail ? t('app.expandNav') : t('app.collapseNav')) : t('app.openNav')}>
+              <IconButton
+                edge="start"
+                data-testid="nav-toggle"
+                onClick={() => (wide ? dispatch(toggleNav()) : setMobileOpen(true))}
+                aria-label={wide ? (rail ? t('app.expandNav') : t('app.collapseNav')) : t('app.openNav')}
+                aria-expanded={wide ? !rail : mobileOpen}
+                aria-controls="module-navigation"
+              >
+                {wide && !rail ? <MenuOpenRoundedIcon /> : <MenuRoundedIcon />}
+              </IconButton>
+            </Tooltip>
             <Tooltip title={t('app.allApplications')}><IconButton onClick={() => setLauncher(true)} sx={{ borderRadius: 2 }} aria-label={t('app.allApplications')}><AppsRoundedIcon /></IconButton></Tooltip>
             <Chip size="small" label={activeModule.name} sx={{ bgcolor: activeModule.color, color: '#fff', fontWeight: 700, fontSize: 11, display: { xs: 'none', sm: 'inline-flex' } }} />
             <ButtonBase onClick={() => setPaletteOpen(true)} aria-label={t('app.search')} sx={{ ml: { xs: 0.5, sm: 2 }, px: 1.25, py: 0.5, borderRadius: 2, gap: 1, display: 'flex', alignItems: 'center', border: 1, borderColor: 'divider', color: 'text.secondary', maxWidth: 280, flex: { xs: 1, sm: '0 1 auto' }, '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' } }}>
