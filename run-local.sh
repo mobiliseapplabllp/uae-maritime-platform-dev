@@ -99,13 +99,33 @@ start_services() {
   if curl -fs "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1; then
     ok "web already running on :$WEB_PORT"
   else
-    if command -v setsid >/dev/null 2>&1; then
-      (cd apps/web && setsid nohup pnpm dev > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    # Launch vite as a direct node child, the way services.sh launches each service. Going through
+    # `pnpm dev` puts pnpm and a /bin/sh shim between the shell and the server, and those layers do
+    # not reliably survive the launching subshell exiting once setsid is unavailable.
+    local vite cmd; vite=$(cd apps/web && node -e 'const p=require.resolve("vite/package.json"),d=require("path").dirname(p),b=require(p).bin;console.log(require("path").join(d,typeof b==="string"?b:b.vite))' 2>/dev/null)
+    if [ -n "$vite" ] && [ -f "$vite" ]; then
+      cmd=(node "$vite" --port "$WEB_PORT" --host 127.0.0.1)
     else
-      (cd apps/web && nohup pnpm dev > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+      warn "could not resolve vite — falling back to pnpm dev"
+      cmd=(pnpm dev)
     fi
-    for _ in $(seq 1 40); do curl -fs "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1 && break; sleep 1; done
-    ok "web on :$WEB_PORT"
+    if command -v setsid >/dev/null 2>&1; then
+      (cd apps/web && setsid nohup "${cmd[@]}" > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    else
+      (cd apps/web && nohup "${cmd[@]}" > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    fi
+    # Vite pre-bundles every dependency on a cold start, which on a first run is minutes, not seconds.
+    local up=0
+    for _ in $(seq 1 240); do
+      if curl -fs -o /dev/null "http://127.0.0.1:$WEB_PORT" 2>/dev/null; then up=1; break; fi
+      sleep 1
+    done
+    # only claim it is up if something actually answered; a finished wait loop proves nothing
+    if [ $up -eq 1 ]; then ok "web on :$WEB_PORT"; else
+      warn "the web app did not answer on :$WEB_PORT. The last lines of $LOG/web.log:"
+      tail -20 "$LOG/web.log" 2>/dev/null | sed 's/^/       /' || echo "       (no log — the dev server never started)"
+      warn "run it in the foreground to see why:  cd apps/web && pnpm dev"
+    fi
   fi
 }
 
@@ -117,8 +137,10 @@ report() {
   printf '   API reference  http://127.0.0.1:%s/api/docs\n' "$GATEWAY_PORT"
   printf '   Sign in        admin@maritime.example  /  %s\n' "$(node -p "require('./packages/world/dist/index.js').DEMO_PASSWORD" 2>/dev/null || echo '<see packages/world DEMO_PASSWORD>')"
   printf '\n   Every seeded user shares that password. Other roles to try:\n'
-  printf '     harbour.master@maritime.example   registrar@maritime.example\n'
-  printf '     surveyor@maritime.example         finance.officer@maritime.example\n'
+  printf '     ahmed.al.mansoori@maritime.example      Harbour Master\n'
+  printf '     abdullah.al.mazrouei@maritime.example   Registrar of Ships\n'
+  printf '     aisha.al.hosani@maritime.example        Marine Surveyor\n'
+  printf '     alia.al.kaabi@maritime.example          Finance Officer\n'
   if [ -n "$health" ]; then
     printf '\n   Gateway health: %s\n' "$(printf '%s' "$health" | head -c 120)"
   else

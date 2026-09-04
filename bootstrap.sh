@@ -130,10 +130,20 @@ else
   warn "their logs are in $LOGDIR/ — one file per service"
 fi
 work "starting the web app"
-if command -v setsid >/dev/null 2>&1; then
-  ( cd "$ROOT/apps/web" && setsid nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+# Launch vite as a direct node child, the way services.sh launches each service. Going through
+# `pnpm dev` puts pnpm and a /bin/sh shim between the shell and the server, and those layers do
+# not reliably survive the launching subshell exiting once setsid is unavailable.
+VITE_BIN=$(cd "$ROOT/apps/web" && node -e 'const p=require.resolve("vite/package.json"),d=require("path").dirname(p),b=require(p).bin;console.log(require("path").join(d,typeof b==="string"?b:b.vite))' 2>/dev/null)
+if [ -n "$VITE_BIN" ] && [ -f "$VITE_BIN" ]; then
+  WEB_CMD=(node "$VITE_BIN" --port 5300 --host 127.0.0.1)
 else
-  ( cd "$ROOT/apps/web" && nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+  warn "could not resolve vite — falling back to pnpm dev"
+  WEB_CMD=(pnpm dev)
+fi
+if command -v setsid >/dev/null 2>&1; then
+  ( cd "$ROOT/apps/web" && setsid nohup "${WEB_CMD[@]}" > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+else
+  ( cd "$ROOT/apps/web" && nohup "${WEB_CMD[@]}" > "$LOGDIR/web.log" 2>&1 < /dev/null & )
 fi
 # Vite pre-bundles every dependency on a cold start, which on a first run can take
 # well over a minute on a laptop; wait generously, and show the log if it never binds.
