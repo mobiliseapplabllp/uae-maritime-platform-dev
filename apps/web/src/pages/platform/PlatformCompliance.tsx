@@ -4,7 +4,7 @@ import RuleRoundedIcon from '@mui/icons-material/RuleRounded';
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
 import { MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
-import { COMPLIANCE, COMPLIANCE_URL, COMPLIANCE_COMPILED, statusColor } from './compliance';
+import { COMPLIANCE, COMPLIANCE_URL, PLAN_URL, COMPLIANCE_COMPILED, statusColor } from './compliance';
 
 /* The headline of the RFP compliance matrix, with the full traceability living in the published
  * artifact. The counts are stated here as of the compile date rather than computed: they are a
@@ -82,10 +82,16 @@ export default function PlatformCompliancePage() {
           <Card sx={{ p: 2.5, borderLeft: 3, borderColor: 'primary.main' }}>
             <Typography sx={{ fontSize: 14.5, fontWeight: 600, mb: 0.5 }}>{t('platform.compliance.fullTitle')}</Typography>
             <Typography sx={{ fontSize: 13.5, color: 'text.secondary', mb: 1.5, maxWidth: '72ch', lineHeight: 1.6 }}>{t('platform.compliance.fullBody')}</Typography>
-            <Link href={COMPLIANCE_URL} target="_blank" rel="noopener noreferrer" data-testid="compliance-link"
-              sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, fontWeight: 600, fontSize: 14 }}>
-              {t('platform.compliance.open')}<OpenInNewRoundedIcon sx={{ fontSize: 15 }} />
-            </Link>
+            <Stack direction="row" spacing={2.5} sx={{ flexWrap: 'wrap', rowGap: 1 }}>
+              <Link href={COMPLIANCE_URL} target="_blank" rel="noopener noreferrer" data-testid="compliance-link"
+                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, fontWeight: 600, fontSize: 14 }}>
+                {t('platform.compliance.open')}<OpenInNewRoundedIcon sx={{ fontSize: 15 }} />
+              </Link>
+              <Link href={PLAN_URL} target="_blank" rel="noopener noreferrer" data-testid="plan-link"
+                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, fontWeight: 600, fontSize: 14 }}>
+                {t('platform.compliance.openPlan')}<OpenInNewRoundedIcon sx={{ fontSize: 15 }} />
+              </Link>
+            </Stack>
             {/* a Chip renders a div, so the line around it has to be a div too — inside a <p> it is invalid nesting */}
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1.5, flexWrap: 'wrap', rowGap: 0.5 }}>
               <Chip size="small" label={t('platform.compliance.internal')} color="warning" variant="outlined" sx={{ height: 18, fontSize: 10, fontWeight: 700 }} />

@@ -3,6 +3,7 @@
  * revised together with the published matrix rather than derived at runtime. */
 
 export const COMPLIANCE_URL = 'https://claude.ai/code/artifact/632eb64c-3d09-4f5f-a31f-b887a1396d20';
+export const PLAN_URL = 'https://claude.ai/code/artifact/75ef9d08-10f9-4e57-b6c3-c6585ed9b280';
 export const COMPLIANCE_COMPILED = '04 September 2026';
 
 export type ComplianceStatus = 'built' | 'partial' | 'absent' | 'diverged';

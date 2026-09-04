@@ -10,7 +10,7 @@ import api from '../src/api/client';
 import PlatformStatus from '../src/pages/platform/PlatformStatus';
 import { availabilityColor, availabilityTone, duration, mb, outboxTone, pct } from '../src/pages/platform/shared';
 import { MODULES } from '../src/modules';
-import { COMPLIANCE, COMPLIANCE_URL, statusColor } from '../src/pages/platform/compliance';
+import { COMPLIANCE, COMPLIANCE_URL, PLAN_URL, statusColor } from '../src/pages/platform/compliance';
 import { ROUTES } from '../src/routes';
 
 const wrap = (ui: React.ReactNode) => render(
@@ -126,8 +126,11 @@ describe('RFP compliance summary', () => {
   it('never maps a status onto a palette key that does not exist', () => {
     for (const s of COMPLIANCE.totals) expect(statusColor(s.key)).toMatch(/\.(main|disabled)$/);
   });
-  it('points at a published artifact over https', () => {
+  it('points at published artifacts over https, and at two different ones', () => {
     expect(COMPLIANCE_URL).toMatch(/^https:\/\//);
+    expect(PLAN_URL).toMatch(/^https:\/\//);
+    // the matrix and the plan are companions, not the same page linked twice
+    expect(PLAN_URL).not.toBe(COMPLIANCE_URL);
   });
   it('gates the compliance page on platform.view like the rest of the module', () => {
     const r = ROUTES.find((x) => x.path === '/platform/compliance');

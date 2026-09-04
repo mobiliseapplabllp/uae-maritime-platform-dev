@@ -237,6 +237,7 @@ const en = {
       fullTitle: 'The full traceability matrix',
       fullBody: 'Every commitment row by row, with the evidence behind each status — a count from a running database, a file in the repository, or a test. Filterable by status so the delta can be read on its own.',
       open: 'Open the compliance matrix',
+      openPlan: 'Open the route to complete',
       internal: 'Internal',
       internalHelp: 'Prepared for Mobilise and LTTS. Status calls are the delivery team\u2019s own and are meant to be argued with.',
     },
