@@ -19,6 +19,17 @@ PGUSER_="${PGUSER:-maritime}"; export PGPASSWORD="${PGPASSWORD:-maritime}"
 PGHOST_="${PGHOST:-127.0.0.1}"; PGPORT_="${PGPORT:-5432}"
 GATEWAY_PORT=5200; WEB_PORT=5300
 
+# Free a TCP port whatever the platform: fuser is util-linux, lsof is what macOS has.
+kill_port() {
+  local port="$1"; [ -n "$port" ] || return 0
+  if command -v fuser >/dev/null 2>&1 && fuser -V >/dev/null 2>&1; then
+    fuser -k "$port/tcp" >/dev/null 2>&1
+  elif command -v lsof >/dev/null 2>&1; then
+    local pids; pids=$(lsof -ti "tcp:$port" 2>/dev/null)
+    [ -n "$pids" ] && kill $pids 2>/dev/null
+  fi
+  return 0
+}
 say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '   \033[33m!\033[0m %s\n' "$*"; }
@@ -124,7 +135,7 @@ case "${1:-up}" in
   stop)
     say "Stopping"
     [ -f "$LOCAL/run/web.pid" ] && kill "$(cat "$LOCAL/run/web.pid")" 2>/dev/null
-    fuser -k "$WEB_PORT/tcp" 2>/dev/null; rm -f "$LOCAL/run/web.pid"
+    kill_port "$WEB_PORT"; rm -f "$LOCAL/run/web.pid"
     bash infra/local/services.sh stop 2>&1 | sed 's/^/   /'
     bash infra/local/runtime.sh stop 2>&1 | sed 's/^/   /'
     ok "stopped" ;;

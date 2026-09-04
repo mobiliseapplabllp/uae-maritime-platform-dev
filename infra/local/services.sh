@@ -21,11 +21,22 @@ start_one() {
   fi
   echo "$s: started (:$(port_of "$s"))"
 }
+# Free a TCP port whatever the platform: fuser is util-linux, lsof is what macOS has.
+kill_port() {
+  local port="$1"; [ -n "$port" ] || return 0
+  if command -v fuser >/dev/null 2>&1 && fuser -V >/dev/null 2>&1; then
+    fuser -k "$port/tcp" >/dev/null 2>&1
+  elif command -v lsof >/dev/null 2>&1; then
+    local pids; pids=$(lsof -ti "tcp:$port" 2>/dev/null)
+    [ -n "$pids" ] && kill $pids 2>/dev/null
+  fi
+  return 0
+}
 stop_one() {
   local s="$1" p; p=$(port_of "$s")
   [ -f "$RUN/$s.pid" ] && kill "$(cat "$RUN/$s.pid")" 2>/dev/null
   # a stale pid file is common after a restart, so free the port itself as well
-  [ -n "$p" ] && fuser -k "$p/tcp" 2>/dev/null
+  [ -n "$p" ] && kill_port "$p"
   rm -f "$RUN/$s.pid"; echo "$s: stopped"
 }
 status_one() {
