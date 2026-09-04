@@ -14,6 +14,8 @@ const DB = 'maritime_inspection_test'; const URL = `postgres://maritime:maritime
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const surveyor = tok('surveyor'); const viewer = tok('viewer'); const nobody = tok('nobody'); const dash = tok('dash');
+/* Two desks, one at each port, and an operator who is not the administration at all. */
+const khalifa = tok('khalifa'); const fujairah = tok('fujairah'); const agentGss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -34,6 +36,9 @@ beforeAll(async () => {
     viewer: { ...base, id: 'viewer', sub: 'viewer', name: 'Compliance Analyst', perms: ['inspections.view', 'masters.view'] },
     dash: { ...base, id: 'dash', sub: 'dash', name: 'Command Centre', perms: ['dashboard.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['reports.view'] },
+    khalifa: { ...base, id: 'khalifa', sub: 'khalifa', name: 'Khalifa Cell', perms: ['inspections.view', 'inspections.manage', 'dashboard.view'], scope: { level: 'PORT', ports: ['AEAUH'] } },
+    fujairah: { ...base, id: 'fujairah', sub: 'fujairah', name: 'Fujairah Cell', perms: ['inspections.view', 'dashboard.view'], scope: { level: 'PORT', ports: ['AEFJR'] } },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['inspections.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -495,5 +500,92 @@ describe('inspection — authorisation and the audit trail', () => {
       expect(snap).toHaveProperty(field);
     }
     await del(`/inspections/${doc.id}`);
+  });
+});
+
+/* ========================================================= tenancy in the survey and audit cell === */
+
+describe('inspection — tenancy', () => {
+  /** Two calls in two ports, and a survey raised against each, so the rule is tested in both directions. */
+  const anyVessel = async () => (await pool.query<{ id: string }>('SELECT id FROM vessels ORDER BY id LIMIT 1')).rows[0].id;
+  const setUp = async () => {
+    const ANY_VESSEL = await anyVessel();
+    await pool.query(`INSERT INTO port_calls(id, vcn, vessel_id, status, berth_code, eta, scope_port) VALUES
+      ('ten-auh', 'TEN-VCN-AUH', $1, 'BERTHED', 'CT9', now(), 'AEAUH'),
+      ('ten-fjr', 'TEN-VCN-FJR', $1, 'BERTHED', 'FJR-1', now(), 'AEFJR')
+      ON CONFLICT (id) DO UPDATE SET scope_port = EXCLUDED.scope_port`, [ANY_VESSEL]);
+    const mk = async (n: string, call: string) => (await pool.query<{ id: string }>(
+      `INSERT INTO inspections(number, type, status, vessel_id, vessel_name, port_call_id, planned_at)
+       VALUES ($1, 'PSC', 'PLANNED', $2, 'Test Ship', $3, now()) RETURNING id`, [n, ANY_VESSEL, call])).rows[0].id;
+    return { auh: await mk('TEN-INS-AUH', 'ten-auh'), fjr: await mk('TEN-INS-FJR', 'ten-fjr') };
+  };
+  const tearDown = async () => {
+    await pool.query("DELETE FROM inspections WHERE number LIKE 'TEN-%'");
+    await pool.query("DELETE FROM port_calls WHERE id IN ('ten-auh','ten-fjr')");
+  };
+
+  it('takes the port from the call the survey was raised against, and follows the call if it moves', async () => {
+    const { auh, fjr } = await setUp();
+    try {
+      const ports = await pool.query<{ id: string; scope_port: string }>(
+        'SELECT id, scope_port FROM inspections WHERE id = ANY($1)', [[auh, fjr]]);
+      expect(new Map(ports.rows.map((r) => [r.id, r.scope_port]))).toEqual(new Map([[auh, 'AEAUH'], [fjr, 'AEFJR']]));
+
+      // the call register is not this service's to own: when the port changes there, the surveys follow
+      await pool.query("UPDATE port_calls SET scope_port = 'AEFJR' WHERE id = 'ten-auh'");
+      expect((await pool.query<{ scope_port: string }>('SELECT scope_port FROM inspections WHERE id = $1', [auh])).rows[0].scope_port).toBe('AEFJR');
+      await pool.query("UPDATE port_calls SET scope_port = 'AEAUH' WHERE id = 'ten-auh'");
+
+      // a survey arranged away from any call is no port's and is shared
+      const loose = await pool.query<{ scope_port: string }>(
+        `INSERT INTO inspections(number, type, status, vessel_id, vessel_name, planned_at)
+         VALUES ('TEN-INS-FSI', 'FSI', 'PLANNED', $1, 'Test Ship', now()) RETURNING scope_port`, [await anyVessel()]);
+      expect(loose.rows[0].scope_port).toBe('');
+    } finally { await tearDown(); }
+  });
+
+  it('shows a cell its own port\'s surveys and answers "not found" for another port\'s', async () => {
+    const { auh, fjr } = await setUp();
+    try {
+      expect((await g(`/inspections/${auh}`, khalifa)).status).toBe(200);
+      expect((await g(`/inspections/${fjr}`, khalifa)).status).toBe(404);
+      expect((await g(`/inspections/${fjr}`, fujairah)).status).toBe(200);
+      expect((await g(`/inspections/${fjr}`, admin)).status).toBe(200);
+      // by survey number as well as by id, because the filter is in the query
+      expect((await g('/inspections/TEN-INS-FJR', khalifa)).status).toBe(404);
+
+      expect((await g('/inspections?limit=500&q=TEN-INS', khalifa)).body.data.map((i: { number: string }) => i.number)).toEqual(['TEN-INS-AUH']);
+      expect((await g('/inspections?limit=500&q=TEN-INS', fujairah)).body.data.map((i: { number: string }) => i.number)).toEqual(['TEN-INS-FJR']);
+      expect((await g('/inspections?limit=500&q=TEN-INS', admin)).body.meta.total).toBe(2);
+    } finally { await tearDown(); }
+  });
+
+  it('counts only what the reader may see, so a total cannot leak another port\'s workload', async () => {
+    const { auh } = await setUp();
+    try {
+      expect(auh).toBeTruthy();
+      const mine = await g('/inspections/dashboard', khalifa);
+      const all = await g('/inspections/dashboard', admin);
+      expect(mine.status).toBe(200);
+      expect(mine.body.data.kpis.open).toBeLessThan(all.body.data.kpis.open);
+      // the sub-registers read through the survey they hang off, so they are narrowed with it
+      expect((await g('/inspections/deficiencies?limit=1', khalifa)).body.meta.total)
+        .toBeLessThanOrEqual((await g('/inspections/deficiencies?limit=1', admin)).body.meta.total);
+      expect((await g('/inspections/detentions?limit=1', khalifa)).body.meta.total)
+        .toBeLessThanOrEqual((await g('/inspections/detentions?limit=1', admin)).body.meta.total);
+    } finally { await tearDown(); }
+  });
+
+  it('shows a company nothing: an inspection report is the administration\'s finding, not the operator\'s copy', async () => {
+    const { auh } = await setUp();
+    try {
+      expect((await g('/inspections?limit=500', agentGss)).body.meta.total).toBe(0);
+      expect((await g(`/inspections/${auh}`, agentGss)).status).toBe(404);
+      expect((await g('/inspections/deficiencies?limit=1', agentGss)).body.meta.total).toBe(0);
+    } finally { await tearDown(); }
+  });
+
+  it('leaves a national cell reading everything, with no clause added at all', async () => {
+    expect((await g('/inspections?limit=1', viewer)).body.meta.total).toBe((await g('/inspections?limit=1', admin)).body.meta.total);
   });
 });

@@ -1,11 +1,11 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { EVENTS, INSPECTION_RESULTS, INSPECTION_TYPES, type PageQuery } from '@maritime/contracts';
+import { EVENTS, INSPECTION_RESULTS, INSPECTION_TYPES, type PageQuery, type TenancyScope } from '@maritime/contracts';
 import {
   AuditClient, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, CurrentUser, SettingsClient, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod,
-  type Principal,
-} from '@maritime/service-kit';
+  type Principal, scopeWhere } from '@maritime/service-kit';
+import { INSPECTION_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
   DETAINABLE_ACTION, FINDING_SEVERITY, FINDING_STATUS, answersFromTemplate, detentionApi, findingApi, inspectionApi, inspectionCard, inspectionDashboard,
@@ -84,13 +84,19 @@ export class InspectionsController {
     const r = await c.query<DetentionRow>('SELECT * FROM detentions WHERE inspection_id = $1 ORDER BY ordered_at DESC LIMIT 1', [inspectionId]);
     return r.rows[0] ? detentionApi(r.rows[0]) : null;
   }
-  private async load(c: Pool | PoolClient, id: string): Promise<InspectionRow> {
-    const r = await c.query<InspectionRow>('SELECT * FROM inspections WHERE id::text = $1 OR number = $1', [id]);
+  /* Every handler that touches one inspection comes through these two, so the tenancy filter lives here: an
+   * inspection in another port is not found rather than found and refused. */
+  private async load(c: Pool | PoolClient, id: string, scope: TenancyScope): Promise<InspectionRow> {
+    const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [id];
+    scopeWhere(scope, where, args, INSPECTION_SCOPE);
+    const r = await c.query<InspectionRow>(`SELECT * FROM inspections WHERE ${where.join(' AND ')}`, args);
     if (!r.rows[0]) throw notFound('Inspection not found');
     return r.rows[0];
   }
-  private async lockRow(c: PoolClient, id: string): Promise<InspectionRow> {
-    const r = await c.query<InspectionRow>('SELECT * FROM inspections WHERE id::text = $1 OR number = $1 FOR UPDATE', [id]);
+  private async lockRow(c: PoolClient, id: string, scope: TenancyScope): Promise<InspectionRow> {
+    const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [id];
+    scopeWhere(scope, where, args, INSPECTION_SCOPE);
+    const r = await c.query<InspectionRow>(`SELECT * FROM inspections WHERE ${where.join(' AND ')} FOR UPDATE`, args);
     if (!r.rows[0]) throw notFound('Inspection not found');
     return r.rows[0];
   }
@@ -105,7 +111,7 @@ export class InspectionsController {
 
   /** The survey register: filterable, searchable, paged, each row carrying its findings. */
   @RequirePerm('inspections.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-plannedAt', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -117,6 +123,7 @@ export class InspectionsController {
     if (String(query.open) === 'true') where.push(`status <> 'CLOSED'`);
     if (query.from) { args.push(query.from); where.push(`planned_at >= $${args.length}`); }
     if (query.to) { args.push(query.to); where.push(`planned_at <= $${args.length}`); }
+    scopeWhere(user.scope, where, args, INSPECTION_SCOPE);
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(number ILIKE $${args.length} OR inspector ILIKE $${args.length} OR vessel_name ILIKE $${args.length} OR vessel_imo ILIKE $${args.length} OR vcn ILIKE $${args.length})`); }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM inspections ${w}`, args);
@@ -127,12 +134,14 @@ export class InspectionsController {
 
   /** The survey and audit cell's landing analytics. Declared before `:id` so the word is not read as an id. */
   @RequirePerm('inspections.view', 'dashboard.view') @Get('dashboard')
-  async dashboard() {
+  async dashboard(@CurrentUser() user: Principal) {
+    /* The analytics are a read of every survey they count, so they are narrowed exactly as the register is. */
+    const sc = scopedWhere(user.scope, INSPECTION_SCOPE, 'i');
     const rows = await this.pool.query<DashboardInput>(
       `SELECT i.type, i.status, i.result, i.detention, i.planned_at, i.closed_at, i.checklist,
               (SELECT count(*) FROM findings f WHERE f.inspection_id = i.id)::int AS findings_total,
               (SELECT count(*) FROM findings f WHERE f.inspection_id = i.id AND f.status = 'OPEN')::int AS findings_open
-         FROM inspections i`);
+         FROM inspections i ${sc.sql}`, sc.args);
     return inspectionDashboard(rows.rows, this.now());
   }
 
@@ -141,7 +150,7 @@ export class InspectionsController {
    * The register is worked from the deficiency, not from the survey it was raised on: a rectification deadline
    * belongs to the finding, and an overdue one is the same problem whichever survey found it. */
   @RequirePerm('inspections.view') @Get('deficiencies')
-  async deficiencies(@Query() query: PageQuery & { status?: string; code?: string; severity?: string; vessel?: string; overdue?: string; detainable?: string }) {
+  async deficiencies(@Query() query: PageQuery & { status?: string; code?: string; severity?: string; vessel?: string; overdue?: string; detainable?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-dueDate', maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -150,6 +159,7 @@ export class InspectionsController {
     if (String(query.overdue) === 'true') where.push(`f.status = 'OPEN' AND f.due_date IS NOT NULL AND f.due_date < now()`);
     if (String(query.detainable) === 'true') { args.push(DETAINABLE_ACTION); where.push(`(f.action_code = $${args.length} OR f.severity = 'DETAINABLE')`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(f.deficiency_code ILIKE $${args.length} OR f.description ILIKE $${args.length} OR f.deficiency_label ILIKE $${args.length} OR i.vessel_name ILIKE $${args.length} OR i.number ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, { ...INSPECTION_SCOPE, alias: 'i' });
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const order = p.sortField === 'dueDate' ? 'f.due_date' : p.sortField === 'code' ? 'f.deficiency_code' : p.sortField === 'status' ? 'f.status' : 'f.due_date';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM findings f JOIN inspections i ON i.id = f.inspection_id ${w}`, args);
@@ -165,12 +175,13 @@ export class InspectionsController {
 
   /** Detentions ordered by this administration, open ones first — the flag-state register of ships held. */
   @RequirePerm('inspections.view') @Get('detentions')
-  async detentions(@Query() query: PageQuery & { status?: string; vessel?: string }) {
+  async detentions(@Query() query: PageQuery & { status?: string; vessel?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-orderedAt', maxLimit: 200 });
     const where: string[] = []; const args: unknown[] = [];
     if (query.status) { args.push(query.status); where.push(`d.status = $${args.length}`); }
     if (query.vessel) { args.push(query.vessel); where.push(`d.vessel_id::text = $${args.length}`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(d.vessel_name ILIKE $${args.length} OR i.number ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, { ...INSPECTION_SCOPE, alias: 'i' });
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM detentions d JOIN inspections i ON i.id = d.inspection_id ${w}`, args);
     const rows = await this.pool.query<DetentionRow & { number: string; inspection_type: string }>(
@@ -181,8 +192,8 @@ export class InspectionsController {
 
   /** The full survey record: particulars, the answered checklist, the findings and the detention order. */
   @RequirePerm('inspections.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     const [findings, detention, call] = await Promise.all([
       this.findingsOf(this.pool, i.id), this.detentionOf(this.pool, i.id),
       i.port_call_id ? this.pool.query<Row>('SELECT * FROM port_calls WHERE id = $1', [i.port_call_id]) : Promise.resolve({ rows: [] as Row[] }),
@@ -200,22 +211,22 @@ export class InspectionsController {
 
   /** The four facts that answer "which survey is this?" for a hover card. */
   @RequirePerm('inspections.view') @Get(':id/card')
-  async card(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async card(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     return inspectionCard(i, await this.findingsOf(this.pool, i.id));
   }
 
   /** The checklist on its own, for a client that wants the sheet without the rest of the file. */
   @RequirePerm('inspections.view') @Get(':id/checklist')
-  async checklist(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async checklist(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     const passMark = i.pass_score_pct ?? (await this.passMark());
     const live = scoreChecklist(i.checklist ?? [], passMark);
     return { inspectionId: i.id, number: i.number, templateId: i.template_id, templateVersion: i.template_version, passScorePct: passMark, status: i.status, scorePct: i.score_pct, ...live, items: (i.checklist ?? []) };
   }
 
   @RequirePerm('inspections.create') @Post()
-  async create(@Body(zod(planBody)) body: z.infer<typeof planBody>, @CurrentUser() user?: Principal) {
+  async create(@Body(zod(planBody)) body: z.infer<typeof planBody>, @CurrentUser() user: Principal) {
     const passMark = await this.passMark();
     return withTx(this.pool, async (c) => {
       const v = await c.query<Row>('SELECT * FROM vessels WHERE id = $1', [body.vesselId]);
@@ -260,9 +271,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.edit') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(patchBody)) body: z.infer<typeof patchBody>) {
+  async update(@Param('id') id: string, @Body(zod(patchBody)) body: z.infer<typeof patchBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict('A closed inspection is read-only');
       const sets: string[] = []; const args: unknown[] = [before.id];
       const set = (col: string, v: unknown) => { args.push(v); sets.push(`${col} = $${args.length}`); };
@@ -299,9 +310,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.edit') @Post(':id/start')
-  async start(@Param('id') id: string) {
+  async start(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status !== 'PLANNED') throw conflict('Only a planned inspection can be started');
       const r = await c.query<InspectionRow>(`UPDATE inspections SET status = 'IN_PROGRESS', started_at = now(), updated_at = now() WHERE id = $1 RETURNING *`, [before.id]);
       const row = r.rows[0];
@@ -317,10 +328,10 @@ export class InspectionsController {
    * as detained puts a detention order on the record rather than a flag on a row. The weighted score is written
    * here from the answers as they stand, so the number a closed survey shows never moves again. */
   @RequirePerm('inspections.close') @Post(':id/close')
-  async close(@Param('id') id: string, @Body(zod(closeBody)) body: z.infer<typeof closeBody>, @CurrentUser() user?: Principal) {
+  async close(@Param('id') id: string, @Body(zod(closeBody)) body: z.infer<typeof closeBody>, @CurrentUser() user: Principal) {
     if (!isResult(body.result)) throw badRequest('Select a result before closing the inspection');
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict('Inspection is already closed');
       const findings = await this.findingsOf(c, before.id);
       const open = findings.filter((f) => f.status === 'OPEN');
@@ -358,9 +369,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.close') @Post(':id/detention')
-  async detain(@Param('id') id: string, @Body(zod(detainBody)) body: z.infer<typeof detainBody>, @CurrentUser() user?: Principal) {
+  async detain(@Param('id') id: string, @Body(zod(detainBody)) body: z.infer<typeof detainBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       const standing = await c.query<{ id: string }>(`SELECT id FROM detentions WHERE inspection_id = $1 AND status = 'ORDERED'`, [before.id]);
       if (standing.rowCount) throw conflict(`${before.vessel_name || 'This ship'} is already under a detention order on ${before.number}`);
       const d = await this.orderDetention(c, before, body, user);
@@ -373,9 +384,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.close') @Post(':id/detention/release')
-  async release(@Param('id') id: string, @Body(zod(releaseBody)) body: z.infer<typeof releaseBody>, @CurrentUser() user?: Principal) {
+  async release(@Param('id') id: string, @Body(zod(releaseBody)) body: z.infer<typeof releaseBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       const found = await c.query<DetentionRow>(`SELECT * FROM detentions WHERE inspection_id = $1 AND status = 'ORDERED' FOR UPDATE`, [i.id]);
       const before = found.rows[0];
       if (!before) throw notFound('No detention order is standing on this inspection');
@@ -393,9 +404,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.delete') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       if (i.status !== 'PLANNED') throw badRequest('Only a planned inspection can be deleted — close it instead');
       await this.audit.record(c, { action: 'DELETE', entity: 'Inspection', entityId: i.id, entityLabel: i.number, before: inspectionApi(i, { findings: await this.findingsOf(c, i.id) }) });
       await c.query('DELETE FROM inspections WHERE id = $1', [i.id]);
@@ -407,10 +418,10 @@ export class InspectionsController {
   /* ------------------------------------------------------------------------ findings --- */
 
   @RequirePerm('inspections.edit') @Post(':id/findings')
-  async addFinding(@Param('id') id: string, @Body(zod(findingBody)) body: z.infer<typeof findingBody>) {
+  async addFinding(@Param('id') id: string, @Body(zod(findingBody)) body: z.infer<typeof findingBody>, @CurrentUser() user: Principal) {
     const dueDays = await this.dueDays();
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict('A closed inspection is read-only');
       const master = body.deficiencyLabel ? null : await deficiencyMaster(c, body.deficiencyCode);
       const seq = await c.query<{ n: string }>('SELECT COALESCE(max(seq), 0) + 1 AS n FROM findings WHERE inspection_id = $1', [before.id]);
@@ -432,9 +443,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.edit') @Put(':id/findings/:findingId')
-  async updateFinding(@Param('id') id: string, @Param('findingId') findingId: string, @Body(zod(findingPatch)) body: z.infer<typeof findingPatch>) {
+  async updateFinding(@Param('id') id: string, @Param('findingId') findingId: string, @Body(zod(findingPatch)) body: z.infer<typeof findingPatch>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       const found = await c.query<FindingRow>('SELECT * FROM findings WHERE id::text = $1 AND inspection_id = $2 FOR UPDATE', [findingId, i.id]);
       const before = found.rows[0];
       if (!before) throw notFound('Finding not found');
@@ -455,9 +466,9 @@ export class InspectionsController {
   }
 
   @RequirePerm('inspections.edit') @Delete(':id/findings/:findingId')
-  async removeFinding(@Param('id') id: string, @Param('findingId') findingId: string) {
+  async removeFinding(@Param('id') id: string, @Param('findingId') findingId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       if (i.status === 'CLOSED') throw conflict('A closed inspection is read-only');
       const found = await c.query<FindingRow>('SELECT * FROM findings WHERE id::text = $1 AND inspection_id = $2 FOR UPDATE', [findingId, i.id]);
       const f = found.rows[0];

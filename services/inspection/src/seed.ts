@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { buildWorld, stableId, type WorldChecklistTemplate, type WorldInspection } from '@maritime/world';
+import { geoFor, buildWorld, stableId, type WorldChecklistTemplate, type WorldInspection } from '@maritime/world';
 import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
 import { upsertLookup, upsertPortCall, upsertVessel } from './subjects';
@@ -42,7 +42,10 @@ export async function seedInspection(databaseUrl: string, profile = 'AE') {
 
   const counts = await withTx(pool, async (c) => {
     for (const v of world.vessels) await upsertVessel(c, { id: v.id, imo: v.imo, name: v.name, type: v.type, flag: v.flag, grt: v.grt, built: v.built, agentCode: v.agentCode, status: v.status, real: v.real });
-    for (const call of world.portCalls) await upsertPortCall(c, { id: call.id, vcn: call.vcn, vesselId: call.vesselId, status: call.status, berthCode: call.berthCode, eta: call.eta, atb: call.atb, atd: call.atd });
+    /* The call's port is what a survey inherits its tenancy from, so the seed stamps it exactly as the
+     * read-model event would. A call with no berth is not yet any port's, and stays shared. */
+    const homePort = geoFor(world.profile).portCode;
+    for (const call of world.portCalls) await upsertPortCall(c, { id: call.id, vcn: call.vcn, vesselId: call.vesselId, status: call.status, berthCode: call.berthCode, eta: call.eta, atb: call.atb, atd: call.atd, scopePort: call.berthCode ? homePort : '' });
     for (const l of world.lookups) if (l.category === 'deficiencyCode' || l.category === 'actionCode') await upsertLookup(c, { id: `${l.category}:${l.code}`, ...l } as Row);
 
     for (const t of world.checklistTemplates) {

@@ -16,10 +16,12 @@ export async function upsertVessel(c: Queryable, v: Row) {
     [String(v.id), v.imo ?? '', v.name ?? '', v.type ?? 'GEN', v.flag ?? '', v.grt ?? null, v.built ?? null, v.agentCode ?? v.agent ?? null, v.status ?? 'ACTIVE', !!v.real]);
 }
 export async function upsertPortCall(c: Queryable, p: Row) {
-  await c.query(`INSERT INTO port_calls(id, vcn, vessel_id, status, berth_code, eta, atb, atd) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+  /* `scopePort` arrives stamped by the service that owns the call and is projected as it came. Writing it
+   * moves the inspections raised against this call with it, through the trigger the migration installed. */
+  await c.query(`INSERT INTO port_calls(id, vcn, vessel_id, status, berth_code, eta, atb, atd, scope_port) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
     ON CONFLICT (id) DO UPDATE SET vcn = EXCLUDED.vcn, vessel_id = EXCLUDED.vessel_id, status = EXCLUDED.status, berth_code = EXCLUDED.berth_code,
-      eta = EXCLUDED.eta, atb = EXCLUDED.atb, atd = EXCLUDED.atd, updated_at = now()`,
-    [String(p.id), p.vcn ?? '', String(p.vesselId ?? ''), p.status ?? 'ANNOUNCED', p.berthCode ?? null, p.eta ?? null, p.atb ?? null, p.atd ?? null]);
+      eta = EXCLUDED.eta, atb = EXCLUDED.atb, atd = EXCLUDED.atd, scope_port = EXCLUDED.scope_port, updated_at = now()`,
+    [String(p.id), p.vcn ?? '', String(p.vesselId ?? ''), p.status ?? 'ANNOUNCED', p.berthCode ?? null, p.eta ?? null, p.atb ?? null, p.atd ?? null, p.scopePort ?? '']);
 }
 export async function upsertLookup(c: Queryable, l: Row) {
   await c.query(`INSERT INTO lookups(id, category, code, label, meta) VALUES ($1,$2,$3,$4,$5)
