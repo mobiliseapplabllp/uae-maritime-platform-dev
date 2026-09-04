@@ -92,7 +92,7 @@ jobs:
           GITLEAKS_CONFIG: .gitleaks.toml
           GITLEAKS_ENABLE_SUMMARY: "true"
       - name: trivy filesystem scan (vulnerabilities, secrets, misconfigurations)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
