@@ -16,9 +16,15 @@ FROM base AS build
 ARG SERVICE
 RUN test -n "${SERVICE}" || { echo "build-arg SERVICE is required, e.g. SERVICE=services/mdm" >&2; exit 1; }
 COPY . .
+# The braces matter. `--filter "./services/mdm..."` reads the whole string as a directory pattern and
+# selects that one package; the trailing dots do nothing. `--filter "{./services/mdm}..."` is the form that
+# takes a directory and adds its workspace dependencies. With the first form the shared packages were never
+# installed or built, so every service that imports the kit failed its own typecheck inside the image with
+# "cannot find module @maritime/service-kit". The gateway is the only service that imports none of them,
+# which is why it was the one that passed.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter "./${SERVICE}..." \
- && pnpm --filter "./${SERVICE}..." build \
+    pnpm install --frozen-lockfile --filter "{./${SERVICE}}..." \
+ && pnpm --filter "{./${SERVICE}}..." build \
  && pnpm --filter "./${SERVICE}" deploy --prod --legacy /out
 
 FROM ${NODE_IMAGE} AS runtime

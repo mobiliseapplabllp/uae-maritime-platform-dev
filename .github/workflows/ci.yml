@@ -161,7 +161,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: build-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Runs on pull requests as well as on main. It used to be main-only, which meant a branch could go
+    # green with this job skipped and the failure would only appear after the merge — which is exactly
+    # how a broken image build survived in the repository.
     strategy:
       fail-fast: false
       matrix:
