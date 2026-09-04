@@ -66,14 +66,20 @@ start_runtime() {
 
 create_databases() {
   say "Creating databases"
-  local made=0
+  local made=0 failed=""
   for s in $(ls services); do
     local db; db=$(db_of "$s"); [ -n "$db" ] || continue
     if ! psql -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" -d postgres -Atc \
          "select 1 from pg_database where datname='$db'" | grep -q 1; then
-      createdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" "$db" && made=$((made+1))
+      # A bare `createdb ... && made=$((made+1))` counted a failure as nothing to do, so with the
+      # server down this printed "0 database(s) created" and every service then failed to boot with
+      # no clue as to why. A create that fails has to say so.
+      if createdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" "$db" 2>/dev/null; then made=$((made+1)); else failed="$failed $db"; fi
     fi
   done
+  [ -z "$failed" ] || die "could not create:$failed
+     PostgreSQL is not accepting connections at $PGHOST_:$PGPORT_ as role '$PGUSER_'.
+     Start it with:  ./run-local.sh start"
   ok "$(ls services | wc -l | tr -d ' ') services, $made database(s) created"
 }
 
@@ -186,6 +192,10 @@ case "${1:-up}" in
       fi
     fi
     install_and_build
+    # Restarting services against a stopped PostgreSQL takes every one of them down at once and
+    # leaves only the gateway, which is the single service holding no database. start_runtime brings
+    # it up and dies with a clear message if it cannot.
+    start_runtime
     # A pull can bring a service that did not exist last time, and a service with no database fails
     # on boot. create_databases only creates what is missing, so this is cheap on an ordinary update.
     create_databases
