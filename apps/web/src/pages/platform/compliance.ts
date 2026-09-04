@@ -18,26 +18,26 @@ export const statusColor = (s: string): string =>
 
 export const COMPLIANCE = {
   totals: [
-    { key: 'built' as const, count: 17 },
-    { key: 'partial' as const, count: 35 },
-    { key: 'absent' as const, count: 17 },
+    { key: 'built' as const, count: 22 },
+    { key: 'partial' as const, count: 34 },
+    { key: 'absent' as const, count: 13 },
     { key: 'diverged' as const, count: 1 },
   ],
   sections: [
-    { key: 'arch', label: 'Architecture mandate', built: 3, partial: 6, absent: 0, diverged: 0 },
-    { key: 'stack', label: 'Technology stack', built: 3, partial: 3, absent: 3, diverged: 1 },
-    { key: 'agentic', label: 'Agentic AI framework', built: 6, partial: 3, absent: 3, diverged: 0 },
+    { key: 'arch', label: 'Architecture mandate', built: 4, partial: 5, absent: 0, diverged: 0 },
+    { key: 'stack', label: 'Technology stack', built: 4, partial: 3, absent: 2, diverged: 1 },
+    { key: 'agentic', label: 'Agentic AI framework', built: 7, partial: 3, absent: 2, diverged: 0 },
     { key: 'lcnc', label: 'Low-code / no-code', built: 2, partial: 2, absent: 2, diverged: 0 },
     { key: 'domains', label: 'The seven RFP domains', built: 0, partial: 7, absent: 0, diverged: 0 },
-    { key: 'cross', label: 'Cross-domain and non-functional', built: 3, partial: 5, absent: 4, diverged: 0 },
+    { key: 'cross', label: 'Cross-domain and non-functional', built: 5, partial: 5, absent: 2, diverged: 0 },
     { key: 'deliv', label: 'Deliverables and governance', built: 0, partial: 9, absent: 5, diverged: 0 },
   ],
   delta: [
     { key: 'studio', name: 'Service Studio', why: 'The low-code runtime already carries the platform; without the design-time studio the vendor-independence objective is unmet.' },
-    { key: 'hub', name: 'integration-hub', why: 'One unbuilt service blocks eight commitments — UAE PASS, GISIS, MOHRE, AIS/LRIT, ICP, payment and the SOAP façade.' },
+    { key: 'counterparts', name: 'Live counterpart connections', why: 'The hub and all eight adapters are built and contract-tested; each still answers from a stub until endpoints and credentials are issued.' },
     { key: 'aiplatform', name: 'ai-platform', why: 'Model registry, drift, vision and speech. Agent governance currently stops at behaviour.' },
     { key: 'mobile', name: 'Mobile apps', why: 'Two Flutter apps; the offline inspector app is the largest single estimate in the TAD.' },
     { key: 'coverage', name: 'Coverage instrumentation', why: 'The agentic service rate is a percentage the directive measures. It cannot be reported today.' },
-    { key: 'assurance', name: 'Assurance scaffolding', why: 'Load tests, accessibility audit, DAST, DR drill, migration toolkit and escrow.' },
+    { key: 'assurance', name: 'Remaining assurance', why: 'Static analysis, dynamic probes, the OWASP Top 10 pass and the WCAG 2.2 AA audit are done. Load tests, the DR drill, the migration toolkit and escrow are not.' },
   ],
 };
