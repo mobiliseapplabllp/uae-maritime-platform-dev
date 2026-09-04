@@ -44,6 +44,8 @@ function backTrack(p: WorldPosition, fixes = 12, everyMin = 10) {
   return out;
 }
 
+import { seedGeofences } from './geofences';
+
 export async function seedMaritimeCentre(databaseUrl: string, profile = 'AE') {
   const { pool } = createDb(databaseUrl);
   await runMigrations(pool, join(__dirname, '..', 'migrations'));
@@ -184,8 +186,11 @@ export async function seedMaritimeCentre(databaseUrl: string, profile = 'AE') {
       vessels: world.vessels.length, berths: world.berths.length, series: series.size,
     };
   });
+  // The published sea areas are seeded outside the transaction above: they are reference geometry,
+  // not part of the fictional world, and a re-run must refresh them without touching the rest.
+  const fences = await seedGeofences(pool);
   await pool.end();
-  return counts;
+  return { ...counts, geofences: fences };
 }
 
 if (require.main === module) {

@@ -17,6 +17,10 @@ export const envSchema = baseEnvSchema.extend({
   TRACK_HISTORY_HOURS: z.coerce.number().default(24),
   /** A fix older than this is stale: the target stays on the picture but the watch is told the feed has gone quiet. */
   POSITION_STALE_MIN: z.coerce.number().default(45),
+  /** Forces the geodesic path even where PostGIS is installed. Its reason for existing is that the
+   *  two implementations must agree: the test suite runs the same queries both ways over the same
+   *  rows, and an operator can do the same to check a result they doubt. */
+  MC_FORCE_GEODESIC: z.coerce.boolean().default(false),
 });
 export type Env = z.infer<typeof envSchema>;
 export const env = () => loadEnv(envSchema);

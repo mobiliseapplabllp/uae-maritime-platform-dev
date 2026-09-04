@@ -68,6 +68,15 @@ fi
 pg_isready -q 2>/dev/null || die "PostgreSQL will not start. Start it, then run ./bootstrap.sh again."
 ok "PostgreSQL is accepting connections"
 
+work "installing the PostgreSQL extensions the platform prefers (PostGIS, pgvector)"
+# Optional by design: the track store and the assistant both fall back cleanly when these are
+# absent, so a failure here is a note rather than a stop.
+case "$PKG" in
+  brew) brew install postgis pgvector >/dev/null 2>&1 || warn "PostGIS/pgvector not installed — the track store will use plain lat/lon and the assistant its offline index" ;;
+  apt)  sudo apt-get install -y -qq postgresql-16-postgis-3 postgresql-16-pgvector >/dev/null 2>&1 || warn "PostGIS/pgvector not installed — the platform falls back cleanly" ;;
+  dnf)  sudo dnf install -y -q postgis pgvector >/dev/null 2>&1 || warn "PostGIS/pgvector not installed — the platform falls back cleanly" ;;
+esac
+
 bold "3/6  Creating the database role"
 export PGPASSWORD=maritime
 if psql -h 127.0.0.1 -U maritime -d postgres -Atc 'select 1' >/dev/null 2>&1; then

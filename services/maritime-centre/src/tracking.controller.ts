@@ -4,6 +4,8 @@ import type { Pool, PoolClient } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
 import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, ServiceOnly, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
+import { detectMode, fencesContaining, vesselsWithin } from './spatial';
+import { seedGeofences } from './geofences';
 import { LIVE_STATUS, iso, type IncidentRow, type Row } from './incidents';
 import { incidentRowApi } from './incidents';
 import {
@@ -138,6 +140,72 @@ export class TrackingController {
   }
 
   /* --------------------------------------------------------------------------- alerts --- */
+
+  /* Spatial questions over the track store. The answers are the same whether PostGIS is present or
+   * not; only the cost differs, and the mode is reported so an operator can see which they are on. */
+
+  @RequirePerm('nmc.view') @Get('spatial/mode')
+  async spatialMode() {
+    const mode = await detectMode(this.pool, this.env.MC_FORCE_GEODESIC);
+    const fences = await this.pool.query<{ n: string }>('SELECT count(*)::text AS n FROM geofences WHERE active');
+    return {
+      mode,
+      indexed: mode === 'postgis',
+      note: mode === 'postgis'
+        ? 'PostGIS: geodesic distances over a GiST index.'
+        : 'PostGIS is not installed on this cluster; the same answers are computed from lat/lon with a bounding box and haversine.',
+      geofences: Number(fences.rows[0].n),
+    };
+  }
+
+  /** Vessels within a radius of a point — the question a duty officer asks about an incident. */
+  @RequirePerm('nmc.view') @Get('spatial/near')
+  async near(@Query() q: { lat?: string; lon?: string; radius?: string; limit?: string }) {
+    const lat = Number(q.lat), lon = Number(q.lon);
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) throw badRequest('lat must be a number between -90 and 90');
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) throw badRequest('lon must be a number between -180 and 180');
+    // A radius is capped: an uncapped one is a request for every vessel in the store, dressed up.
+    const radius = Math.min(500_000, Math.max(1, Number(q.radius) || 10_000));
+    const limit = Math.min(500, Math.max(1, Number(q.limit) || 100));
+    const rows = await vesselsWithin(this.pool, lat, lon, radius, limit, this.env.MC_FORCE_GEODESIC);
+    return {
+      centre: { lat, lon }, radiusMetres: radius, mode: await detectMode(this.pool, this.env.MC_FORCE_GEODESIC),
+      vessels: rows.map((r) => ({
+        vesselId: r.vessel_id, vesselName: r.vessel_name, mmsi: r.mmsi,
+        lat: Number(r.lat), lon: Number(r.lon), sog: r.sog === null ? null : Number(r.sog),
+        navStatus: r.nav_status, receivedAt: r.received_at.toISOString(), distanceMetres: r.distance_m,
+      })),
+    };
+  }
+
+  @RequirePerm('nmc.view') @Get('geofences')
+  async geofences() {
+    const r = await this.pool.query(
+      `SELECT g.id::text, g.code, g.name, g.name_ar, g.kind, g.alert_on, g.geojson, g.active,
+              (SELECT count(*) FROM geofence_events e WHERE e.geofence_id = g.id)::int AS events
+         FROM geofences g WHERE g.active ORDER BY g.kind, g.code`);
+    return r.rows.map((x: Record<string, unknown>) => ({
+      id: x.id, code: x.code, name: x.name, nameAr: x.name_ar, kind: x.kind,
+      alertOn: x.alert_on, geojson: x.geojson, events: x.events,
+    }));
+  }
+
+  /** Which named areas contain a point. Used to label a fix, and to decide whether a crossing is
+   *  worth an alert at all. */
+  @RequirePerm('nmc.view') @Get('geofences/at')
+  async fencesAt(@Query() q: { lat?: string; lon?: string }) {
+    const lat = Number(q.lat), lon = Number(q.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw badRequest('lat and lon are required');
+    return { lat, lon, fences: await fencesContaining(this.pool, lat, lon, this.env.MC_FORCE_GEODESIC) };
+  }
+
+  /** Re-seeds the published sea areas. Idempotent by code, so a re-run neither duplicates nor
+   *  disturbs an area an operator has edited. */
+  @RequirePerm('nmc.manage') @Post('geofences/seed')
+  async reseedFences() {
+    const n = await seedGeofences(this.pool);
+    return { seeded: n };
+  }
 
   @RequirePerm('nmc.view') @Get('alerts')
   async alerts(@Query() query: PageQuery & { acknowledged?: string; type?: string; severity?: string; vessel?: string }) {
