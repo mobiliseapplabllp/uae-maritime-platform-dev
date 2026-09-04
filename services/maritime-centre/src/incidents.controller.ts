@@ -1,11 +1,11 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { EVENTS, INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_SEVERITY, INCIDENT_SOURCES, INCIDENT_STATUS, INCIDENT_TYPES, type PageQuery } from '@maritime/contracts';
+import { EVENTS, INCIDENT_CATEGORIES, INCIDENT_PRIORITIES, INCIDENT_SEVERITY, INCIDENT_SOURCES, INCIDENT_STATUS, INCIDENT_TYPES, type PageQuery, type TenancyScope } from '@maritime/contracts';
 import {
   AuditClient, CurrentUser, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, SettingsClient, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod,
-  type Principal,
-} from '@maritime/service-kit';
+  scopeWhere, type Principal } from '@maritime/service-kit';
+import { INCIDENT_SCOPE } from './scope';
 import type { Env } from './env';
 import {
   COMM_DIRECTIONS, DOC_TYPES, LIVE_STATUS, PRIORITY_OF, TASK_STATUS, allowed, buildTimeline, incidentApi, incidentCard, incidentDashboard, incidentRowApi,
@@ -72,13 +72,19 @@ export class IncidentsController {
     const s = await this.settings.moduleGet('incidents', { mttaTargetMin: this.env.MTTA_TARGET_MIN, mttrTargetHrs: this.env.MTTR_TARGET_HRS });
     return { mttaTargetMin: Number(s.mttaTargetMin) || this.env.MTTA_TARGET_MIN, mttrTargetHrs: Number(s.mttrTargetHrs) || this.env.MTTR_TARGET_HRS };
   }
-  private async load(c: Pool | PoolClient, id: string): Promise<IncidentRow> {
-    const r = await c.query<IncidentRow>('SELECT * FROM incidents WHERE id::text = $1 OR number = $1', [id]);
+  /* Every handler that touches one case comes through these two, so the tenancy filter lives here: a case in
+   * another port is not found rather than found and refused, and a handler added later cannot forget it. */
+  private async load(c: Pool | PoolClient, id: string, scope: TenancyScope): Promise<IncidentRow> {
+    const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [id];
+    scopeWhere(scope, where, args, INCIDENT_SCOPE);
+    const r = await c.query<IncidentRow>(`SELECT * FROM incidents WHERE ${where.join(' AND ')}`, args);
     if (!r.rows[0]) throw notFound('Incident not found');
     return r.rows[0];
   }
-  private async lockRow(c: PoolClient, id: string): Promise<IncidentRow> {
-    const r = await c.query<IncidentRow>('SELECT * FROM incidents WHERE id::text = $1 OR number = $1 FOR UPDATE', [id]);
+  private async lockRow(c: PoolClient, id: string, scope: TenancyScope): Promise<IncidentRow> {
+    const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [id];
+    scopeWhere(scope, where, args, INCIDENT_SCOPE);
+    const r = await c.query<IncidentRow>(`SELECT * FROM incidents WHERE ${where.join(' AND ')} FOR UPDATE`, args);
     if (!r.rows[0]) throw notFound('Incident not found');
     return r.rows[0];
   }
@@ -105,7 +111,7 @@ export class IncidentsController {
 
   /** The incident register: filterable, searchable, paged, without the threads that hang off each case. */
   @RequirePerm('incidents.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-reportedAt', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -119,6 +125,7 @@ export class IncidentsController {
     if (query.from) { args.push(query.from); where.push(`reported_at >= $${args.length}`); }
     if (query.to) { args.push(query.to); where.push(`reported_at <= $${args.length}`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(number ILIKE $${args.length} OR title ILIKE $${args.length} OR vessel_name ILIKE $${args.length} OR reported_by ILIKE $${args.length} OR description ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, INCIDENT_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM incidents ${w}`, args);
     const rows = await this.pool.query<IncidentRow>(`SELECT * FROM incidents ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, number DESC LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -127,13 +134,19 @@ export class IncidentsController {
 
   /** The desk's landing analytics. Declared before `:id` so the word is not read as an id. */
   @RequirePerm('incidents.view', 'dashboard.view') @Get('dashboard')
-  async dashboard() {
+  async dashboard(@CurrentUser() user: Principal) {
     const now = this.now();
     const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
     const cols = 'id, number, title, category, type, severity, priority, status, reported_at, acknowledged_at, resolved_at, closed_at, assigned_to, injuries';
+    /* The analytics are a read of every case they count, so they are narrowed exactly as the register is:
+     * a count that swept in another port's cases would leak them through a number. */
+    const ww = ['reported_at >= $1']; const wa: unknown[] = [from];
+    scopeWhere(user.scope, ww, wa, INCIDENT_SCOPE);
+    const ow = ['status = ANY($1)']; const oa: unknown[] = [LIVE_STATUS];
+    scopeWhere(user.scope, ow, oa, INCIDENT_SCOPE);
     const [windowed, everOpen, sla] = await Promise.all([
-      this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE reported_at >= $1`, [from]),
-      this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE status = ANY($1) ORDER BY reported_at`, [LIVE_STATUS]),
+      this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE ${ww.join(' AND ')}`, wa),
+      this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE ${ow.join(' AND ')} ORDER BY reported_at`, oa),
       this.sla(),
     ]);
     return incidentDashboard(windowed.rows, everOpen.rows, sla, now);
@@ -141,45 +154,47 @@ export class IncidentsController {
 
   /** The 5×5 likelihood × consequence heatmap, initial next to residual. */
   @RequirePerm('incidents.view') @Get('risk-matrix')
-  async matrix(@Query('days') daysQ?: string) {
+  async matrix(@CurrentUser() user: Principal, @Query('days') daysQ?: string) {
     const days = Math.min(1095, Math.max(7, Number.parseInt(String(daysQ ?? 180), 10) || 180));
     const since = new Date(Date.now() - days * 86_400_000);
-    const rows = await this.pool.query<MatrixCase>('SELECT id, number, title, severity, priority, status FROM incidents WHERE reported_at >= $1 ORDER BY reported_at DESC', [since]);
+    const mw = ['reported_at >= $1']; const ma: unknown[] = [since];
+    scopeWhere(user.scope, mw, ma, INCIDENT_SCOPE);
+    const rows = await this.pool.query<MatrixCase>(`SELECT id, number, title, severity, priority, status FROM incidents WHERE ${mw.join(' AND ')} ORDER BY reported_at DESC`, ma);
     return riskMatrix(rows.rows, days);
   }
 
   /** The full case file: facts, communications, tasks, documents, the log and the status trail. */
   @RequirePerm('incidents.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     const file = await this.caseFile(this.pool, i.id);
     return { ...incidentApi(i, file), timeline: buildTimeline(file) };
   }
 
   /** The merged timeline on its own — status changes, log entries and attachments, newest first. */
   @RequirePerm('incidents.view') @Get(':id/timeline')
-  async timeline(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async timeline(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     const file = await this.caseFile(this.pool, i.id);
     return { incidentId: i.id, number: i.number, entries: buildTimeline(file), statusHistory: incidentApi(i, file).statusHistory };
   }
 
   /** The resolution record: how the case ended and what was done about it. */
   @RequirePerm('incidents.view') @Get(':id/resolution')
-  async resolution(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async resolution(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     return { incidentId: i.id, number: i.number, status: i.status, ...incidentApi(i).resolution };
   }
 
   @RequirePerm('incidents.view') @Get(':id/card')
-  async card(@Param('id') id: string) {
-    const i = await this.load(this.pool, id);
+  async card(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const i = await this.load(this.pool, id, user.scope);
     const open = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM incident_tasks WHERE incident_id = $1 AND status = 'OPEN'`, [i.id]);
     return incidentCard(i, Number(open.rows[0].n));
   }
 
   @RequirePerm('incidents.create') @Post()
-  async create(@Body(zod(reportBody)) body: z.infer<typeof reportBody>, @CurrentUser() user?: Principal) {
+  async create(@Body(zod(reportBody)) body: z.infer<typeof reportBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       let vessel: Row | null = null;
       if (body.vesselId) {
@@ -225,9 +240,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(patchBody)) body: z.infer<typeof patchBody>, @CurrentUser() user?: Principal) {
+  async update(@Param('id') id: string, @Body(zod(patchBody)) body: z.infer<typeof patchBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict('A closed incident is read-only — reopen it first');
       const sets: string[] = []; const args: unknown[] = [before.id];
       const set = (col: string, v: unknown) => { args.push(v); sets.push(`${col} = $${args.length}`); };
@@ -272,9 +287,9 @@ export class IncidentsController {
    * talk it into a shortcut. Resolving demands a summary, because a resolution with nothing written against it
    * is not a resolution. Reopening clears the resolution stamps so the clock runs again from the response. */
   @RequirePerm('incidents.manage') @Post(':id/transition')
-  async transition(@Param('id') id: string, @Body(zod(transitionBody)) body: z.infer<typeof transitionBody>, @CurrentUser() user?: Principal) {
+  async transition(@Param('id') id: string, @Body(zod(transitionBody)) body: z.infer<typeof transitionBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       const from = before.status;
       if (!allowed(from, body.to)) {
         const next = transitionsFor(from);
@@ -301,9 +316,9 @@ export class IncidentsController {
 
   /** Closing is the last transition, spelled as its own endpoint because that is how the desk thinks about it. */
   @RequirePerm('incidents.close', 'incidents.manage') @Post(':id/close')
-  async close(@Param('id') id: string, @Body(zod(closeBody)) body: z.infer<typeof closeBody>, @CurrentUser() user?: Principal) {
+  async close(@Param('id') id: string, @Body(zod(closeBody)) body: z.infer<typeof closeBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict(`${before.number} is already closed`);
       if (!allowed(before.status, 'CLOSED')) throw conflict(`${before.number} must be resolved before it can be closed — it is ${before.status.toLowerCase()}`);
       const open = await c.query<{ n: string }>(`SELECT count(*) AS n FROM incident_tasks WHERE incident_id = $1 AND status = 'OPEN'`, [before.id]);
@@ -321,9 +336,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Post(':id/assign')
-  async assign(@Param('id') id: string, @Body(zod(assignBody)) body: z.infer<typeof assignBody>, @CurrentUser() user?: Principal) {
+  async assign(@Param('id') id: string, @Body(zod(assignBody)) body: z.infer<typeof assignBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       this.requireLive(before, 'reassigning it');
       const r = await c.query<IncidentRow>('UPDATE incidents SET assigned_to_id = $2, assigned_to = $3, updated_at = now() WHERE id = $1 RETURNING *', [before.id, body.assignedToId ?? null, body.assignedTo]);
       const row = r.rows[0];
@@ -334,9 +349,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       if (i.status !== 'OPEN') throw badRequest('Only an OPEN case logged in error can be deleted — close it instead');
       await this.audit.record(c, { action: 'DELETE', entity: 'Incident', entityId: i.id, entityLabel: i.number, before: incidentApi(i, await this.caseFile(c, i.id)) });
       await c.query('DELETE FROM incidents WHERE id = $1', [i.id]);
@@ -348,9 +363,9 @@ export class IncidentsController {
   /* ----------------------------------------------------------------- the case threads --- */
 
   @RequirePerm('incidents.manage') @Post(':id/comms')
-  async addComm(@Param('id') id: string, @Body(zod(commBody)) body: z.infer<typeof commBody>, @CurrentUser() user?: Principal) {
+  async addComm(@Param('id') id: string, @Body(zod(commBody)) body: z.infer<typeof commBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       const r = await c.query<CommRow>('INSERT INTO incident_comms(incident_id, at, by_id, by_name, channel, direction, message) VALUES ($1, COALESCE($2, now()), $3, $4, $5, $6, $7) RETURNING *',
         [i.id, body.at ?? null, user?.id ?? null, user?.name ?? 'System', body.channel, body.direction, body.message]);
       await this.audit.record(c, { action: 'COMM_ADD', entity: 'Incident', entityId: i.id, entityLabel: i.number, after: { channel: body.channel, direction: body.direction, message: body.message } });
@@ -359,9 +374,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Post(':id/log')
-  async addLog(@Param('id') id: string, @Body(zod(logBody)) body: z.infer<typeof logBody>, @CurrentUser() user?: Principal) {
+  async addLog(@Param('id') id: string, @Body(zod(logBody)) body: z.infer<typeof logBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       this.requireLive(i, 'adding to the log');
       await this.note(c, i.id, user, body.entry);
       await this.audit.record(c, { action: 'LOG_ADD', entity: 'Incident', entityId: i.id, entityLabel: i.number, after: { entry: body.entry } });
@@ -370,9 +385,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Post(':id/tasks')
-  async addTask(@Param('id') id: string, @Body(zod(taskBody)) body: z.infer<typeof taskBody>, @CurrentUser() user?: Principal) {
+  async addTask(@Param('id') id: string, @Body(zod(taskBody)) body: z.infer<typeof taskBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       this.requireLive(i, 'raising a task on it');
       const r = await c.query<TaskRow>('INSERT INTO incident_tasks(incident_id, title, assignee_id, assignee, due) VALUES ($1,$2,$3,$4,$5) RETURNING *',
         [i.id, body.title, body.assigneeId ?? null, body.assignee ?? '', body.due ?? null]);
@@ -384,9 +399,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Put(':id/tasks/:taskId')
-  async setTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body(zod(taskPatch)) body: z.infer<typeof taskPatch>, @CurrentUser() user?: Principal) {
+  async setTask(@Param('id') id: string, @Param('taskId') taskId: string, @Body(zod(taskPatch)) body: z.infer<typeof taskPatch>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       const found = await c.query<TaskRow>('SELECT * FROM incident_tasks WHERE id::text = $1 AND incident_id = $2 FOR UPDATE', [taskId, i.id]);
       const before = found.rows[0];
       if (!before) throw notFound('Task not found');
@@ -405,9 +420,9 @@ export class IncidentsController {
   }
 
   @RequirePerm('incidents.manage') @Post(':id/documents')
-  async addDocument(@Param('id') id: string, @Body(zod(docBody)) body: z.infer<typeof docBody>, @CurrentUser() user?: Principal) {
+  async addDocument(@Param('id') id: string, @Body(zod(docBody)) body: z.infer<typeof docBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const i = await this.lockRow(c, id);
+      const i = await this.lockRow(c, id, user.scope);
       this.requireLive(i, 'attaching a document');
       const r = await c.query<DocRow>('INSERT INTO incident_documents(incident_id, name, doc_type, size_kb, uploaded_by_id, uploaded_by, note, document_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *',
         [i.id, body.name, body.docType, body.sizeKB, user?.id ?? null, user?.name ?? 'System', body.note ?? '', body.documentId ?? null]);
@@ -419,9 +434,9 @@ export class IncidentsController {
 
   /** The resolution record, written as one thing rather than four fields on a patch. */
   @RequirePerm('incidents.manage') @Put(':id/resolution')
-  async setResolution(@Param('id') id: string, @Body(zod(resolutionBody)) body: z.infer<typeof resolutionBody>, @CurrentUser() user?: Principal) {
+  async setResolution(@Param('id') id: string, @Body(zod(resolutionBody)) body: z.infer<typeof resolutionBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await this.lockRow(c, id);
+      const before = await this.lockRow(c, id, user.scope);
       if (before.status === 'CLOSED') throw conflict('A closed incident is read-only — reopen it first');
       const rca = { rootCause: body.rootCause, category: body.category, correctiveAction: body.correctiveAction, preventiveAction: body.preventiveAction };
       const r = await c.query<IncidentRow>('UPDATE incidents SET rca = $2, outcome = COALESCE($3, outcome), updated_at = now() WHERE id = $1 RETURNING *', [before.id, JSON.stringify(rca), body.outcome ?? null]);

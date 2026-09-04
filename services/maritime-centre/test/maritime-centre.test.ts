@@ -16,6 +16,8 @@ const SERVICE_TOKEN = 'test-service-token';
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const duty = tok('duty'); const viewer = tok('viewer'); const nobody = tok('nobody'); const dash = tok('dash');
+/* Two desks, one at each port, and an operator who is not the administration at all. */
+const khalifa = tok('khalifa'); const fujairah = tok('fujairah'); const agentGss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -35,6 +37,9 @@ beforeAll(async () => {
     viewer: { ...base, id: 'viewer', sub: 'viewer', name: 'Watchkeeper', perms: ['incidents.view', 'nmc.view'] },
     dash: { ...base, id: 'dash', sub: 'dash', name: 'Command Centre', perms: ['dashboard.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['reports.view'] },
+    khalifa: { ...base, id: 'khalifa', sub: 'khalifa', name: 'Khalifa Desk', perms: ['incidents.view', 'incidents.manage', 'nmc.view', 'dashboard.view'], scope: { level: 'PORT', ports: ['AEAUH'] } },
+    fujairah: { ...base, id: 'fujairah', sub: 'fujairah', name: 'Fujairah Desk', perms: ['incidents.view', 'nmc.view', 'dashboard.view'], scope: { level: 'PORT', ports: ['AEFJR'] } },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['incidents.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -599,5 +604,98 @@ describe('maritime-centre — authorisation and the audit trail', () => {
       expect(snap).toHaveProperty(field);
     }
     await del(`/incidents/${c.id}`, duty);
+  });
+});
+
+/* ================================================================ tenancy at the centre === */
+
+describe('maritime-centre — tenancy', () => {
+  /** Two berths in two ports, and a case at each, so the rule is tested in both directions on real rows. */
+  const setUp = async () => {
+    await pool.query(`INSERT INTO berths(id, code, name, terminal, status, scope_port) VALUES
+      ('t-auh', 'T-AUH', 'Khalifa test berth', 'CT9', 'OPERATIONAL', 'AEAUH'),
+      ('t-fjr', 'T-FJR', 'Fujairah test berth', 'FJR', 'OPERATIONAL', 'AEFJR')
+      ON CONFLICT (id) DO UPDATE SET scope_port = EXCLUDED.scope_port`);
+    const mk = async (n: string, berth: string) => (await pool.query<{ id: string }>(
+      `INSERT INTO incidents(number, title, category, type, severity, priority, status, berth_id, berth_code, reported_at)
+       VALUES ($1, $2, 'OPERATIONAL', 'OTHER', 'MINOR', 'P3', 'OPEN', $3, $3, now()) RETURNING id`, [n, `Test case ${n}`, berth])).rows[0].id;
+    return { auh: await mk('TEN-AUH-1', 't-auh'), fjr: await mk('TEN-FJR-1', 't-fjr') };
+  };
+  const tearDown = async () => {
+    await pool.query("DELETE FROM incidents WHERE number LIKE 'TEN-%'");
+    await pool.query("DELETE FROM berths WHERE id IN ('t-auh','t-fjr')");
+  };
+
+  it('takes the port from the berth the case is at, and follows the berth if it moves', async () => {
+    const { auh, fjr } = await setUp();
+    try {
+      const ports = await pool.query<{ id: string; scope_port: string }>(
+        'SELECT id, scope_port FROM incidents WHERE id = ANY($1)', [[auh, fjr]]);
+      expect(new Map(ports.rows.map((r) => [r.id, r.scope_port]))).toEqual(new Map([[auh, 'AEAUH'], [fjr, 'AEFJR']]));
+
+      /* The estate is not this service's to own — the port arrives on the berth's read-model event. When it
+       * changes there, the cases at that berth follow without anything here being told that is why. */
+      await pool.query("UPDATE berths SET scope_port = 'AEFJR' WHERE id = 't-auh'");
+      const moved = await pool.query<{ scope_port: string }>('SELECT scope_port FROM incidents WHERE id = $1', [auh]);
+      expect(moved.rows[0].scope_port).toBe('AEFJR');
+      await pool.query("UPDATE berths SET scope_port = 'AEAUH' WHERE id = 't-auh'");
+
+      // a case not yet placed at a berth is no port's and is every desk's business
+      const at_sea = await pool.query<{ scope_port: string }>(
+        `INSERT INTO incidents(number, title, category, type, severity, priority, status, reported_at)
+         VALUES ('TEN-SEA-1', 'Reported at sea', 'OPERATIONAL', 'OTHER', 'MINOR', 'P3', 'OPEN', now()) RETURNING scope_port`);
+      expect(at_sea.rows[0].scope_port).toBe('');
+    } finally { await tearDown(); }
+  });
+
+  it('shows a desk its own port\'s cases and answers "not found" for another port\'s', async () => {
+    const { auh, fjr } = await setUp();
+    try {
+      expect((await g(`/incidents/${auh}`, khalifa)).status).toBe(200);
+      expect((await g(`/incidents/${fjr}`, khalifa)).status).toBe(404);
+      expect((await g(`/incidents/${fjr}`, fujairah)).status).toBe(200);
+      expect((await g(`/incidents/${auh}`, fujairah)).status).toBe(404);
+      expect((await g(`/incidents/${fjr}`, admin)).status).toBe(200);
+      // the sub-resources hang off the same load, so they are covered by it
+      expect((await g(`/incidents/${fjr}/timeline`, khalifa)).status).toBe(404);
+      expect((await g(`/incidents/${fjr}/resolution`, khalifa)).status).toBe(404);
+      expect((await g(`/incidents/${fjr}/card`, khalifa)).status).toBe(404);
+
+      const mine = await g('/incidents?limit=500&q=TEN-', khalifa);
+      expect(mine.body.data.map((i: { number: string }) => i.number)).toEqual(['TEN-AUH-1']);
+      const theirs = await g('/incidents?limit=500&q=TEN-', fujairah);
+      expect(theirs.body.data.map((i: { number: string }) => i.number)).toEqual(['TEN-FJR-1']);
+      expect((await g('/incidents?limit=500&q=TEN-', admin)).body.meta.total).toBe(2);
+    } finally { await tearDown(); }
+  });
+
+  it('counts only what the reader may see, so a total cannot leak another port\'s caseload', async () => {
+    const { auh } = await setUp();
+    try {
+      expect(auh).toBeTruthy();
+      const mine = await g('/incidents/dashboard', khalifa);
+      const all = await g('/incidents/dashboard', admin);
+      expect(mine.status).toBe(200);
+      expect(mine.body.data.kpis.open).toBeLessThan(all.body.data.kpis.open);
+      expect(mine.body.data.kpis.loggedYtd).toBeLessThan(all.body.data.kpis.loggedYtd);
+      expect((await g('/incidents/risk-matrix?days=3650', khalifa)).body.data.total)
+        .toBeLessThan((await g('/incidents/risk-matrix?days=3650', admin)).body.data.total);
+    } finally { await tearDown(); }
+  });
+
+  it('shows a company nothing at all: a case file is the administration\'s record, not an operator\'s', async () => {
+    const { auh } = await setUp();
+    try {
+      expect((await g('/incidents?limit=500', agentGss)).body.meta.total).toBe(0);
+      expect((await g(`/incidents/${auh}`, agentGss)).status).toBe(404);
+    } finally { await tearDown(); }
+  });
+
+  it('leaves a national desk reading everything, with no clause added at all', async () => {
+    const { auh, fjr } = await setUp();
+    try {
+      expect(auh && fjr).toBeTruthy();
+      expect((await g('/incidents?limit=1', duty)).body.meta.total).toBe((await g('/incidents?limit=1', admin)).body.meta.total);
+    } finally { await tearDown(); }
   });
 });

@@ -57,7 +57,10 @@ export async function seedMaritimeCentre(databaseUrl: string, profile = 'AE') {
 
   const counts = await withTx(pool, async (c) => {
     for (const v of world.vessels) await upsertVessel(c, { id: v.id, imo: v.imo, mmsi: v.mmsi, name: v.name, type: v.type, flag: v.flag, status: v.status, real: v.real });
-    for (const b of world.berths) await upsertBerth(c, { id: b.id, code: b.code, name: b.name, terminal: b.terminal, status: b.status });
+    /* The berth's port is what a case inherits its tenancy from, so the seed stamps it here exactly as the
+     * read-model event would — otherwise a seeded platform would have cases belonging to no port at all. */
+    const homePort = geoFor(world.profile).portCode;
+    for (const b of world.berths) await upsertBerth(c, { id: b.id, code: b.code, name: b.name, terminal: b.terminal, status: b.status, scopePort: homePort });
 
     const series = new Map<string, number>();
     let comms = 0; let tasks = 0; let documents = 0; let logs = 0; let history = 0;

@@ -27,7 +27,7 @@ export interface Crew { count: number; master: string }
 export interface Row {
   id: string; vcn: string; vessel_id: string; vessel_name: string; vessel_imo: string; vessel_type: string | null; vessel_flag: string | null; agent_code: string; agent_name: string; purpose: string; status: string;
   eta: Date; etb: Date | null; etd: Date | null; ata: Date | null; atb: Date | null; atd: Date | null; berth_id: string | null; berth_code: string | null; prev_port: string; next_port: string;
-  draft_arrival: string | null; draft_departure: string | null; crew: Crew; remarks: string; detention: boolean; services: CallService[]; cargo_ops: CargoOp[]; sof_entries: SofEntry[]; status_history: HistoryEntry[]; pda: Pda | null; created_at: Date; updated_at: Date;
+  draft_arrival: string | null; draft_departure: string | null; crew: Crew; remarks: string; detention: boolean; services: CallService[]; cargo_ops: CargoOp[]; sof_entries: SofEntry[]; status_history: HistoryEntry[]; pda: Pda | null; scope_port: string; scope_company: string; created_at: Date; updated_at: Date;
 }
 /** The row joined with the berth it holds and the ship's registered facts. */
 export interface View extends Row { berth_name: string | null; berth_terminal: string | null; berth_type: string | null; v_grt: number | null; v_dwt: number | null; v_loa: string | null; v_max_draft: string | null; v_status: string | null; v_type: string | null; v_flag: string | null; v_real: boolean | null }
@@ -40,6 +40,9 @@ export function toApi(r: View) {
     id: r.id, vcn: r.vcn, status: r.status as PortCallStatus,
     vesselId: r.vessel_id, vesselName: r.vessel_name, vesselImo: r.vessel_imo, vesselType: r.vessel_type ?? r.v_type ?? null, vesselFlag: r.vessel_flag ?? r.v_flag ?? null, vesselGrt: r.v_grt ?? null, vesselDwt: r.v_dwt ?? null, vesselLoa: num(r.v_loa), vesselMaxDraft: num(r.v_max_draft), vesselReal: !!r.v_real,
     berthId: r.berth_id, berthCode: r.berth_code, berthName: r.berth_name, berthTerminal: r.berth_terminal, agentCode: r.agent_code, agentName: r.agent_name, purpose: r.purpose,
+    /* Both tenancy keys travel on the snapshot: a service that projects a call inherits the port it is in
+     * and the agent who lodged it, rather than deriving facts this service owns and drifting from them. */
+    scopePort: r.scope_port ?? '', scopeCompany: r.scope_company ?? '',
     eta: iso(r.eta)!, etb: iso(r.etb), etd: iso(r.etd), ata: iso(r.ata), atb: iso(r.atb), atd: iso(r.atd), prevPort: r.prev_port, nextPort: r.next_port, draftArrival: num(r.draft_arrival), draftDeparture: num(r.draft_departure), crew: r.crew ?? { count: 0, master: '' }, remarks: r.remarks, detention: r.detention,
     vessel: { id: r.vessel_id, name: r.vessel_name, imo: r.vessel_imo, type: r.vessel_type ?? r.v_type ?? null, flag: r.vessel_flag ?? r.v_flag ?? null, grt: r.v_grt ?? null, dwt: r.v_dwt ?? null, loa: num(r.v_loa), maxDraft: num(r.v_max_draft), status: r.v_status ?? null, real: !!r.v_real },
     berth: r.berth_id ? { id: r.berth_id, code: r.berth_code, name: r.berth_name, terminal: r.berth_terminal, berthType: r.berth_type } : null,

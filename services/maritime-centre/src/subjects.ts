@@ -14,9 +14,13 @@ export async function upsertVessel(c: Queryable, v: Row) {
     [String(v.id), v.imo ?? '', v.mmsi ?? '', v.name ?? '', v.type ?? 'GEN', v.flag ?? '', v.status ?? 'ACTIVE', !!v.real]);
 }
 export async function upsertBerth(c: Queryable, b: Row) {
-  await c.query(`INSERT INTO berths(id, code, name, terminal, status) VALUES ($1,$2,$3,$4,$5)
-    ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, terminal = EXCLUDED.terminal, status = EXCLUDED.status, updated_at = now()`,
-    [String(b.id), b.code ?? '', b.name ?? '', b.terminal ?? '', b.status ?? 'OPERATIONAL']);
+  /* `scopePort` arrives stamped by the service that owns the estate and is projected as it came. Writing it
+   * moves the cases at this berth with it, through the trigger the migration installed — so a berth that
+   * changes hands takes its case file with it without anything here knowing that is what happened. */
+  await c.query(`INSERT INTO berths(id, code, name, terminal, status, scope_port) VALUES ($1,$2,$3,$4,$5,$6)
+    ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, terminal = EXCLUDED.terminal, status = EXCLUDED.status,
+      scope_port = EXCLUDED.scope_port, updated_at = now()`,
+    [String(b.id), b.code ?? '', b.name ?? '', b.terminal ?? '', b.status ?? 'OPERATIONAL', b.scopePort ?? '']);
 }
 
 const DELETE_TABLE: Record<string, string> = { vessel: 'vessels', berth: 'berths' };

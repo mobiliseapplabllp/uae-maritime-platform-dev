@@ -8,7 +8,7 @@ import { availability, iso, monthWindow, num, overlapDays, round1, type MonthBuc
  * Outages live in their own table (a berth accumulates years of them) but travel on the read-model snapshot,
  * because the reporting projection keeps them on the berth record. */
 
-export interface BerthRow { id: string; code: string; name: string; terminal: string; berth_type: string; loa_max: string | number; draft_max: string | number; status: string; remarks: string; created_at: Date; updated_at: Date }
+export interface BerthRow { id: string; code: string; name: string; terminal: string; berth_type: string; loa_max: string | number; draft_max: string | number; status: string; remarks: string; scope_port: string; created_at: Date; updated_at: Date }
 export interface OutageRow { id: string; berth_id: string; from_at: Date; to_at: Date; days: string | number; kind: string; reason: string; recorded_by: string; created_at: Date }
 export interface OutageApi { id: string; from: string; to: string; days: number; kind: string; reason: string; by: string }
 
@@ -17,8 +17,12 @@ export const BERTH_TYPES = ['CONTAINER', 'BULK', 'MULTIPURPOSE', 'LIQUID', 'RORO
 export const BERTH_STATUS = ['OPERATIONAL', 'MAINTENANCE', 'CLOSED'] as const;
 
 export const outageApi = (o: OutageRow): OutageApi => ({ id: o.id, from: iso(o.from_at)!, to: iso(o.to_at)!, days: Number(o.days) || 0, kind: o.kind, reason: o.reason, by: o.recorded_by });
+/* `scopePort` travels on the snapshot so every service that projects a berth inherits the port it stands in.
+ * A consumer deriving tenancy for itself would be guessing at a fact this service owns, and would drift from
+ * it the first time a berth moved. */
 export const toApi = (b: BerthRow, outages: OutageApi[] = []) => ({
   id: b.id, code: b.code, name: b.name, terminal: b.terminal, berthType: b.berth_type, loaMax: num(b.loa_max) ?? 0, draftMax: num(b.draft_max) ?? 0, status: b.status, remarks: b.remarks,
+  scopePort: b.scope_port ?? '',
   outages, createdAt: iso(b.created_at), updatedAt: iso(b.updated_at),
 });
 export type BerthApi = ReturnType<typeof toApi>;
