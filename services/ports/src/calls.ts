@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { EVENTS, NATIONAL_SCOPE, makeEvent, type Actor, type EventEnvelope, type PortCallStatus, type TenancyScope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, scopeWhere, type Queryable } from '@maritime/service-kit';
+import { enqueue, eventFromContext, nextNumber, scopeWhere, type Queryable, recordScope } from '@maritime/service-kit';
 import { CALL_SCOPE } from './scope';
 import type { Env } from './env';
 import { HOUR, iso, num, round1 } from './history';
@@ -77,6 +77,7 @@ export async function updateCall(c: Queryable, id: string, patch: Patch): Promis
   const keys = Object.keys(patch).filter((k) => COLS[k] && (patch as Record<string, unknown>)[k] !== undefined);
   if (keys.length) {
     const vals = keys.map((k) => { const v = (patch as Record<string, unknown>)[k]; return v !== null && typeof v === 'object' && !(v instanceof Date) ? JSON.stringify(v) : v; });
+    // nosemgrep: maritime-sql-template-interpolation — column names come from COLS; every value is a parameter
     await c.query(`UPDATE port_calls SET ${keys.map((k, i) => `${COLS[k]} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [id, ...vals]);
   }
   // the caller already proved it may see this call when it locked it; this is the write reading itself back
@@ -127,6 +128,6 @@ export function movementsOf(call: CallApi) {
 export async function publishState(c: Queryable, env: Env, r: View, opts: { event?: string; data?: Record<string, unknown>; cause?: EventEnvelope; actor?: Actor } = {}) {
   const entity = toApi(r);
   const mk = <T,>(type: string, data: T) => (opts.cause ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: r.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor }) : eventFromContext(env.SERVICE_NAME, type, data, { subject: r.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'portCall', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'portCall', entity: { ...entity, scope: recordScope(r) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { portCallId: r.id, vcn: r.vcn, vesselId: r.vessel_id, vesselName: r.vessel_name, vesselImo: r.vessel_imo, vesselReal: !!r.v_real, agentCode: r.agent_code, agentName: r.agent_name, berthId: r.berth_id, berthCode: r.berth_code, status: r.status, eta: entity.eta, etb: entity.etb, etd: entity.etd, ata: entity.ata, atb: entity.atb, atd: entity.atd, portCall: entity, ...(opts.data ?? {}) }));
 }

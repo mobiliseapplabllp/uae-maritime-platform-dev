@@ -151,6 +151,7 @@ export class BerthsController {
       const before = await findBerth(c, id, user.scope); if (!before) throw notFound('Berth not found');
       const cols: Record<string, unknown> = { code: b.code, name: b.name, terminal: b.terminal, berth_type: b.berthType, loa_max: b.loaMax, draft_max: b.draftMax, status: b.status, remarks: b.remarks };
       const keys = Object.keys(cols).filter((k) => cols[k] !== undefined);
+      // nosemgrep: maritime-sql-template-interpolation — column names come from a server-side map; every value is a parameter
       if (keys.length) await c.query(`UPDATE berths SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [before.id, ...keys.map((k) => cols[k])]);
       const row = (await findBerth(c, before.id, user.scope))!;
       await this.audit.record(c, { action: 'UPDATE', entity: 'Berth', entityId: row.id, entityLabel: row.code, before: toApi(before), after: toApi(row) });

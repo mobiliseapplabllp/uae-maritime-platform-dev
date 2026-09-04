@@ -66,10 +66,17 @@ describe('identity-access', () => {
     const roles = await request(server as never).get('/roles').set('authorization', `Bearer ${tokens.admin}`);
     expect(roles.body.data).toHaveLength(15);
     const pilotRole = roles.body.data.find((r: { name: string }) => r.name === 'Port Pilot');
-    const created = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Test Pilot', email: 'test.pilot@maritime.example', password: 'Pilot@2026', roleId: pilotRole.id });
+    // the policy applies wherever a password is set, not only where a person types one
+    const weak = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Test Pilot', email: 'test.pilot@maritime.example', password: 'Pilot@2026', roleId: pilotRole.id });
+    expect(weak.status).toBe(400); expect(weak.body.message).toContain('12 characters');
+    const created = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Test Pilot', email: 'test.pilot@maritime.example', password: 'Khalifa-Quay-71', roleId: pilotRole.id });
     expect(created.status).toBe(201); expect(created.body.data.role.name).toBe('Port Pilot');
-    const dup = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Dup', email: 'test.pilot@maritime.example', password: 'Pilot@2026', roleId: pilotRole.id });
+    const dup = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Dup', email: 'test.pilot@maritime.example', password: 'Khalifa-Quay-71', roleId: pilotRole.id });
     expect(dup.status).toBe(409);
+    // and a reset must not set the account's own name as its password
+    const named = await request(server as never).post(`/users/${created.body.data.id}/reset-password`).set('authorization', `Bearer ${tokens.admin}`).send({ password: 'Test-Pilot-2026' });
+    expect(named.status).toBe(400); expect(named.body.message).toContain('your name');
+    expect((await request(server as never).post(`/users/${created.body.data.id}/reset-password`).set('authorization', `Bearer ${tokens.admin}`).send({ password: 'Khalifa-Quay-72' })).status).toBe(201);
     const me = await request(server as never).get('/auth/me').set('authorization', `Bearer ${tokens.admin}`);
     const self = await request(server as never).put(`/users/${me.body.data.id}`).set('authorization', `Bearer ${tokens.admin}`).send({ active: false });
     expect(self.status).toBe(403);

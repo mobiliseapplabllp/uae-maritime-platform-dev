@@ -1,5 +1,5 @@
 import { EVENTS, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { enqueue, eventFromContext, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
 import { BERTH_SCOPE } from './scope';
 import type { Env } from './env';
 import { availability, iso, monthWindow, num, overlapDays, round1, type MonthBucket } from './history';
@@ -46,7 +46,7 @@ export async function berthEntity(c: Queryable, b: BerthRow): Promise<BerthApi> 
 export async function publishBerth(c: Queryable, env: Env, b: BerthRow, opts: { event?: string; data?: Record<string, unknown>; cause?: EventEnvelope; actor?: Actor } = {}) {
   const entity = await berthEntity(c, b);
   const mk = <T,>(type: string, data: T) => (opts.cause ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: b.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor }) : eventFromContext(env.SERVICE_NAME, type, data, { subject: b.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'berth', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'berth', entity: { ...entity, scope: recordScope(b) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { berthId: b.id, code: b.code, name: b.name, terminal: b.terminal, status: b.status, berth: entity, ...(opts.data ?? {}) }));
 }
 export async function publishBerthDeleted(c: Queryable, env: Env, b: BerthRow) {

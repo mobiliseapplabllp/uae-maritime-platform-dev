@@ -1,13 +1,14 @@
 import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import { z } from 'zod';
 import type { Request } from 'express';
+import { PASSWORD_MAX } from '@maritime/contracts';
 import { Public, CurrentUser, zod, type Principal } from '@maritime/service-kit';
 import { AuthService } from './auth.service';
 import { UsersRepo, toSafe } from '../users/users.repo';
 
 const loginSchema = z.object({ email: z.string().email().max(200), password: z.string().min(1).max(200) });
 const refreshSchema = z.object({ refreshToken: z.string().min(10) });
-const changeSchema = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(8).max(200) });
+const changeSchema = z.object({ currentPassword: z.string().min(1), newPassword: z.string().max(PASSWORD_MAX) });
 const logoutSchema = z.object({ refreshToken: z.string().optional() });
 
 @Controller('auth')

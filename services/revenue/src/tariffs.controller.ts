@@ -120,6 +120,7 @@ export class TariffsController {
         cols.rate = b.rate; cols.revisions = JSON.stringify([...(before.revisions ?? []), revision]);
       }
       const keys = Object.keys(cols).filter((k) => cols[k] !== undefined);
+      // nosemgrep: maritime-sql-template-interpolation — keys are this function's own literal field set; every value is a parameter
       if (keys.length) await c.query(`UPDATE tariffs SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [before.id, ...keys.map((k) => cols[k])]);
       const row = await this.find(before.id, c);
       await this.audit.record(c, { action: revision ? 'REVISE' : 'UPDATE', entity: 'TariffItem', entityId: row.id, entityLabel: row.code, before: toApi(before), after: toApi(row), note: revision ? `${revision.changePct >= 0 ? '+' : ''}${revision.changePct}% from ${revision.effectiveFrom.slice(0, 10)}` : '' });

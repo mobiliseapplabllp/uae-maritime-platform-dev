@@ -1,5 +1,5 @@
 import { EVENTS, makeEvent, type Actor, type EventEnvelope, type TransitionTable } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { enqueue, eventFromContext, type Queryable, recordScope } from '@maritime/service-kit';
 import type { Env } from './env';
 
 /* The regulated-company directory and the port-facility register.
@@ -52,6 +52,7 @@ export const OBLIGATION_KINDS = ['AUDIT_FINDING', 'RENEWAL', 'CONDITION', 'DOCUM
 export const OBLIGATION_STATUS = ['OPEN', 'CLEARED'] as const;
 
 export interface CompanyRow {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; code: string; name: string; name_ar: string | null; category: string; types: string[];
   contact_name: string; contact_email: string; contact_phone: string; tax_id: string; registration_no: string; address: string; city: string;
   status: string; status_reason: string; status_changed_at: Date | null; status_changed_by_id: string | null; status_changed_by: string;
@@ -197,7 +198,7 @@ export async function publishCompany(c: Queryable, env: Env, row: CompanyRow, ex
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: row.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: row.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'company', entity: companyReadModel(entity) }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'company', entity: { ...companyReadModel(entity), scope: recordScope(row) } }));
   if (opts.event) {
     await enqueue(c, mk(opts.event, {
       companyId: row.id, code: row.code, name: row.name, category: row.category, status: row.status,

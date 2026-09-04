@@ -22,6 +22,7 @@ export class MonitoringController {
     if (agentId) { args.push(agentId); where += ` AND agent_id = $${args.length}`; }
     const [agents, decisions] = await Promise.all([
       this.pool.query<AgentRecord>(`SELECT * FROM agents ${agentId ? 'WHERE agent_id = $1' : ''} ORDER BY mandated DESC, domain, name`, agentId ? [agentId] : []),
+      // nosemgrep: maritime-sql-template-interpolation — the fragment is one of two literals chosen in code; the value travels as $1
       this.pool.query<Row>(`SELECT agent_id, agent_name, disposition, review_status, confidence, autonomy_level, applied, escalation_code, at, cohort, output FROM decisions ${where}`, args),
     ]);
     return { agents: agents.rows.map(toMetricAgent), decisions: decisions.rows.map(toMetricDecision) };

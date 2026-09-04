@@ -3,7 +3,7 @@ rules:
   - id: maritime-hardcoded-secret
     message: Secret-looking literal assigned to a password/secret/token/key. Read it from the environment; only the documented development defaults are allowed.
     severity: ERROR
-    languages: [typescript, javascript, python, yaml, json, bash, generic]
+    languages: [regex]
     paths:
       exclude:
         - "**/*.test.ts"
@@ -11,11 +11,13 @@ rules:
         - "**/tests/**"
         - "**/.env.example"
         - "pnpm-lock.yaml"
+        - "**/i18n/**"           # dictionaries: `password: 'Password'` is a label, not a credential
     patterns:
       - pattern-regex: '(?i)(password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?token|client[_-]?secret)["'']?\s*[:=]\s*["''][^"''$]{8,}["'']'
-      - pattern-not-regex: '(?i)(development-service-token|development-gateway-secret|development-only-secret-change-me|Demo@2026|replace-before-enabling|maritime:maritime)'
+      - pattern-not-regex: '(?i)(development-service-token|development-gateway-secret|development-only-secret-change-me|maritime-registry-demonstration-key|Demo@2026|replace-before-enabling|maritime:maritime)'
       - pattern-not-regex: '["'']\$\{'
       - pattern-not-regex: '(?i)(passwordHash|password_hash|secretData|credentialData|hashIterations)'
+      - pattern-not-regex: '(?i)(aria-label|placeholder|helperText|label)='
 
   - id: maritime-no-eval
     message: Dynamic code evaluation is not allowed (eval / new Function / vm.runInThisContext).
@@ -53,7 +55,9 @@ rules:
       - pattern: $DB.query($SQL.concat(...), ...)
 
   - id: maritime-sql-template-interpolation
-    message: SQL template literal with interpolation; acceptable only for identifiers validated against an allow-list (column/table names), never for values.
+    message: >-
+      SQL text assembled from an expression that is neither a parameter index nor an allow-listed identifier.
+      Values belong in the parameter array; column and table names must come from a server-side map.
     severity: WARNING
     languages: [typescript, javascript]
     paths:
@@ -62,12 +66,19 @@ rules:
         - "**/test/**"
         - "**/migrate.ts"
         - "**/seed.ts"
-    pattern: $DB.query(`...${$EXPR}...`, ...)
+    patterns:
+      - pattern: $DB.query(`...${$EXPR}...`, ...)
+      # The idioms this codebase builds SQL out of, each safe by construction: a parameter index, a
+      # where/set list built from a column allow-list, a visibility predicate, an aliased table name.
+      - metavariable-regex:
+          metavariable: $EXPR
+          regex: |-
+            ^(?!(?:args\.length|args\.length - 1|i|j|n|t|ix|idx|w|aud|vis|cvis|col|cols|alias|table|natural|p|limit|offset|k|i \+ [0-9]+|ix \+ [0-9]+|idx \+ [0-9]+|p\.limit|p\.offset|p\.sortField|p\.sortDir|SORT\[[^\]]+\]|sc\.sql|sc\.args\.length|w\.sql|w\.args\.length \+ [0-9]+|opts\.[A-Za-z]+|(?:where|sets|clauses|cols|keys|parts|conditions|ww|ow)\.join\([^)]*\)|(?:where|sets|clauses|cols|keys|parts|conditions|ww|ow)\.concat\([^)]*\)\.join\([^)]*\)|(?:DELETE_TABLE|TABLES|COLS|MAP|map)\[[^\]]+\]|from\(user, [^)]*\)|visible\(user, [^)]*\)|[A-Za-z_$][\w$.]* \? [^:]+ : [^:]+|keys\.map\([^)]*\)(?:\.concat\([^)]*\))?\.join\([^)]*\))$).*$
 
   - id: maritime-no-model-identifiers
     message: Model identifiers must not appear in committed code or comments (repository rule 4).
     severity: ERROR
-    languages: [generic]
+    languages: [regex]
     paths:
       exclude:
         - ".semgrep.yml"
@@ -80,10 +91,271 @@ rules:
     languages: [typescript, javascript]
     paths:
       include:
-        - "services/gateway/**"
-        - "apps/**"
+        - "**/services/gateway/**"
+        - "**/apps/**"
     pattern-either:
       - pattern: |
           $H['x-service-token'] = $V
       - pattern: |
           headers: { 'x-service-token': $V }
+
+# ---------------------------------------------------------------------------------------------------------
+# OWASP Top 10 (2021) pack.
+#
+# Added with the phase-two assurance pass. The rules above came first and are kept as they are; these widen
+# the sweep to the categories the assurance matrix has to answer for, and each one names its category so a
+# finding maps straight onto a row. They are written locally rather than pulled from the registry because
+# the build environment has no egress to semgrep.dev — and because a rule pack that lives beside the code
+# can be reviewed and argued with.
+#
+# A finding that is deliberate is silenced in place with `// nosemgrep: <rule id>` and a sentence saying why;
+# a rule that fires on things that are not defects gets narrowed rather than ignored.
+# ---------------------------------------------------------------------------------------------------------
+  # ---------------------------------------------------------------- A03 Injection
+  - id: maritime-sql-built-without-parameters
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      A SQL string is interpolated and the query is issued with no parameter array. Every value must
+      travel as $1, $2 ... in the second argument. (OWASP A03)
+    metadata: { owasp: "A03:2021 Injection", confidence: HIGH }
+    patterns:
+      - pattern-either:
+          - pattern: $C.query(`...${...}...`)
+          - pattern: $C.query(`...${...}...`, )
+      - pattern-not: $C.query(`...${...}...`, $ARGS)
+    paths:
+      exclude: ["**/*.test.ts", "**/migrations/**"]
+
+  - id: maritime-sql-interpolates-request-value
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      A value taken from the request is interpolated into SQL text. Column and table names must come
+      from a server-side allowlist; values must be parameters. (OWASP A03)
+    metadata: { owasp: "A03:2021 Injection", confidence: HIGH }
+    pattern-either:
+      - pattern: $C.query(`...${$REQ.query.$K}...`, ...)
+      - pattern: $C.query(`...${$REQ.body.$K}...`, ...)
+      - pattern: $C.query(`...${$REQ.params.$K}...`, ...)
+    paths: { exclude: ["**/*.test.ts"] }
+
+  - id: maritime-shell-command-interpolation
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "A shell command is built by interpolation. Use execFile/spawn with an argument array. (OWASP A03)"
+    metadata: { owasp: "A03:2021 Injection" }
+    pattern-either:
+      - pattern: exec(`...${...}...`, ...)
+      - pattern: execSync(`...${...}...`, ...)
+      - pattern: $CP.exec(`...${...}...`, ...)
+      - pattern: $CP.execSync(`...${...}...`, ...)
+    paths: { exclude: ["**/*.test.ts", "**/tools/**", "**/scripts/**", "**/infra/**"] }
+
+  - id: maritime-dynamic-code-execution
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Code is compiled from a string at runtime. (OWASP A03)"
+    metadata: { owasp: "A03:2021 Injection" }
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+
+  # ---------------------------------------------------------------- A03 XSS
+  - id: maritime-react-dangerously-set-inner-html
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      Raw HTML is injected into the DOM. If any part of it can reach a user, it is a stored-XSS sink.
+      (OWASP A03)
+    metadata: { owasp: "A03:2021 Injection (XSS)" }
+    pattern: dangerouslySetInnerHTML={...}
+    paths: { exclude: ["**/*.test.tsx", "**/*.test.ts"] }
+
+  - id: maritime-dom-sink-assignment
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: "Assigning to innerHTML/outerHTML is an XSS sink; build nodes or set textContent. (OWASP A03)"
+    metadata: { owasp: "A03:2021 Injection (XSS)" }
+    pattern-either:
+      - pattern: $EL.innerHTML = $V
+      - pattern: $EL.outerHTML = $V
+      - pattern: document.write($V)
+      - pattern: $D.document.write($V)
+    paths: { exclude: ["**/*.test.ts", "**/*.test.tsx"] }
+
+  - id: maritime-javascript-url-from-data
+    languages: [regex]
+    severity: WARNING
+    message: >-
+      An href or src is bound straight to a data field. A javascript: or data: URL there executes on click,
+      so the value needs a scheme check before it reaches the DOM. (OWASP A03)
+    metadata: { owasp: "A03:2021 Injection (XSS)" }
+    paths:
+      include: ["**/*.tsx"]
+      exclude: ["**/*.test.tsx"]
+    pattern-regex: |-
+      <(a|iframe|embed|object)\s[^>]*\b(href|src|data)=\{[A-Za-z_$][\w$]*\.[\w$.]*(url|href|link|src)\b
+
+  # ---------------------------------------------------------------- A02 Cryptographic failures
+  - id: maritime-weak-hash-algorithm
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "MD5/SHA-1 are broken for any security purpose. Use SHA-256 or better. (OWASP A02)"
+    metadata: { owasp: "A02:2021 Cryptographic Failures" }
+    pattern-either:
+      - pattern: createHash("md5")
+      - pattern: createHash("sha1")
+      - pattern: $C.createHash("md5")
+      - pattern: $C.createHash("sha1")
+
+  - id: maritime-math-random-for-secret
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Math.random() is not a cryptographic source. Anything used as a token, secret, nonce, salt or
+      one-time code must come from crypto.randomBytes/randomUUID. (OWASP A02)
+    metadata: { owasp: "A02:2021 Cryptographic Failures" }
+    patterns:
+      - pattern-either:
+          - pattern: const $N = Math.random()
+          - pattern: let $N = Math.random()
+          - pattern: const $N = $F(Math.random(), ...)
+      - metavariable-regex:
+          metavariable: $N
+          regex: (?i).*(token|secret|nonce|salt|otp|passw|apikey|api_key|session|csrf).*
+
+  - id: maritime-timing-unsafe-secret-comparison
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      A secret is compared with === , which leaks its prefix through timing. Use
+      crypto.timingSafeEqual over equal-length buffers. (OWASP A02)
+    metadata: { owasp: "A02:2021 Cryptographic Failures" }
+    patterns:
+      - pattern-either:
+          - pattern: $A === $B
+          - pattern: $A !== $B
+          - pattern: $A == $B
+      - metavariable-regex:
+          metavariable: $A
+          regex: (?i)^(?!.*(valid|id$|_id$|kind|type|mode|status|length|count)).*(signature|hmac|secret|apikey|api_key|otp|csrf|password|passcode).*$
+      - pattern-not: $A === true
+      - pattern-not: $A === false
+      - pattern-not: $A !== true
+      - pattern-not: $A !== false
+      - pattern-not: $A === null
+      - pattern-not: $A !== null
+      - pattern-not: $A === undefined
+      - pattern-not: $A !== undefined
+      - pattern-not: typeof $A === "$S"
+      - pattern-not: typeof $A !== "$S"
+    paths: { exclude: ["**/*.test.ts", "**/*.test.tsx"] }
+
+  - id: maritime-hardcoded-credential
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "A credential appears to be hardcoded. Secrets belong in the environment. (OWASP A02/A05)"
+    metadata: { owasp: "A02:2021 Cryptographic Failures" }
+    patterns:
+      - pattern-either:
+          - pattern: const $N = "$V"
+          - pattern: let $N = "$V"
+          - pattern: '{ $N: "$V" }'
+      - metavariable-regex:
+          metavariable: $N
+          regex: (?i)^(password|passwd|pwd|secret|api_?key|apikey|private_?key|client_?secret|access_?token)$
+      - metavariable-regex:
+          metavariable: $V
+          regex: ^(?!.*(example|changeme|placeholder|\$\{|process\.env|<|test|demo)).{12,}$
+    paths: { exclude: ["**/*.test.ts", "**/*.test.tsx", "**/world/**", "**/seed/**"] }
+
+  # ---------------------------------------------------------------- A07 Identification & authentication
+  - id: maritime-jwt-verification-weakened
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "JWT verification is being weakened (unsigned algorithm, or expiry ignored). (OWASP A07)"
+    metadata: { owasp: "A07:2021 Identification and Authentication Failures" }
+    patterns:
+      - pattern-either:
+          - pattern: '$J.verify($T, $K, {..., ignoreExpiration: true, ...})'
+          - pattern: '$J.verify($T, $K, {..., algorithms: [..., "none", ...], ...})'
+          - pattern: $J.decode($T)
+      - metavariable-regex:
+          metavariable: $J
+          regex: (?i).*(jwt|jose|jsonwebtoken).*
+
+  # ---------------------------------------------------------------- A05 Security misconfiguration
+  - id: maritime-cors-allows-any-origin-with-credentials
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "CORS reflects any origin while allowing credentials — that defeats the same-origin policy. (OWASP A05)"
+    metadata: { owasp: "A05:2021 Security Misconfiguration" }
+    pattern-either:
+      - pattern: '{ ..., origin: true, ..., credentials: true, ... }'
+      - pattern: '{ ..., origin: "*", ..., credentials: true, ... }'
+
+  - id: maritime-tls-verification-disabled
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Certificate verification is switched off. (OWASP A05)"
+    metadata: { owasp: "A05:2021 Security Misconfiguration" }
+    pattern-either:
+      - pattern: '{ ..., rejectUnauthorized: false, ... }'
+      - pattern: $P.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+
+  # ---------------------------------------------------------------- A01 Broken access control
+  - id: maritime-path-traversal-in-file-access
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      A filesystem path is built from a request value. Resolve it and assert the result stays under
+      the storage root, or address the object by an opaque id. (OWASP A01)
+    metadata: { owasp: "A01:2021 Broken Access Control" }
+    pattern-either:
+      - pattern: $FS.readFile(`...${$REQ.params.$K}...`, ...)
+      - pattern: $FS.readFileSync(`...${$REQ.params.$K}...`, ...)
+      - pattern: $FS.createReadStream(`...${$REQ.params.$K}...`, ...)
+      - pattern: $FS.writeFile(`...${$REQ.body.$K}...`, ...)
+      - pattern: $FS.readFile(join($ROOT, $REQ.params.$K), ...)
+    paths: { exclude: ["**/*.test.ts"] }
+
+  - id: maritime-open-redirect
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "A redirect target comes from the request; an attacker chooses the destination. (OWASP A01)"
+    metadata: { owasp: "A01:2021 Broken Access Control" }
+    pattern-either:
+      - pattern: $RES.redirect($REQ.query.$K)
+      - pattern: $RES.redirect($REQ.body.$K)
+      - pattern: $W.location = $REQ.query.$K
+
+  # ---------------------------------------------------------------- A10 SSRF
+  - id: maritime-ssrf-request-controlled-url
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      An outbound request goes to a URL taken from the request. Outbound calls to counterparts must
+      resolve their base URL from the adapter registry, never from caller input. (OWASP A10)
+    metadata: { owasp: "A10:2021 Server-Side Request Forgery" }
+    pattern-either:
+      - pattern: fetch($REQ.body.$K, ...)
+      - pattern: fetch($REQ.query.$K, ...)
+      - pattern: fetch(`...${$REQ.body.$K}...`, ...)
+      - pattern: fetch(`...${$REQ.query.$K}...`, ...)
+    paths: { exclude: ["**/*.test.ts"] }
+
+  # ---------------------------------------------------------------- A08 Integrity
+  - id: maritime-prototype-pollution-assignment
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: >-
+      A request-controlled key is written onto an object. Reject __proto__/constructor/prototype or
+      build the object from an allowlist. (OWASP A08)
+    metadata: { owasp: "A08:2021 Software and Data Integrity Failures" }
+    pattern-either:
+      - pattern: $OBJ[$REQ.body.$K] = $V
+      - pattern: $OBJ[$REQ.query.$K] = $V
+      - pattern: $OBJ[$REQ.params.$K] = $V

@@ -153,3 +153,25 @@ export function scopeOfRecord(scope: TenancyScope | undefined): Partial<Record<S
   // than assigned to whichever key happened to come first.
   return keys.length === 1 ? { [partition]: keys[0] } : {};
 }
+
+/**
+ * A record's own partition keys, shaped for a read-model event.
+ *
+ * The reporting read models are projections of records that live behind a tenancy predicate, so they have to
+ * carry the same partition keys or the predicate stops at the service boundary — which is exactly how a
+ * scoped register stays sealed while the search palette built on its projection does not. Publishers attach
+ * this to the entity; the projector writes it into `scope_*` columns and reporting applies `scopeWhere` over
+ * them like any other register.
+ *
+ * Empty keys are dropped so a projection of an unpartitioned record stays `{}` rather than carrying blanks.
+ */
+export type ProjectedScope = Partial<Record<ScopePartition, string>>;
+export function recordScope(record: ScopeRef | undefined | null): ProjectedScope {
+  if (!record) return {};
+  const out: ProjectedScope = {};
+  for (const p of ['port', 'zone', 'facility', 'company'] as ScopePartition[]) {
+    const v = keyOn(record, p);
+    if (v) out[p] = v;
+  }
+  return out;
+}

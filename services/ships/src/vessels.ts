@@ -1,6 +1,6 @@
 import { type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
 import { certStatus } from '@maritime/world';
-import { scopeWhere, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { scopeWhere, enqueue, eventFromContext, type Queryable, recordScope } from '@maritime/service-kit';
 import { VESSEL_SCOPE } from './scope';
 import type { Env } from './env';
 
@@ -21,6 +21,7 @@ export const VESSEL_TYPES = ['CONT', 'BULK', 'TANK', 'GEN', 'RORO', 'OSV', 'PASS
 export const VESSEL_STATUS = ['ACTIVE', 'INACTIVE'] as const;
 
 export interface VesselRow {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; name: string; imo: string; mmsi: string; call_sign: string; flag: string; type: string; built: number | null;
   dwt: number | null; grt: number; loa: string | number | null; beam: string | number | null; max_draft: string | number | null;
   owner: string; operator: string; manager: string; agent_code: string; class_society: string; pi_club: string; port_of_registry: string; yard: string;
@@ -104,7 +105,7 @@ export async function publishVessel(c: Queryable, env: Env, v: VesselRow, opts: 
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: v.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: v.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'vessel', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'vessel', entity: { ...entity, scope: recordScope(v) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { vesselId: v.id, imo: v.imo, name: v.name, type: v.type, flag: v.flag, status: v.status, registry: entity.registry, vessel: entity, ...(opts.data ?? {}) }));
   return entity;
 }
@@ -115,7 +116,7 @@ export async function publishVesselDeleted(c: Queryable, env: Env, v: VesselRow)
 /** A certificate change is its own read-model kind as well as a change to the ship. */
 export async function publishCertificate(c: Queryable, env: Env, v: VesselRow, cert: CertRow, event: string, data: Row = {}) {
   const entity = certApi(cert, new Date(), env.CERT_EXPIRING_DAYS);
-  await enqueue(c, eventFromContext(env.SERVICE_NAME, EVENTS.readModel.upserted, { kind: 'vesselCertificate', entity: { ...entity, vesselId: v.id, vesselName: v.name, imo: v.imo } }, { subject: cert.id }));
+  await enqueue(c, eventFromContext(env.SERVICE_NAME, EVENTS.readModel.upserted, { kind: 'vesselCertificate', entity: { ...entity, vesselId: v.id, vesselName: v.name, imo: v.imo, scope: recordScope(v) } }, { subject: cert.id }));
   await enqueue(c, eventFromContext(env.SERVICE_NAME, event, { vesselId: v.id, vesselName: v.name, imo: v.imo, certificateId: cert.id, certType: cert.cert_type, number: cert.number, expiryDate: iso(cert.expiry_date), status: entity.status, ...data }, { subject: cert.id }));
   await publishVessel(c, env, v);
 }

@@ -1,5 +1,5 @@
 import { EVENTS, RESOURCE_TYPES, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { enqueue, eventFromContext, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
 import { RESOURCE_SCOPE } from './scope';
 import type { Env } from './env';
 import { DAY, availability, iso, monthKey, monthWindow, round1, type MonthBucket } from './history';
@@ -10,7 +10,7 @@ export const RESOURCE_STATUS = ['AVAILABLE', 'TASKED', 'MAINTENANCE', 'OFF_DUTY'
 export const JOB_KINDS = ['PILOTAGE', 'PILOT_TRANSFER', 'BERTHING', 'UNBERTHING', 'LINE_HANDLING', 'SHIFTING', 'ESCORT', 'STANDBY', 'SURVEY', 'BUNKERING', 'OTHER'] as const;
 export type ResourceStatus = (typeof RESOURCE_STATUS)[number];
 
-export interface ResourceRow { id: string; code: string; name: string; type: string; spec: string; status: string; current_task: string; master: string; user_id: string | null; contact: string; remarks: string; created_at: Date; updated_at: Date }
+export interface ResourceRow { scope_port: string; id: string; code: string; name: string; type: string; spec: string; status: string; current_task: string; master: string; user_id: string | null; contact: string; remarks: string; created_at: Date; updated_at: Date }
 export interface JobRow { id: string; resource_id: string; at: Date; ended_at: Date | null; kind: string; vcn: string; port_call_id: string | null; vessel_name: string; berth: string; hours: string | number; remarks: string }
 export interface ResourceOutageRow { id: string; resource_id: string; from_at: Date; to_at: Date; days: string | number; reason: string }
 export interface JobApi { id: string; at: string; endedAt: string | null; kind: string; vcn: string; portCallId: string | null; vesselName: string; berth: string; hours: number; remarks: string }
@@ -40,7 +40,7 @@ export async function resourceOutagesOf(c: Queryable, resourceId: string): Promi
 export async function publishResource(c: Queryable, env: Env, r: ResourceRow, opts: { event?: string; data?: Record<string, unknown>; cause?: EventEnvelope; actor?: Actor } = {}) {
   const entity = toApi(r, await jobsOf(c, r.id), await resourceOutagesOf(c, r.id));
   const mk = <T,>(type: string, data: T) => (opts.cause ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: r.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor }) : eventFromContext(env.SERVICE_NAME, type, data, { subject: r.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'resource', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'resource', entity: { ...entity, scope: recordScope(r) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { resourceId: r.id, code: r.code, name: r.name, type: r.type, status: r.status, currentTask: r.current_task, resource: entity, ...(opts.data ?? {}) }));
 }
 export async function publishResourceDeleted(c: Queryable, env: Env, r: ResourceRow) {

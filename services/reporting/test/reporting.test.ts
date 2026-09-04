@@ -22,7 +22,14 @@ beforeAll(async () => {
   await admin.query(`DROP DATABASE IF EXISTS ${DB}`); await admin.query(`CREATE DATABASE ${DB}`); await admin.end();
   await seedReporting(URL, 'AE');
   const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET } as never);
-  const resolver = { provide: PRINCIPAL_RESOLVER, useValue: new StaticPrincipalResolver({ admin: principal('admin', ['*']), agent: principal('agent', ['portcalls.view', 'invoices.view']) }) };
+  const resolver = { provide: PRINCIPAL_RESOLVER, useValue: new StaticPrincipalResolver({
+    admin: principal('admin', ['*']),
+    agent: principal('agent', ['portcalls.view', 'invoices.view']),
+    /* A shipping agent as they really are: scoped to one company, holding the permissions their role holds
+     * over their own records — which is the case these surfaces used to answer nationally. */
+    gss: { ...principal('gss', ['vessels.view', 'portcalls.view', 'invoices.view', 'legislation.view', 'registry.view', 'dashboard.view']), scope: { level: 'COMPANY' as const, companies: ['GSS'] } },
+    registrar: principal('registrar', ['legislation.view', 'legislation.manage']),
+  }) };
   app = await createApp({ env, module: buildAppModule(env, resolver) });
   await app.init(); server = app.getHttpServer();
   pool = new Pool({ connectionString: URL });
@@ -73,5 +80,68 @@ describe('reporting', () => {
     await withTx(pool, (c) => project(c, a)); await withTx(pool, (c) => project(c, a));
     expect(Number((await pool.query('SELECT count(*) AS n FROM rm_audit_activity WHERE id = $1', [a.id])).rows[0].n)).toBe(1);
     const dash = await get('/dashboard'); expect(dash.body.data.recentActivity[0].actor).toBe('Someone');
+  });
+  /*
+   * Reporting projects registers that are partitioned, and for a while it did not carry the partition: the
+   * search palette, the hover cards and the stat strips all answered nationally to whoever held the module
+   * permission. These are the three surfaces that leaked, kept shut.
+   */
+  describe('tenancy on the read models', () => {
+    it('confines the search palette to the caller\'s own records', async () => {
+      const mine = (await pool.query("SELECT name FROM rm_vessels WHERE scope_company = 'GSS' ORDER BY name")).rows.map((r) => r.name as string);
+      expect(mine.length).toBeGreaterThan(1);
+      const term = mine[0].slice(0, 3);
+      const asAgent = (await get(`/search?q=${encodeURIComponent(term)}`, 'gss')).body.data.groups;
+      const vessels = (asAgent.find((g: { type: string }) => g.type === 'vessel')?.items ?? []) as { label: string }[];
+      expect(vessels.length).toBeGreaterThan(0);
+      for (const v of vessels) expect(mine, `${v.label} is not this agent's ship`).toContain(v.label);
+      // the administration still sees the whole register through the same endpoint
+      const national = (await get(`/search?q=${encodeURIComponent(term)}`)).body.data.groups;
+      const all = (national.find((g: { type: string }) => g.type === 'vessel')?.items ?? []) as unknown[];
+      expect(all.length).toBeGreaterThanOrEqual(vessels.length);
+    });
+
+    it('does not publish an unpublished instrument to the industry', async () => {
+      const draft = (await pool.query("SELECT ref_no, title FROM rm_legal_instruments WHERE status NOT IN ('IN_FORCE','SUPERSEDED') LIMIT 1")).rows[0];
+      if (!draft) return;                                   // a world with nothing in draft has nothing to leak
+      const term = String(draft.ref_no).slice(0, 6);
+      const agentSaw = (await get(`/search?q=${encodeURIComponent(term)}`, 'gss')).body.data.groups
+        .flatMap((g: { items: { label: string }[] }) => g.items).map((i: { label: string }) => i.label);
+      expect(agentSaw.join(' ')).not.toContain(draft.ref_no);
+      const registrarSaw = (await get(`/search?q=${encodeURIComponent(term)}`, 'registrar')).body.data.groups
+        .flatMap((g: { items: { label: string }[] }) => g.items).map((i: { label: string }) => i.label);
+      expect(registrarSaw.join(' ')).toContain(draft.ref_no);
+    });
+
+    it('answers a hover card only for a record the caller could open', async () => {
+      const mine = (await pool.query("SELECT id FROM rm_vessels WHERE scope_company = 'GSS' LIMIT 1")).rows[0];
+      const theirs = (await pool.query("SELECT id FROM rm_vessels WHERE scope_company <> 'GSS' AND scope_company <> '' LIMIT 1")).rows[0];
+      expect((await get(`/cards/vessel/${mine.id}`, 'gss')).status).toBe(200);
+      // out of scope reads as absent, not as forbidden: a hover must not confirm that a record exists
+      expect((await get(`/cards/vessel/${theirs.id}`, 'gss')).status).toBe(404);
+      expect((await get(`/cards/vessel/${theirs.id}`)).status).toBe(200);
+    });
+
+    it('refuses a card type the caller holds no permission for', async () => {
+      const incident = (await pool.query('SELECT id FROM rm_incidents LIMIT 1')).rows[0];
+      const user = (await pool.query('SELECT id FROM rm_users LIMIT 1')).rows[0];
+      expect((await get(`/cards/incident/${incident.id}`, 'gss')).status).toBe(404);
+      expect((await get(`/cards/user/${user.id}`, 'gss')).status).toBe(404);
+      expect((await get(`/cards/incident/${incident.id}`)).status).toBe(200);
+    });
+
+    it('counts only the caller\'s own records in the stat strips and the dashboard', async () => {
+      const fleet = Number((await pool.query("SELECT count(*) AS n FROM rm_vessels WHERE scope_company = 'GSS' AND status = 'ACTIVE'")).rows[0].n);
+      const agentCards = (await get('/stats/vessels', 'gss')).body.data.cards as { label: string; value: number }[];
+      const nationalCards = (await get('/stats/vessels')).body.data.cards as { label: string; value: number }[];
+      const active = (cards: { label: string; value: number }[]) => cards.find((c) => c.label === 'Active vessels')!.value;
+      expect(active(agentCards)).toBe(fleet);
+      expect(active(nationalCards)).toBeGreaterThan(active(agentCards));
+
+      const agentDash = (await get('/dashboard', 'gss')).body.data.kpis;
+      const nationalDash = (await get('/dashboard')).body.data.kpis;
+      expect(agentDash.vesselsAtBerth).toBeLessThanOrEqual(nationalDash.vesselsAtBerth);
+      expect(nationalDash.vesselsAtBerth).toBeGreaterThan(0);
+    });
   });
 });

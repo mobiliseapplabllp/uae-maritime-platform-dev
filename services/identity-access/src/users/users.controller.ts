@@ -2,17 +2,23 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import type { Pool } from 'pg';
-import { EVENTS, type PageQuery } from '@maritime/contracts';
+import { EVENTS, PASSWORD_MAX, passwordProblems, type PageQuery } from '@maritime/contracts';
 import { KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, forbidden, withTx, enqueue, eventFromContext, type Principal } from '@maritime/service-kit';
 import { UsersRepo, toSafe, type UserRow } from './users.repo';
 import type { Env } from '../env';
 
 const userSchema = z.object({
-  name: z.string().min(1).max(120), email: z.string().email().max(200), password: z.string().min(8).max(200).optional(), roleId: z.string().uuid(),
+  name: z.string().min(1).max(120), email: z.string().email().max(200), password: z.string().max(PASSWORD_MAX).optional(), roleId: z.string().uuid(),
   designation: z.string().max(120).optional().default(''), department: z.string().max(120).optional().default(''), phone: z.string().max(40).optional().default(''), active: z.boolean().optional().default(true),
   scope: z.object({ level: z.enum(['NATIONAL', 'PORT', 'ZONE', 'FACILITY', 'COMPANY']), ports: z.array(z.string()).optional(), companies: z.array(z.string()).optional() }).optional(),
 });
-const resetSchema = z.object({ password: z.string().min(8).max(200) });
+const resetSchema = z.object({ password: z.string().max(PASSWORD_MAX) });
+
+/** The policy is enforced at every point a password is set, not only where a person types one. */
+const assertPolicy = (password: string, subject: { email?: string | null; name?: string | null }) => {
+  const problems = passwordProblems(password, subject);
+  if (problems.length) throw badRequest(problems.join('; '));
+};
 const SORT: Record<string, string> = { name: 'u.name', email: 'u.email', createdAt: 'u.created_at', lastLoginAt: 'u.last_login_at', designation: 'u.designation', department: 'u.department', active: 'u.active' };
 
 @Controller('users')
@@ -39,6 +45,7 @@ export class UsersController {
   @RequirePerm('users.manage') @Post()
   async create(@Body(zod(userSchema)) body: z.infer<typeof userSchema>) {
     if (this.env.AUTH_MODE === 'local' && !body.password) throw badRequest('Password is required');
+    if (body.password) assertPolicy(body.password, { email: body.email, name: body.name });
     const hash = body.password ? await bcrypt.hash(body.password, this.env.BCRYPT_ROUNDS) : null;
     return withTx(this.pool, async (c) => {
       const r = await c.query<{ id: string }>('INSERT INTO users(name, email, password_hash, role_id, designation, department, phone, active, scope) VALUES ($1, lower($2), $3, $4, $5, $6, $7, $8, $9) RETURNING id',
@@ -64,7 +71,10 @@ export class UsersController {
     if (body.phone !== undefined) set('phone', body.phone);
     if (body.active !== undefined) set('active', body.active);
     if (body.scope !== undefined) set('scope', JSON.stringify(body.scope));
-    if (body.password) set('password_hash', await bcrypt.hash(body.password, this.env.BCRYPT_ROUNDS));
+    if (body.password) {
+      assertPolicy(body.password, { email: body.email ?? before.email, name: body.name ?? before.name });
+      set('password_hash', await bcrypt.hash(body.password, this.env.BCRYPT_ROUNDS));
+    }
     if (!sets.length) return toSafe(before);
     return withTx(this.pool, async (c) => {
       args.push(id);
@@ -92,6 +102,7 @@ export class UsersController {
   async reset(@Param('id') id: string, @Body(zod(resetSchema)) body: z.infer<typeof resetSchema>) {
     if (this.env.AUTH_MODE !== 'local') throw badRequest('Passwords are managed by the identity provider');
     const u = await this.users.byId(id); if (!u) throw notFound('User not found');
+    assertPolicy(body.password, { email: u.email, name: u.name });
     const hash = await bcrypt.hash(body.password, this.env.BCRYPT_ROUNDS);
     await withTx(this.pool, async (c) => {
       await c.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [hash, id]);

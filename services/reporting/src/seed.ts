@@ -36,15 +36,35 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
   const world = buildWorld({ profile });
   const byId = new Map(world.vessels.map((v) => [v.id, v])); const berthByCode = new Map(world.berths.map((b) => [b.code, b])); const companyByCode = new Map(world.companies.map((c) => [c.code, c]));
   const counts: Record<string, number> = {};
+  /*
+   * The read models are partitioned, so the seed has to stamp the same partition the domain services stamp —
+   * the derivations below are the ones their own migrations use, not a second opinion:
+   *   a ship belongs to its agent; a registration and a certificate follow the ship;
+   *   a call belongs to its agent; an invoice to the party billed; a licence to its holder;
+   *   a company is its own tenant.
+   * Anything the world leaves unattributed stays unpartitioned, which for an ownership column means the
+   * administration's own and for a containment column means shared.
+   */
+  const company = (code: string | null | undefined) => (code ? { company: code } : {});
+  const callById = new Map(world.portCalls.map((p) => [p.id, p]));
+  const companyById = new Map(world.companies.map((c) => [c.id, c]));
   await withTx(pool, async (c) => {
     const run = async (kind: string, rows: unknown[]) => { for (const r of rows) await project(c, ev(kind, r)); counts[kind] = rows.length; };
     await run('user', world.users.map((u) => ({ ...u, role: { name: u.roleName } })));
     await run('berth', world.berths.map((b) => ({ ...b, outages: pick<{ berthId: string }>(world, 'berthOutages').filter((o) => o.berthId === b.id) })));
-    await run('company', world.companies);
-    await run('vessel', world.vessels.map((v) => ({ ...v, agentName: companyByCode.get(v.agentCode)?.name ?? null, registry: pick<{ vesselId: string }>(world, 'registry').find((r) => r.vesselId === v.id) ?? {} })));
-    await run('instrument', pick<{ entityType: string; status: string; endorsements?: { result: string }[] }>(world, 'licences').map((l) => ({ ...l, statutory: isStatutory(l.entityType), inForce: !(l.endorsements ?? []).some((x) => x.result === 'NOT_ENDORSED'), signed: l.status === 'ISSUED' })));
-    await run('portCall', world.portCalls.map((p) => ({ ...p, vesselType: byId.get(p.vesselId)?.type ?? null, agentName: companyByCode.get(p.agentCode)?.name ?? null, berthId: p.berthCode ? berthByCode.get(p.berthCode)?.id ?? null : null })));
-    for (const [kind, key] of [['vesselCertificate', 'vesselCertificates'], ['invoice', 'invoices'], ['inspection', 'inspections'], ['incident', 'incidents'], ['seafarer', 'seafarers'], ['legalInstrument', 'legalInstruments'], ['registration', 'registrations'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
+    await run('company', world.companies.map((c) => ({ ...c, scope: company(c.code) })));
+    await run('vessel', world.vessels.map((v) => ({ ...v, agentName: companyByCode.get(v.agentCode)?.name ?? null, registry: pick<{ vesselId: string }>(world, 'registry').find((r) => r.vesselId === v.id) ?? {}, scope: company(v.agentCode) })));
+    await run('instrument', pick<{ entityType: string; status: string; holderCode?: string | null; endorsements?: { result: string }[] }>(world, 'licences').map((l) => ({ ...l, statutory: isStatutory(l.entityType), inForce: !(l.endorsements ?? []).some((x) => x.result === 'NOT_ENDORSED'), signed: l.status === 'ISSUED', scope: company(l.holderCode) })));
+    await run('portCall', world.portCalls.map((p) => ({ ...p, vesselType: byId.get(p.vesselId)?.type ?? null, agentName: companyByCode.get(p.agentCode)?.name ?? null, berthId: p.berthCode ? berthByCode.get(p.berthCode)?.id ?? null : null, scope: company(p.agentCode) })));
+    // A certificate, a registration and an invoice inherit the tenancy of the thing they are about.
+    const ofVessel = (r: { vesselId?: string | null }) => company(r.vesselId ? byId.get(r.vesselId)?.agentCode : null);
+    await run('vesselCertificate', pick<{ vesselId?: string | null }>(world, 'vesselCertificates').map((r) => ({ ...r, scope: ofVessel(r) })));
+    await run('registration', pick<{ vesselId?: string | null }>(world, 'registrations').map((r) => ({ ...r, scope: ofVessel(r) })));
+    await run('invoice', pick<{ portCallId?: string | null; billTo?: { companyId?: string | null } }>(world, 'invoices').map((r) => ({
+      ...r,
+      scope: company(r.billTo?.companyId ? companyById.get(r.billTo.companyId)?.code : (r.portCallId ? callById.get(r.portCallId)?.agentCode : null)),
+    })));
+    for (const [kind, key] of [['inspection', 'inspections'], ['incident', 'incidents'], ['seafarer', 'seafarers'], ['legalInstrument', 'legalInstruments'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
     const cats = new Map<string, number>(); for (const l of world.lookups) cats.set(l.category, (cats.get(l.category) ?? 0) + 1);
     for (const [category, entries] of cats) await c.query('INSERT INTO rm_lookup_counts(category, entries) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET entries = EXCLUDED.entries', [category, entries]);
     for (const r of REPORTS) await c.query('INSERT INTO report_definitions(key, name, name_ar, category, description, perm, params, columns, query_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, category = EXCLUDED.category, description = EXCLUDED.description, perm = EXCLUDED.perm, params = EXCLUDED.params, columns = EXCLUDED.columns, query_key = EXCLUDED.query_key', [r.key, r.name, r.nameAr, r.category, r.description, r.perm, JSON.stringify(r.params), JSON.stringify(r.columns), r.queryKey]);

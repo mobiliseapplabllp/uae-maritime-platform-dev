@@ -101,7 +101,7 @@ export default function Login() {
               <Stack spacing={1.5}>
                 <TextField label={t('login.email')} size="small" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth autoComplete="username" inputProps={{ 'data-testid': 'login-email' }} />
                 <TextField label={t('login.password')} size="small" type={show ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} fullWidth autoComplete="current-password" inputProps={{ 'data-testid': 'login-password' }}
-                  InputProps={{ endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShow(!show)} edge="end" size="small" aria-label={show ? 'Hide password' : 'Show password'}>{show ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}</IconButton></InputAdornment> }} />
+                  InputProps={{ endAdornment: <InputAdornment position="end"><IconButton onClick={() => setShow(!show)} edge="end" size="small" aria-label={show ? t('login.hidePassword') : t('login.showPassword')}>{show ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}</IconButton></InputAdornment> }} />
                 <Button type="submit" variant="contained" disabled={!!busyAs || !email || !password} data-testid="login-submit">{t('login.signIn')}</Button>
               </Stack>
             </form>

@@ -1,7 +1,8 @@
 import { Inject, Injectable, UnauthorizedException, ForbiddenException, HttpException } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Pool } from 'pg';
+import { passwordProblems } from '@maritime/contracts';
 import { KIT_ENV, KIT_POOL, KIT_LOGGER, AuditClient, signHS256, verifyJwt, withTx, badRequest, type AppLogger } from '@maritime/service-kit';
 import { UsersRepo, toSafe, type UserRow } from '../users/users.repo';
 import type { Env } from '../env';
@@ -9,6 +10,8 @@ import type { Env } from '../env';
 /** Pre-computed hash so an unknown account costs the same time as a wrong password. */
 const DUMMY_HASH = bcrypt.hashSync('timing-equalised-dummy-password', 10);
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+/** Equal-length digest comparison, so no secret is compared byte-by-byte with an early exit. */
+const sameSecret = (a: string, b: string) => timingSafeEqual(Buffer.from(sha256(a), 'hex'), Buffer.from(sha256(b), 'hex'));
 export interface Session { user: ReturnType<typeof toSafe>; token: string; refreshToken: string }
 
 @Injectable()
@@ -111,10 +114,13 @@ export class AuthService {
 
   async changePassword(userId: string, currentPassword: string, newPassword: string) {
     if (this.env.AUTH_MODE === 'keycloak') throw badRequest('Passwords are managed by the identity provider');
-    const min = 8;
-    if (typeof newPassword !== 'string' || newPassword.length < min) throw badRequest(`Password must be at least ${min} characters`);
     const user = await this.users.byId(userId);
     if (!user || !user.password_hash || !(await bcrypt.compare(currentPassword, user.password_hash))) throw new UnauthorizedException('Current password is incorrect');
+    // Checked after the current password so an unauthenticated caller learns nothing about the policy
+    // or about which accounts exist by probing this endpoint.
+    const problems = passwordProblems(newPassword, { email: user.email, name: user.name });
+    if (sameSecret(newPassword, currentPassword)) problems.push('New password must differ from the current one');
+    if (problems.length) throw badRequest(problems.join('; '));
     const hash = await bcrypt.hash(newPassword, this.env.BCRYPT_ROUNDS);
     await withTx(this.pool, async (c) => {
       await c.query('UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2', [hash, userId]);

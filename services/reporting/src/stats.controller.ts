@@ -3,23 +3,28 @@ import type { Pool } from 'pg';
 import { hasPerm } from '@maritime/contracts';
 import { CurrentUser, KIT_POOL, forbidden, notFound, type Principal } from '@maritime/service-kit';
 import { D, H, card, certStatus, count, many, money, monthYear, dayMonthYear, nf, one, type Card } from './queries';
+import {
+  BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, CHECKLIST_SCOPE, INCIDENT_SCOPE, INSPECTION_SCOPE,
+  INSTRUMENT_SCOPE, INVOICE_SCOPE, LEGISLATION_SCOPE, REGISTRATION_SCOPE, RESOURCE_SCOPE, SEAFARER_SCOPE,
+  TARIFF_SCOPE, USER_SCOPE, VESSEL_SCOPE, from,
+} from './scope';
 
 type Compute = (pool: Pool, user: Principal) => Promise<Card[]>;
 const avgH = (rows: { a: Date | null; b: Date | null }[]) => (rows.length ? Math.round(rows.reduce((s, r) => s + (new Date(r.b!).getTime() - new Date(r.a!).getTime()), 0) / rows.length / H * 10) / 10 : 0);
 
 /** Per-module stat cards — the eight small numbers shown at the top of every page. Each scope checks its own permission. */
 export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
-  portcalls: { perm: 'portcalls.view', compute: async (pool) => {
+  portcalls: { perm: 'portcalls.view', compute: async (pool, user) => {
     const now = new Date(); const yearStart = new Date(now.getFullYear(), 0, 1); const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const active = await many<{ status: string; eta: Date }>(pool, "SELECT status, eta FROM rm_port_calls WHERE status IN ('ANNOUNCED','CONFIRMED','AT_ANCHORAGE','BERTHED')");
-    const sailed30 = await many<{ ata: Date | null; atb: Date | null; atd: Date | null }>(pool, "SELECT ata, atb, atd FROM rm_port_calls WHERE status = 'SAILED' AND atd >= $1", [new Date(now.getTime() - 30 * D)]);
+    const active = await many<{ status: string; eta: Date }>(pool, `SELECT status, eta FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status IN ('ANNOUNCED','CONFIRMED','AT_ANCHORAGE','BERTHED')`);
+    const sailed30 = await many<{ ata: Date | null; atb: Date | null; atd: Date | null }>(pool, `SELECT ata, atb, atd FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED' AND atd >= $1`, [new Date(now.getTime() - 30 * D)]);
     const turn = avgH(sailed30.filter((c) => c.ata && c.atd).map((c) => ({ a: c.ata, b: c.atd })));
     const wait = avgH(sailed30.filter((c) => c.ata && c.atb).map((c) => ({ a: c.ata, b: c.atb })));
     const [total, sailedTotal, ytd, first, mtd] = await Promise.all([
-      count(pool, 'SELECT count(*) AS n FROM rm_port_calls'), count(pool, "SELECT count(*) AS n FROM rm_port_calls WHERE status = 'SAILED'"),
-      count(pool, "SELECT count(*) AS n FROM rm_port_calls WHERE status = 'SAILED' AND atd >= $1", [yearStart]),
-      one<{ atd: Date }>(pool, "SELECT atd FROM rm_port_calls WHERE status = 'SAILED' ORDER BY atd LIMIT 1"),
-      one<{ mt: string; teu: string }>(pool, "SELECT COALESCE(sum(cargo_mt),0) AS mt, COALESCE(sum(teu),0) AS teu FROM rm_port_calls WHERE status = 'SAILED' AND atd >= $1", [monthStart]),
+      count(pool, `SELECT count(*) AS n FROM ${from(user, 'rm_port_calls', CALL_SCOPE)}`), count(pool, `SELECT count(*) AS n FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED'`),
+      count(pool, `SELECT count(*) AS n FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED' AND atd >= $1`, [yearStart]),
+      one<{ atd: Date }>(pool, `SELECT atd FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED' ORDER BY atd LIMIT 1`),
+      one<{ mt: string; teu: string }>(pool, `SELECT COALESCE(sum(cargo_mt),0) AS mt, COALESCE(sum(teu),0) AS teu FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED' AND atd >= $1`, [monthStart]),
     ]);
     const mt = Number(mtd?.mt ?? 0); const teu = Number(mtd?.teu ?? 0);
     const mmt = mt >= 1e6 ? `${(mt / 1e6).toFixed(2)} M MT` : `${nf(mt)} MT`;
@@ -34,9 +39,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Avg pre-berthing wait', `${wait} h`, 'anchorage to berth, 30 days', wait > 24 ? 'warning' : 'default'),
     ];
   } },
-  berths: { perm: 'portcalls.view', compute: async (pool) => {
-    const berths = await many<{ id: string; status: string; loa_max: string; draft_max: string; outages: { from: string; days: number }[] }>(pool, 'SELECT id, status, loa_max, draft_max, outages FROM rm_berths');
-    const berthed = await many<{ berth_id: string }>(pool, "SELECT berth_id FROM rm_port_calls WHERE status = 'BERTHED'");
+  berths: { perm: 'portcalls.view', compute: async (pool, user) => {
+    const berths = await many<{ id: string; status: string; loa_max: string; draft_max: string; outages: { from: string; days: number }[] }>(pool, `SELECT id, status, loa_max, draft_max, outages FROM ${from(user, 'rm_berths', BERTH_SCOPE)}`);
+    const berthed = await many<{ berth_id: string }>(pool, `SELECT berth_id FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'BERTHED'`);
     const op = berths.filter((b) => b.status === 'OPERATIONAL'); const occ = new Set(berthed.map((c) => c.berth_id)).size;
     const since12 = Date.now() - 365 * D;
     const out12 = berths.flatMap((b) => b.outages.filter((o) => new Date(o.from).getTime() >= since12));
@@ -49,11 +54,11 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Outages (12 m)', out12.length, `${outDays} days lost`, out12.length ? 'warning' : 'success'), card('Berth availability', `${avail}%`, 'operational time, 12 months', avail < 95 ? 'warning' : 'success'),
     ];
   } },
-  registry: { perm: 'registry.view', compute: async (pool) => {
+  registry: { perm: 'registry.view', compute: async (pool, user) => {
     const now = new Date();
-    const rows = await many<{ kind: string; status: string; submitted_at: Date | null; closed_at: Date | null; due_at: Date | null }>(pool, 'SELECT kind, status, submitted_at, closed_at, due_at FROM rm_registrations');
-    const fleet = await many<{ registry_state: string; registry: { certificateExpiresOn?: string } }>(pool, 'SELECT registry_state, registry FROM rm_vessels');
-    const certs = await many<{ statutory: boolean; in_force: boolean; signed: boolean }>(pool, "SELECT statutory, in_force, signed FROM rm_instruments WHERE status = 'ISSUED' AND instrument_class = 'CERTIFICATE'");
+    const rows = await many<{ kind: string; status: string; submitted_at: Date | null; closed_at: Date | null; due_at: Date | null }>(pool, `SELECT kind, status, submitted_at, closed_at, due_at FROM ${from(user, 'rm_registrations', REGISTRATION_SCOPE)}`);
+    const fleet = await many<{ registry_state: string; registry: { certificateExpiresOn?: string } }>(pool, `SELECT registry_state, registry FROM ${from(user, 'rm_vessels', VESSEL_SCOPE)}`);
+    const certs = await many<{ statutory: boolean; in_force: boolean; signed: boolean }>(pool, `SELECT statutory, in_force, signed FROM ${from(user, 'rm_instruments', INSTRUMENT_SCOPE)} WHERE status = 'ISSUED' AND instrument_class = 'CERTIFICATE'`);
     const open = rows.filter((r) => !['GRANTED', 'REJECTED', 'WITHDRAWN'].includes(r.status));
     const breached = open.filter((r) => r.due_at && r.due_at < now);
     const closed = rows.filter((r) => r.closed_at && r.submitted_at);
@@ -73,9 +78,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Not in force', notInForce.length, notInForce.length ? 'survey endorsement overdue or refused' : 'every certificate current', notInForce.length ? 'warning' : 'success'),
     ];
   } },
-  vessels: { perm: 'vessels.view', compute: async (pool) => {
-    const vessels = await many<{ id: string; name: string; status: string; built: number | null; type: string; liner: boolean; next_dry_dock: Date | null; alerts: string }>(pool, "SELECT v.*, (SELECT count(*) FROM rm_vessel_certificates c WHERE c.vessel_id = v.id AND c.expiry_date < now() + interval '30 days') AS alerts FROM rm_vessels v");
-    const calls = await many<{ vessel_id: string; n: string }>(pool, 'SELECT vessel_id, count(*) AS n FROM rm_port_calls GROUP BY vessel_id ORDER BY n DESC');
+  vessels: { perm: 'vessels.view', compute: async (pool, user) => {
+    const vessels = await many<{ id: string; name: string; status: string; built: number | null; type: string; liner: boolean; next_dry_dock: Date | null; alerts: string }>(pool, `SELECT v.*, (SELECT count(*) FROM ${from(user, 'rm_vessel_certificates', CERTIFICATE_SCOPE, 'c')} WHERE c.vessel_id = v.id AND c.expiry_date < now() + interval '30 days') AS alerts FROM ${from(user, 'rm_vessels', VESSEL_SCOPE, 'v')}`);
+    const calls = await many<{ vessel_id: string; n: string }>(pool, `SELECT vessel_id, count(*) AS n FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} GROUP BY vessel_id ORDER BY n DESC`);
     const callCount = calls.reduce((s, c) => s + Number(c.n), 0);
     const topV = calls[0] ? vessels.find((v) => v.id === calls[0].vessel_id) : null;
     const active = vessels.filter((v) => v.status === 'ACTIVE');
@@ -90,8 +95,8 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Dry dock ≤6 m', dueDock, 'class survey window', dueDock ? 'warning' : 'success'), card('Liner callers', vessels.filter((v) => v.liner).length, 'documented scheduled services'),
     ];
   } },
-  certificates: { perm: 'certificates.view', compute: async (pool) => {
-    const rows = await many<{ vessel_id: string; cert_type: string; expiry_date: Date }>(pool, "SELECT c.vessel_id, c.cert_type, c.expiry_date FROM rm_vessel_certificates c JOIN rm_vessels v ON v.id = c.vessel_id WHERE v.status = 'ACTIVE'");
+  certificates: { perm: 'certificates.view', compute: async (pool, user) => {
+    const rows = await many<{ vessel_id: string; cert_type: string; expiry_date: Date }>(pool, `SELECT c.vessel_id, c.cert_type, c.expiry_date FROM ${from(user, 'rm_vessel_certificates', CERTIFICATE_SCOPE, 'c')} JOIN ${from(user, 'rm_vessels', VESSEL_SCOPE, 'v')} ON v.id = c.vessel_id WHERE v.status = 'ACTIVE'`);
     const now = new Date(); const st = rows.map((r) => certStatus(r.expiry_date, now));
     const vessels = new Set(rows.map((r) => r.vessel_id)).size;
     return [
@@ -102,8 +107,8 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Renewals ≤90 d', rows.filter((r) => r.expiry_date > now && r.expiry_date < new Date(now.getTime() + 90 * D)).length, 'plan survey slots'),
     ];
   } },
-  seafarers: { perm: 'seafarers.view', compute: async (pool) => {
-    const sf = await many<{ current_vessel_id: string | null; cert_alerts: number; sea_service_days: number; service_records: number; rank: string; nationality: string | null }>(pool, 'SELECT current_vessel_id, cert_alerts, sea_service_days, service_records, rank, nationality FROM rm_seafarers');
+  seafarers: { perm: 'seafarers.view', compute: async (pool, user) => {
+    const sf = await many<{ current_vessel_id: string | null; cert_alerts: number; sea_service_days: number; service_records: number; rank: string; nationality: string | null }>(pool, `SELECT current_vessel_id, cert_alerts, sea_service_days, service_records, rank, nationality FROM ${from(user, 'rm_seafarers', SEAFARER_SCOPE)}`);
     const avgDays = sf.length ? Math.round(sf.reduce((s, x) => s + Number(x.sea_service_days), 0) / sf.length) : 0;
     const alerts = sf.filter((x) => Number(x.cert_alerts) > 0).length;
     return [
@@ -114,7 +119,7 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
     ];
   } },
   legislation: { perm: 'legislation.view', compute: async (pool, user) => {
-    const ins = await many<{ status: string; type: string; issued_date: Date | null; ack_required: boolean; acknowledged_by: { userId: string }[] }>(pool, 'SELECT status, type, issued_date, ack_required, acknowledged_by FROM rm_legal_instruments');
+    const ins = await many<{ status: string; type: string; issued_date: Date | null; ack_required: boolean; acknowledged_by: { userId: string }[] }>(pool, `SELECT status, type, issued_date, ack_required, acknowledged_by FROM ${from(user, 'rm_legal_instruments', LEGISLATION_SCOPE)}`);
     const yearStart = new Date(new Date().getFullYear(), 0, 1);
     const pendingMine = ins.filter((i) => i.ack_required && i.status === 'IN_FORCE' && !i.acknowledged_by.some((a) => a.userId === user.id)).length;
     return [
@@ -124,8 +129,8 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Withdrawn', ins.filter((i) => i.status === 'WITHDRAWN').length, 'no longer in effect'), card('Instrument types', new Set(ins.map((i) => i.type)).size, 'in the register'),
     ];
   } },
-  facilities: { perm: 'facilities.view', compute: async (pool) => {
-    const lic = await many<{ status: string; expiry_date: Date | null; entity_type: string; applied_date: Date | null; performance_rating: string | null; audits: number }>(pool, "SELECT status, expiry_date, entity_type, applied_date, performance_rating, audits FROM rm_instruments WHERE subject_kind IN ('COMPANY','PORT_FACILITY','MET_INSTITUTION')");
+  facilities: { perm: 'facilities.view', compute: async (pool, user) => {
+    const lic = await many<{ status: string; expiry_date: Date | null; entity_type: string; applied_date: Date | null; performance_rating: string | null; audits: number }>(pool, `SELECT status, expiry_date, entity_type, applied_date, performance_rating, audits FROM ${from(user, 'rm_instruments', INSTRUMENT_SCOPE)} WHERE subject_kind IN ('COMPANY','PORT_FACILITY','MET_INSTITUTION')`);
     const applied = lic.map((l) => l.applied_date).filter(Boolean) as Date[];
     const rated = lic.filter((l) => Number(l.performance_rating) > 0);
     const avgRate = rated.length ? Math.round(rated.reduce((s, l) => s + Number(l.performance_rating), 0) / rated.length * 10) / 10 : 0;
@@ -137,9 +142,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Avg rating', avgRate ? `${avgRate} / 5` : '—', 'performance across issued'), card('Audits logged', nf(lic.reduce((s, l) => s + Number(l.audits), 0)), 'annual safety audits'),
     ];
   } },
-  inspections: { perm: 'inspections.view', compute: async (pool) => {
+  inspections: { perm: 'inspections.view', compute: async (pool, user) => {
     const now = new Date();
-    const ins = await many<{ status: string; result: string | null; detention: boolean; closed_at: Date | null; started_at: Date | null; open_findings: number; total_findings: number }>(pool, 'SELECT status, result, detention, closed_at, started_at, open_findings, total_findings FROM rm_inspections');
+    const ins = await many<{ status: string; result: string | null; detention: boolean; closed_at: Date | null; started_at: Date | null; open_findings: number; total_findings: number }>(pool, `SELECT status, result, detention, closed_at, started_at, open_findings, total_findings FROM ${from(user, 'rm_inspections', INSPECTION_SCOPE)}`);
     const started = ins.map((i) => i.started_at).filter(Boolean) as Date[];
     const closed = ins.filter((i) => i.status === 'CLOSED');
     const detRate = closed.length ? Math.round(closed.filter((i) => i.detention).length / closed.length * 1000) / 10 : 0;
@@ -152,9 +157,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Findings raised', nf(totalF), `${nf(totalF - openF)} rectified`), card('Satisfactory', `${satPct}%`, 'closed with no deficiency', 'success'),
     ];
   } },
-  incidents: { perm: 'incidents.view', compute: async (pool) => {
+  incidents: { perm: 'incidents.view', compute: async (pool, user) => {
     const now = new Date();
-    const inc = await many<{ status: string; severity: string; closed_at: Date | null; reported_at: Date; type: string }>(pool, 'SELECT status, severity, closed_at, reported_at, type FROM rm_incidents');
+    const inc = await many<{ status: string; severity: string; closed_at: Date | null; reported_at: Date; type: string }>(pool, `SELECT status, severity, closed_at, reported_at, type FROM ${from(user, 'rm_incidents', INCIDENT_SCOPE)}`);
     const done = inc.filter((i) => i.closed_at);
     const closePct = inc.length ? Math.round(inc.filter((i) => i.status === 'CLOSED').length / inc.length * 100) : 0;
     const avgClose = done.length ? Math.round(done.reduce((s, i) => s + (i.closed_at!.getTime() - i.reported_at.getTime()), 0) / done.length / D * 10) / 10 : 0;
@@ -166,9 +171,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Near misses', nf(inc.filter((i) => i.type === 'NEAR_MISS').length), 'reported — a good sign'), card('Avg close time', avgClose ? `${avgClose} d` : '—', 'report to closure'),
     ];
   } },
-  invoices: { perm: 'invoices.view', compute: async (pool) => {
+  invoices: { perm: 'invoices.view', compute: async (pool, user) => {
     const now = new Date();
-    const inv = await many<{ status: string; total: string; issued_at: Date | null; paid_at: Date | null }>(pool, 'SELECT status, total, issued_at, paid_at FROM rm_invoices');
+    const inv = await many<{ status: string; total: string; issued_at: Date | null; paid_at: Date | null }>(pool, `SELECT status, total, issued_at, paid_at FROM ${from(user, 'rm_invoices', INVOICE_SCOPE)}`);
     const issued = inv.filter((i) => i.issued_at);
     const billedAll = issued.reduce((s, i) => s + Number(i.total), 0); const collected = inv.filter((i) => i.paid_at).reduce((s, i) => s + Number(i.total), 0);
     const collPct = billedAll ? Math.round(collected / billedAll * 1000) / 10 : 0;
@@ -182,18 +187,18 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Collection rate', `${collPct}%`, 'of everything billed', collPct >= 95 ? 'success' : 'warning'), card('Billed YTD', money(billedYtd), `${now.getFullYear()} to date`),
     ];
   } },
-  risk: { perm: 'risk.view', compute: async (pool) => {
-    const rows = await many<{ score: string; band: string }>(pool, "SELECT (registry->>'riskScore') AS score, (registry->>'riskBand') AS band FROM rm_vessels WHERE status = 'ACTIVE'");
+  risk: { perm: 'risk.view', compute: async (pool, user) => {
+    const rows = await many<{ score: string; band: string }>(pool, `SELECT (registry->>'riskScore') AS score, (registry->>'riskBand') AS band FROM ${from(user, 'rm_vessels', VESSEL_SCOPE)} WHERE status = 'ACTIVE'`);
     const scored = rows.filter((r) => r.score !== null);
     const avg = scored.length ? Math.round(scored.reduce((s, r) => s + Number(r.score), 0) / scored.length) : 0;
     return [card('High risk', scored.filter((r) => r.band === 'HIGH').length, 'priority targets', 'error'), card('Medium risk', scored.filter((r) => r.band === 'MEDIUM').length, '', 'warning'), card('Low risk', scored.filter((r) => r.band === 'LOW').length, '', 'success'), card('Fleet average', avg, 'score across active fleet')];
   } },
-  masters: { perm: 'masters.view', compute: async (pool) => {
-    const [b, lk, t, c, craft] = await Promise.all([count(pool, 'SELECT count(*) AS n FROM rm_berths'), one<{ n: string; cats: string }>(pool, 'SELECT COALESCE(sum(entries),0) AS n, count(*) AS cats FROM rm_lookup_counts'), one<{ n: string; revs: string }>(pool, "SELECT count(*) FILTER (WHERE active) AS n, COALESCE(sum(jsonb_array_length(revisions)),0) AS revs FROM rm_tariffs"), one<{ n: string; qs: string }>(pool, 'SELECT count(*) AS n, COALESCE(sum(items),0) AS qs FROM rm_checklists'), count(pool, 'SELECT count(*) AS n FROM rm_resources')]);
+  masters: { perm: 'masters.view', compute: async (pool, user) => {
+    const [b, lk, t, c, craft] = await Promise.all([count(pool, `SELECT count(*) AS n FROM ${from(user, 'rm_berths', BERTH_SCOPE)}`), one<{ n: string; cats: string }>(pool, 'SELECT COALESCE(sum(entries),0) AS n, count(*) AS cats FROM rm_lookup_counts'), one<{ n: string; revs: string }>(pool, `SELECT count(*) FILTER (WHERE active) AS n, COALESCE(sum(jsonb_array_length(revisions)),0) AS revs FROM ${from(user, 'rm_tariffs', TARIFF_SCOPE)}`), one<{ n: string; qs: string }>(pool, `SELECT count(*) AS n, COALESCE(sum(items),0) AS qs FROM ${from(user, 'rm_checklists', CHECKLIST_SCOPE)}`), count(pool, `SELECT count(*) AS n FROM ${from(user, 'rm_resources', RESOURCE_SCOPE)}`)]);
     return [card('Berths', b), card('Lookup entries', nf(Number(lk?.n))), card('Active tariffs', Number(t?.n ?? 0)), card('Checklist templates', Number(c?.n ?? 0)), card('Reference categories', Number(lk?.cats ?? 0), 'distinct lookup sets'), card('Tariff revisions', nf(Number(t?.revs)), 'rate changes published'), card('Checklist questions', nf(Number(c?.qs)), 'across all templates'), card('Marine craft', craft, 'tugs, launches, pilots')];
   } },
-  users: { perm: 'users.view', compute: async (pool) => {
-    const users = await many<{ active: boolean; last_login_at: Date | null; department: string | null; role_name: string | null }>(pool, 'SELECT active, last_login_at, department, role_name FROM rm_users');
+  users: { perm: 'users.view', compute: async (pool, user) => {
+    const users = await many<{ active: boolean; last_login_at: Date | null; department: string | null; role_name: string | null }>(pool, `SELECT active, last_login_at, department, role_name FROM ${from(user, 'rm_users', USER_SCOPE)}`);
     const dormant = users.filter((u) => u.last_login_at && Date.now() - u.last_login_at.getTime() > 90 * D).length;
     return [
       card('Users', users.length, 'accounts'), card('Active', users.filter((u) => u.active).length, '', 'success'), card('Disabled', users.filter((u) => !u.active).length, ''),
@@ -202,8 +207,8 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Never signed in', users.filter((u) => !u.last_login_at).length, 'accounts pending first use'), card('Dormant >90 d', dormant, 'candidates for review', dormant ? 'warning' : 'success'),
     ];
   } },
-  tariffs: { perm: 'tariffs.view', compute: async (pool) => {
-    const items = await many<{ code: string; category: string; unit: string; active: boolean; revisions: { effectiveFrom: string; changePct: number }[] }>(pool, 'SELECT code, category, unit, active, revisions FROM rm_tariffs');
+  tariffs: { perm: 'tariffs.view', compute: async (pool, user) => {
+    const items = await many<{ code: string; category: string; unit: string; active: boolean; revisions: { effectiveFrom: string; changePct: number }[] }>(pool, `SELECT code, category, unit, active, revisions FROM ${from(user, 'rm_tariffs', TARIFF_SCOPE)}`);
     const revs = items.flatMap((t) => t.revisions.map((r) => ({ ...r, code: t.code })));
     const dated = revs.filter((r) => r.effectiveFrom).sort((a, b) => new Date(a.effectiveFrom).getTime() - new Date(b.effectiveFrom).getTime());
     const last = dated[dated.length - 1]; const rises = revs.filter((r) => typeof r.changePct === 'number');
@@ -215,9 +220,9 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Cargo tariffs', items.filter((t) => t.category === 'CARGO').length, 'handling & storage'), card('Charging units', new Set(items.map((t) => t.unit)).size, 'distinct bases of charge'),
     ];
   } },
-  marine: { perm: 'portcalls.view', compute: async (pool) => {
+  marine: { perm: 'portcalls.view', compute: async (pool, user) => {
     const now = Date.now();
-    const craft = await many<{ status: string; jobs: { at: string; hours: number }[]; outages: { from: string; days: number }[] }>(pool, 'SELECT status, jobs, outages FROM rm_resources');
+    const craft = await many<{ status: string; jobs: { at: string; hours: number }[]; outages: { from: string; days: number }[] }>(pool, `SELECT status, jobs, outages FROM ${from(user, 'rm_resources', RESOURCE_SCOPE)}`);
     const jobs = craft.flatMap((r) => r.jobs); const dated = jobs.filter((j) => j.at).map((j) => new Date(j.at).getTime());
     const j30 = jobs.filter((j) => j.at && new Date(j.at).getTime() >= now - 30 * D).length; const hours = jobs.reduce((s, j) => s + (j.hours || 0), 0);
     const outDays = craft.reduce((s, r) => s + r.outages.filter((o) => new Date(o.from).getTime() >= now - 365 * D).reduce((t, o) => t + (o.days || 0), 0), 0);

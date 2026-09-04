@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Card, Grid, Box, Typography, TextField, Button, Stack, Avatar, Divider, Chip } from '@mui/material';
+import { passwordProblems, PASSWORD_RULE_TEXT } from '@maritime/contracts';
 import api from '../api/client';
 import { useAppDispatch, useUser } from '../store';
 import { notify } from '../store/uiSlice';
@@ -11,6 +12,9 @@ export default function ProfilePage() {
   const dispatch = useAppDispatch();
   const [vals, setVals] = useState({ currentPassword: '', newPassword: '', confirm: '' });
   const [busy, setBusy] = useState(false);
+  // The same check the API runs, so the button and the server never disagree about what is acceptable.
+  const problems = vals.newPassword ? passwordProblems(vals.newPassword, { email: user?.email, name: user?.name }) : [];
+  const mismatch = !!vals.confirm && vals.confirm !== vals.newPassword;
   return (
     <>
       <PageHeader title="My profile" />
@@ -33,9 +37,9 @@ export default function ProfilePage() {
             <Typography variant="h6" sx={{ fontSize: 15, mb: 2 }}>Change password</Typography>
             <Stack spacing={2}>
               <TextField type="password" label="Current password" autoComplete="current-password" value={vals.currentPassword} onChange={(e) => setVals((v) => ({ ...v, currentPassword: e.target.value }))} />
-              <TextField type="password" label="New password" autoComplete="new-password" value={vals.newPassword} helperText="Min 12 characters with upper, lower and digits" onChange={(e) => setVals((v) => ({ ...v, newPassword: e.target.value }))} />
-              <TextField type="password" label="Confirm new password" autoComplete="new-password" value={vals.confirm} error={!!vals.confirm && vals.confirm !== vals.newPassword} helperText={vals.confirm && vals.confirm !== vals.newPassword ? 'Passwords do not match' : ''} onChange={(e) => setVals((v) => ({ ...v, confirm: e.target.value }))} />
-              <Button variant="contained" disabled={busy || !vals.currentPassword || vals.newPassword.length < 8 || vals.newPassword !== vals.confirm} onClick={() => {
+              <TextField type="password" label="New password" autoComplete="new-password" value={vals.newPassword} error={problems.length > 0} helperText={problems.length ? problems.join('. ') : PASSWORD_RULE_TEXT} onChange={(e) => setVals((v) => ({ ...v, newPassword: e.target.value }))} />
+              <TextField type="password" label="Confirm new password" autoComplete="new-password" value={vals.confirm} error={mismatch} helperText={mismatch ? 'Passwords do not match' : ''} onChange={(e) => setVals((v) => ({ ...v, confirm: e.target.value }))} />
+              <Button variant="contained" disabled={busy || !vals.currentPassword || problems.length > 0 || !vals.confirm || mismatch} onClick={() => {
                 setBusy(true);
                 api.post('/auth/change-password', { currentPassword: vals.currentPassword, newPassword: vals.newPassword })
                   .then(() => { dispatch(notify('Password changed')); setVals({ currentPassword: '', newPassword: '', confirm: '' }); })

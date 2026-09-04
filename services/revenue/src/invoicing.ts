@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NATIONAL_SCOPE, type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
 import { INVOICE_SCOPE } from './scope';
 import type { Env } from './env';
 
@@ -20,6 +20,7 @@ export interface BillTo { companyId: string | null; name: string; address: strin
 export interface Payment { id: string; at: string; amount: number; ref: string; method: string; by: string; note: string }
 export interface HistoryEntry { from: string; to: string; at: string; by: string; note: string }
 export interface Row {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; number: string; port_call_id: string | null; vcn: string; vessel_id: string | null; vessel_name: string; vessel_imo: string;
   bill_to: BillTo; lines: Line[]; subtotal: string | number; tax_name: string; tax_rate_pct: string | number; tax_amount: string | number; total: string | number; currency: string;
   status: string; proforma: boolean; issued_at: Date | null; due_at: Date | null; paid_at: Date | null; paid_amount: string | number; payment_ref: string;
@@ -106,6 +107,7 @@ export async function updateInvoice(c: Queryable, id: string, patch: Patch): Pro
   const keys = Object.keys(patch).filter((k) => COLS[k] && (patch as Record<string, unknown>)[k] !== undefined);
   if (keys.length) {
     const vals = keys.map((k) => { const v = (patch as Record<string, unknown>)[k]; return v !== null && typeof v === 'object' && !(v instanceof Date) ? JSON.stringify(v) : v; });
+    // nosemgrep: maritime-sql-template-interpolation — column names come from a server-side map; every value is a parameter
     await c.query(`UPDATE invoices SET ${keys.map((k, i) => `${COLS[k]} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [id, ...vals]);
   }
   return (await findInvoice(c, id, NATIONAL_SCOPE))!;
@@ -128,7 +130,7 @@ export const taxOf = (jurisdiction: string) => { const j = getJurisdiction(juris
 export async function publishState(c: Queryable, env: Env, r: Row, opts: { event?: string; data?: Record<string, unknown>; cause?: EventEnvelope; actor?: Actor } = {}) {
   const entity = toApi(r);
   const mk = <T,>(type: string, data: T) => (opts.cause ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: r.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor }) : eventFromContext(env.SERVICE_NAME, type, data, { subject: r.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'invoice', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'invoice', entity: { ...entity, scope: recordScope(r) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { invoiceId: r.id, number: r.number, portCallId: r.port_call_id, vcn: r.vcn, vesselId: r.vessel_id, vesselName: r.vessel_name, billToName: entity.billTo.name, status: r.status, subtotal: entity.subtotal, taxAmount: entity.taxAmount, total: entity.total, currency: r.currency, invoice: entity, ...(opts.data ?? {}) }));
 }
 export async function publishDeleted(c: Queryable, env: Env, r: Row) {

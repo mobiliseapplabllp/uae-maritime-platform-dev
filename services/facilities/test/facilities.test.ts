@@ -152,7 +152,9 @@ describe('facilities — the company directory', () => {
     expect(created.code).toMatch(/^TST\d+$/);
     const rm = (await outbox(EVENTS.readModel.upserted)).at(-1)!;
     expect(rm.data.kind).toBe('company');
-    expect(Object.keys(rm.data.entity).sort()).toEqual(['address', 'category', 'code', 'id', 'name', 'status', 'taxId']);
+    // `scope` rides along so reporting can partition its projection the way this register partitions the row
+    expect(Object.keys(rm.data.entity).sort()).toEqual(['address', 'category', 'code', 'id', 'name', 'scope', 'status', 'taxId']);
+    expect(rm.data.entity.scope).toEqual({ company: created.code });
     expect((await outbox(EVENTS.facilities.companyRegistered)).at(-1)?.data).toMatchObject({ code: created.code, name: created.name });
     expect((await post(C, { code: created.code, name: 'A clashing company', category: 'AGENCY' }, clerk)).status).toBe(409);
     const edited = await put(`${C}/${created.id}`, { name: 'Test Marine Services (renamed)', contactPhone: '+971 4 555 0100', types: ['SHIP_CHANDLER', 'BUNKER_SUPPLIER'] }, clerk);

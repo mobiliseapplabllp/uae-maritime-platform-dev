@@ -32,6 +32,9 @@ export const DEV_DEFAULTS = { JWT_SECRET: 'development-only-secret-change-me', S
 export function assertProductionSafe(env: Record<string, unknown>): string[] {
   if (env.NODE_ENV !== 'production') return [];
   const problems: string[] = [];
+  // A boot-time configuration check against a published default, not an authentication decision: it
+  // runs once, before any request exists, and the value it compares against is in this file.
+  // nosemgrep: maritime-timing-unsafe-secret-comparison
   if (!env.JWT_SECRET || env.JWT_SECRET === DEV_DEFAULTS.JWT_SECRET || String(env.JWT_SECRET).length < 32) problems.push('JWT_SECRET must be set to a strong value (32+ characters)');
   if (!env.SERVICE_TOKEN || env.SERVICE_TOKEN === DEV_DEFAULTS.SERVICE_TOKEN || String(env.SERVICE_TOKEN).length < 32) problems.push('SERVICE_TOKEN must be set to a strong value (32+ characters)');
   if (env.AUTH_MODE !== 'keycloak') problems.push('AUTH_MODE must be keycloak in production');

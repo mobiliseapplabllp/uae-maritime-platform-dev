@@ -1,5 +1,5 @@
 import { EVENTS, LICENSE_TRANSITIONS, SUBJECT_PERMS, getJurisdiction, numberPrefixOf, makeEvent, type Actor, type EventEnvelope, type InstrumentClass, type LicenseStatus, type SubjectKind, type TenancyScope } from '@maritime/contracts';
-import { scopeWhere, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { scopeWhere, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable, recordScope } from '@maritime/service-kit';
 import { LICENCE_SCOPE } from './scope';
 import { addMonths, certStatus, stableId, type WorldEndorsement } from '@maritime/world';
 import type { Env } from './env';
@@ -85,8 +85,8 @@ export async function updateLicence(c: Queryable, id: string, patch: Patch): Pro
 export async function publishState(c: Queryable, env: Env, r: Row, opts: { event?: string; data?: Record<string, unknown>; cause?: EventEnvelope; actor?: Actor } = {}) {
   const mk = <T,>(type: string, data: T) => opts.cause ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: r.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor }) : eventFromContext(env.SERVICE_NAME, type, data, { subject: r.id, actor: opts.actor });
   if (opts.event) await enqueue(c, mk(opts.event, { instrumentId: r.id, number: r.license_no, licenseNo: r.license_no, entityName: r.entity_name, entityType: r.entity_type, typeLabel: typeLabel(r.entity_type), instrumentClass: r.instrument_class, subjectKind: r.subject_kind, subjectId: r.subject_id, status: r.status, issueDate: iso(r.issue_date), expiryDate: iso(r.expiry_date), requestId: r.request_id, requestNo: r.request_no, ...(opts.data ?? {}) }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'instrument', entity: readModelOf(r) }));
-  const mirror = mirrorOf(r); if (mirror) await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'vesselCertificate', entity: mirror }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'instrument', entity: { ...readModelOf(r), scope: recordScope(r) } }));
+  const mirror = mirrorOf(r); if (mirror) await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'vesselCertificate', entity: { ...mirror, scope: recordScope(r) } }));
 }
 
 export interface IssueOptions { now?: Date; by: string; note?: string; override?: boolean; expiryDate?: string | Date | null; validityMonths?: number | null; authority: 'OFFICER' | 'APPLICATION'; applicationRef?: string }

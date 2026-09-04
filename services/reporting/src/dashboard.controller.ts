@@ -1,7 +1,10 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import type { Pool } from 'pg';
-import { KIT_POOL, RequirePerm } from '@maritime/service-kit';
+import { CurrentUser, KIT_POOL, RequirePerm, type Principal } from '@maritime/service-kit';
 import { CARGO_GROUP, D, H, certStatus, many, monthKey, months12 } from './queries';
+import {
+  BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, INSPECTION_SCOPE, INVOICE_SCOPE, VESSEL_SCOPE, from,
+} from './scope';
 
 interface CallRow { id: string; vcn: string; vessel_id: string; vessel_name: string; vessel_type: string | null; status: string; eta: Date; etd: Date | null; ata: Date | null; atb: Date | null; atd: Date | null; berth_id: string | null; berth_code: string | null; agent_name: string | null; cargo_ops: { cargoType: string; qty: number; unit: string; qtyMT: number }[] }
 interface BerthRow { id: string; code: string; name: string; terminal: string; berth_type: string; status: string; loa_max: string | null; draft_max: string | null }
@@ -12,18 +15,18 @@ export class DashboardController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool) {}
 
   @RequirePerm('dashboard.view') @Get('dashboard')
-  async summary() {
+  async summary(@CurrentUser() user: Principal) {
     const now = new Date();
     const start12 = new Date(now.getFullYear(), now.getMonth() - 11, 1);
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startYear = new Date(now.getFullYear(), 0, 1);
     const [berths, active, sailed12, invoices12, certs, inspections, recent] = await Promise.all([
-      many<BerthRow>(this.pool, 'SELECT * FROM rm_berths ORDER BY terminal, code'),
-      many<CallRow>(this.pool, "SELECT * FROM rm_port_calls WHERE status IN ('ANNOUNCED','CONFIRMED','AT_ANCHORAGE','BERTHED') ORDER BY eta"),
-      many<CallRow>(this.pool, "SELECT * FROM rm_port_calls WHERE status = 'SAILED' AND atd >= $1", [start12]),
-      many<{ total: string; issued_at: Date | null; created_at: Date }>(this.pool, "SELECT total, issued_at, created_at FROM rm_invoices WHERE status IN ('ISSUED','PAID') AND COALESCE(issued_at, created_at) >= $1", [start12]),
-      many<{ vessel_id: string; vessel: string; imo: string; cert_type: string; expiry_date: Date }>(this.pool, "SELECT c.vessel_id, v.name AS vessel, v.imo, c.cert_type, c.expiry_date FROM rm_vessel_certificates c JOIN rm_vessels v ON v.id = c.vessel_id WHERE v.status = 'ACTIVE'"),
-      many<{ status: string; detention: boolean; closed_at: Date | null; open_findings: number }>(this.pool, "SELECT status, detention, closed_at, open_findings FROM rm_inspections WHERE status <> 'CLOSED' OR closed_at >= $1", [startYear]),
+      many<BerthRow>(this.pool, `SELECT * FROM ${from(user, 'rm_berths', BERTH_SCOPE)} ORDER BY terminal, code`),
+      many<CallRow>(this.pool, `SELECT * FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status IN ('ANNOUNCED','CONFIRMED','AT_ANCHORAGE','BERTHED') ORDER BY eta`),
+      many<CallRow>(this.pool, `SELECT * FROM ${from(user, 'rm_port_calls', CALL_SCOPE)} WHERE status = 'SAILED' AND atd >= $1`, [start12]),
+      many<{ total: string; issued_at: Date | null; created_at: Date }>(this.pool, `SELECT total, issued_at, created_at FROM ${from(user, 'rm_invoices', INVOICE_SCOPE)} WHERE status IN ('ISSUED','PAID') AND COALESCE(issued_at, created_at) >= $1`, [start12]),
+      many<{ vessel_id: string; vessel: string; imo: string; cert_type: string; expiry_date: Date }>(this.pool, `SELECT c.vessel_id, v.name AS vessel, v.imo, c.cert_type, c.expiry_date FROM ${from(user, 'rm_vessel_certificates', CERTIFICATE_SCOPE, 'c')} JOIN ${from(user, 'rm_vessels', VESSEL_SCOPE, 'v')} ON v.id = c.vessel_id WHERE v.status = 'ACTIVE'`),
+      many<{ status: string; detention: boolean; closed_at: Date | null; open_findings: number }>(this.pool, `SELECT status, detention, closed_at, open_findings FROM ${from(user, 'rm_inspections', INSPECTION_SCOPE)} WHERE status <> 'CLOSED' OR closed_at >= $1`, [startYear]),
       many<{ at: Date; actor_name: string | null; action: string; entity: string; entity_label: string | null }>(this.pool, 'SELECT at, actor_name, action, entity, entity_label FROM rm_audit_activity ORDER BY at DESC LIMIT 10'),
     ]);
     const berthed = active.filter((c) => c.status === 'BERTHED');

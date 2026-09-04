@@ -87,7 +87,8 @@ export class HubController {
   async deadLetters(@Query('open') open?: string) {
     const rows = await this.pool.query(
       `SELECT id::text, call_id::text, adapter, operation, request, error, attempts, created_at, replayed_at
-         FROM dead_letters ${open === 'true' ? 'WHERE replayed_at IS NULL' : ''} ORDER BY created_at DESC LIMIT 200`);
+         FROM dead_letters WHERE ($1::boolean IS NOT TRUE OR replayed_at IS NULL)
+        ORDER BY created_at DESC LIMIT 200`, [open === 'true']);
     return rows.rows.map((r: Record<string, unknown>) => ({
       id: r.id, callId: r.call_id, adapter: r.adapter, operation: r.operation, request: r.request,
       error: r.error, attempts: r.attempts, createdAt: (r.created_at as Date).toISOString(),

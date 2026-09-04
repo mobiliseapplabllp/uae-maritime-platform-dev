@@ -1,5 +1,5 @@
 import { EVENTS, INSPECTION_RESULTS, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { enqueue, eventFromContext, type Queryable, recordScope } from '@maritime/service-kit';
 import type { Env } from './env';
 
 /* A survey and everything that hangs off it.
@@ -29,6 +29,7 @@ export interface TemplateItem { seq: number; text: string; category: string; ans
 export interface ChecklistAnswer { seq: number; text: string; category: string; answer: string; note: string; weight: number; critical: boolean; answerType: string }
 
 export interface InspectionRow {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_port: string;
   id: string; number: string; vessel_id: string | null; vessel_name: string; vessel_imo: string; vessel_flag: string; vessel_type: string;
   port_call_id: string | null; vcn: string; type: string; template_id: string | null; template_version: number | null;
   inspector_id: string | null; inspector: string; planned_at: Date; started_at: Date | null; closed_at: Date | null;
@@ -150,7 +151,7 @@ export async function publishInspection(c: Queryable, env: Env, i: InspectionRow
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: i.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: i.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'inspection', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'inspection', entity: { ...entity, scope: recordScope(i) } }));
   if (opts.event) {
     await enqueue(c, mk(opts.event, {
       inspectionId: i.id, number: i.number, vesselId: i.vessel_id, vesselName: i.vessel_name, imo: i.vessel_imo, type: i.type,

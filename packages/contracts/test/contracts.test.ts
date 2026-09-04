@@ -4,6 +4,7 @@ import {
   canTransition, PORTCALL_TRANSITIONS, INSTRUMENT_TRANSITIONS, REQUEST_TRANSITIONS, REGISTRATION_TRANSITIONS, INCIDENT_TRANSITIONS, LICENSE_TRANSITIONS,
   LICENSE_TYPES, instrumentClassOf, numberPrefixOf, validityMonthsOf, typeAllowedFor,
   makeEvent, EVENTS, subjectFor, getJurisdiction, unconfirmedFigures, LOOKUP_CATEGORIES, pick,
+  PASSWORD_MIN, PASSWORD_RULE_TEXT, passwordAcceptable, passwordProblems,
 } from '../src';
 
 describe('permission catalogue', () => {
@@ -84,5 +85,38 @@ describe('events, jurisdictions, reference', () => {
     expect(LOOKUP_CATEGORIES).toHaveLength(19);
     expect(pick({ en: 'Hello', ar: 'مرحبا' }, 'ar')).toBe('مرحبا');
     expect(pick({ en: 'Hello' }, 'ar')).toBe('Hello');
+  });
+});
+
+describe('password policy', () => {
+  it('states one rule and enforces exactly that rule', () => {
+    expect(PASSWORD_RULE_TEXT).toContain(String(PASSWORD_MIN));
+    expect(passwordProblems('Harbourmaster2026')).toEqual([]);
+    expect(passwordAcceptable('Harbourmaster2026')).toBe(true);
+  });
+
+  it('names every reason at once rather than one per round trip', () => {
+    const problems = passwordProblems('short');
+    expect(problems.length).toBeGreaterThan(1);
+    expect(problems.join(' ')).toContain(String(PASSWORD_MIN));
+    expect(problems.join(' ')).toMatch(/upper-case/);
+  });
+
+  it('rejects what composition rules alone would pass', () => {
+    // long enough, three character classes, and still the first thing anyone tries
+    expect(passwordProblems('Password1234')).not.toEqual([]);
+    expect(passwordProblems('Qwertyuiop12A')).not.toEqual([]);
+    expect(passwordProblems('AAAAAAAAAAAA')).not.toEqual([]);
+  });
+
+  it('refuses a password built out of the account it protects', () => {
+    const subject = { email: 'rakesh.nair@maritime.example', name: 'Rakesh Nair' };
+    expect(passwordProblems('Rakesh.Nair2026', subject).join(' ')).toContain('e-mail address');
+    expect(passwordProblems('Nair-Is-Here-9', subject).join(' ')).toContain('your name');
+    expect(passwordProblems('Khalifa-Quay-71', subject)).toEqual([]);
+  });
+
+  it('treats a missing password as a problem, not as a pass', () => {
+    for (const bad of [undefined, null, '', 42, {}]) expect(passwordProblems(bad)).not.toEqual([]);
   });
 });

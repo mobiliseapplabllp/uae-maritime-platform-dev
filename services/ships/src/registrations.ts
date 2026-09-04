@@ -1,5 +1,5 @@
 import { type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { scopeWhere, enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { scopeWhere, enqueue, eventFromContext, nextNumber, type Queryable, recordScope } from '@maritime/service-kit';
 import { REGISTRATION_SCOPE } from './scope';
 import type { Env } from './env';
 import { iso, type Row, type VesselRow } from './vessels';
@@ -9,6 +9,7 @@ import { portName, shareLedger, requiredEvidence, type Check } from './registry'
  * The register itself (a ship's registry_* columns) is written only by a grant; see registrations.controller. */
 
 export interface RegistrationRow {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; application_no: string; kind: string; vessel_id: string | null; vessel_name: string; imo: string; port_of_registry: string;
   applicant: Row; owners: Row[]; tonnage: Row; previous_flag: string; previous_registry: string; previous_official_number: string;
   evidence: Row[]; encumbrances: Row[]; carving_note: Row | null; amendment: Row | null; deletion: Row | null;
@@ -96,7 +97,7 @@ export async function publishRegistration(c: Queryable, env: Env, r: Registratio
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: r.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: r.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'registration', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'registration', entity: { ...entity, scope: recordScope(r) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { registrationId: r.id, applicationNo: r.application_no, kind: r.kind, vesselId: r.vessel_id, vesselName: r.vessel_name, imo: r.imo, status: r.status, registration: entity, ...(opts.data ?? {}) }));
   return entity;
 }

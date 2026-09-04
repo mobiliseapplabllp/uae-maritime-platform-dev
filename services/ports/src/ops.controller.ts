@@ -197,6 +197,7 @@ export class OpsController {
       const status = b.status ?? before.status;
       const cols: Record<string, unknown> = { status, current_task: status === 'TASKED' ? (b.currentTask ?? before.current_task) : '', remarks: b.remarks, master: b.master, contact: b.contact, spec: b.spec, name: b.name };
       const keys = Object.keys(cols).filter((k) => cols[k] !== undefined);
+      // nosemgrep: maritime-sql-template-interpolation — column names come from a server-side map; every value is a parameter
       await c.query(`UPDATE resources SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [before.id, ...keys.map((k) => cols[k])]);
       const r = (await findResource(c, before.id, NATIONAL_SCOPE))!;
       await this.audit.record(c, { action: 'UPDATE', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${r.name}`, before: core(before), after: core(r) });

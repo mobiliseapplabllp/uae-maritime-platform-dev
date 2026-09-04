@@ -1,5 +1,5 @@
 import { EVENTS, INCIDENT_PRIORITIES, INCIDENT_SEVERITY, INCIDENT_STATUS, INCIDENT_TRANSITIONS, canTransition, makeEvent, type Actor, type EventEnvelope, type IncidentStatus } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { enqueue, eventFromContext, type Queryable, recordScope } from '@maritime/service-kit';
 import type { Env } from './env';
 
 /* The case file.
@@ -32,6 +32,7 @@ export const allowed = (from: string, to: string) => canTransition(INCIDENT_TRAN
 export const isReopen = (from: string, to: string) => (from === 'RESOLVED' || from === 'CLOSED') && to === 'RESPONDING';
 
 export interface IncidentRow {
+  /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_port: string;
   id: string; number: string; category: string; type: string; severity: string; priority: string; status: string; title: string; description: string;
   vessel_id: string | null; vessel_name: string; berth_id: string | null; berth_code: string; berth_terminal: string; location: Row;
   reported_at: Date; reported_by: string; source: string; assigned_to_id: string | null; assigned_to: string;
@@ -109,7 +110,7 @@ export async function publishIncident(c: Queryable, env: Env, i: IncidentRow, fi
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: i.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: i.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'incident', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'incident', entity: { ...entity, scope: recordScope(i) } }));
   if (opts.event) {
     await enqueue(c, mk(opts.event, {
       incidentId: i.id, number: i.number, title: i.title, category: i.category, type: i.type, severity: i.severity, priority: i.priority, status: i.status,
