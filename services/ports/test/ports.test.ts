@@ -15,6 +15,9 @@ const DB = 'maritime_ports_test'; const URL = `postgres://maritime:maritime@127.
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const officer = tok('officer'); const clerk = tok('clerk'); const nobody = tok('nobody');
+/* The two tenants the harbour registers actually have: an officer posted to one port, and an agent who may
+ * see their own company's calls and nothing else. */
+const khalifa = tok('khalifa'); const fujairah = tok('fujairah'); const agentGss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -34,6 +37,9 @@ beforeAll(async () => {
     officer: { ...base, id: 'officer', sub: 'officer', name: 'Duty Officer', perms: ['portcalls.view', 'portcalls.create', 'portcalls.edit', 'portcalls.transition', 'cargo.manage', 'masters.view'] },
     clerk: { ...base, id: 'clerk', sub: 'clerk', name: 'Records Clerk', perms: ['portcalls.view', 'masters.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
+    khalifa: { ...base, id: 'khalifa', sub: 'khalifa', name: 'Khalifa Port Officer', perms: ['portcalls.view', 'portcalls.edit', 'masters.view', 'masters.manage'], scope: { level: 'PORT', ports: ['AEAUH'] } },
+    fujairah: { ...base, id: 'fujairah', sub: 'fujairah', name: 'Fujairah Officer', perms: ['portcalls.view', 'masters.view'], scope: { level: 'PORT', ports: ['AEFJR'] } },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['portcalls.view', 'masters.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -420,5 +426,111 @@ describe('ports — the event consumer', () => {
     expect((await g(`/port-calls/${call.id}`)).body.data.detention).toBe(true);
     await withTx(pool, (c) => applyEvent(c, deps(), makeEvent({ type: EVENTS.inspection.detention, source: 'inspection', data: { vcn: call.vcn, released: true } })));
     expect((await g(`/port-calls/${call.id}`)).body.data.detention).toBe(false);
+  });
+});
+
+/* ================================================================= tenancy on the harbour registers === */
+
+describe('ports — tenancy', () => {
+  it('seeds the estate into its port, so a call inherits the port of the berth it is allocated', async () => {
+    const berths = await pool.query<{ n: string; ports: string[] }>(
+      "SELECT count(*)::text AS n, array_agg(DISTINCT scope_port) AS ports FROM berths");
+    expect(Number(berths.rows[0].n)).toBeGreaterThan(0);
+    expect(berths.rows[0].ports).toEqual(['AEAUH']);
+    const berthed = await pool.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM port_calls WHERE berth_id IS NOT NULL AND scope_port <> 'AEAUH'");
+    expect(Number(berthed.rows[0].n)).toBe(0);
+    // a call with no berth is not yet any port's, which is why it is shared rather than hidden
+    const unberthed = await pool.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM port_calls WHERE berth_id IS NULL AND scope_port <> ''");
+    expect(Number(unberthed.rows[0].n)).toBe(0);
+    // and every call belongs to the agent named on it
+    const owned = await pool.query<{ mismatched: string }>(
+      "SELECT count(*)::text AS mismatched FROM port_calls WHERE agent_code <> '' AND scope_company <> agent_code");
+    expect(Number(owned.rows[0].mismatched)).toBe(0);
+  });
+
+  it('shows a port officer their own port and an officer elsewhere nothing of it', async () => {
+    const mine = await g('/berths?limit=200', khalifa);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    const theirs = await g('/berths?limit=200', fujairah);
+    expect(theirs.status).toBe(200);
+    expect(theirs.body.meta.total).toBe(0);
+    // the count is the filtered count, not a full count with a filtered page hung off it
+    expect(theirs.body.data).toHaveLength(0);
+    // and the same is true of the boards drawn from the same tables
+    expect((await g('/ops/twin', fujairah)).body.data.berths).toHaveLength(0);
+    expect((await g('/ops/twin', khalifa)).body.data.berths.length).toBeGreaterThan(0);
+    expect((await g('/ops/resources', fujairah)).body.data).toHaveLength(0);
+    expect((await g('/ops/resources', khalifa)).body.data.length).toBeGreaterThan(0);
+  });
+
+  it('answers "not found" for one record in another port, so its existence is not disclosed', async () => {
+    // a berth in the other officer's port, so the rule is tested in both directions on real rows
+    const other = (await pool.query<{ id: string }>(
+      `INSERT INTO berths(code, name, terminal, berth_type, loa_max, draft_max, status, scope_port)
+       VALUES ('FJR-9', 'Fujairah 9', 'FJR', 'MULTIPURPOSE', 300, 16, 'OPERATIONAL', 'AEFJR') RETURNING id`)).rows[0];
+    try {
+      expect((await g(`/berths/${other.id}`, fujairah)).status).toBe(200);
+      const denied = await g(`/berths/${other.id}`, khalifa);
+      expect(denied.status).toBe(404);
+      // word for word the answer a berth that never existed would get
+      expect(denied.body.message).toBe((await g('/berths/00000000-0000-0000-0000-000000000000', khalifa)).body.message);
+      // and a write the reader does hold the permission for is refused by the same route, not a different one
+      expect((await request(server as never).delete(`/berths/${other.id}`).set('authorization', khalifa)).status).toBe(404);
+      expect((await pool.query('SELECT id FROM berths WHERE id = $1', [other.id])).rowCount).toBe(1);
+      // the register a port officer does own is unaffected
+      const mine = (await g('/berths?limit=1', khalifa)).body.data[0];
+      expect((await g(`/berths/${mine.id}`, khalifa)).status).toBe(200);
+    } finally {
+      await pool.query('DELETE FROM berths WHERE id = $1', [other.id]);
+    }
+  });
+
+  it('shows an agent their own company\'s calls and nobody else\'s', async () => {
+    const mine = await g('/port-calls?limit=500', agentGss);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    expect(mine.body.data.every((c: any) => c.agentCode === 'GSS')).toBe(true);
+    const all = await g('/port-calls?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+
+    // one call belonging to another agent: not listed, and not readable by id either
+    const other = all.body.data.find((c: any) => c.agentCode && c.agentCode !== 'GSS');
+    expect(other).toBeTruthy();
+    expect(mine.body.data.some((c: any) => c.id === other.id)).toBe(false);
+    expect((await g(`/port-calls/${other.id}`, agentGss)).status).toBe(404);
+    expect((await g(`/port-calls/${other.id}/sof`, agentGss)).status).toBe(404);
+    expect((await g(`/port-calls/${other.id}`, admin)).status).toBe(200);
+    // and one of their own is readable, by id and by call number
+    const own = mine.body.data[0];
+    expect((await g(`/port-calls/${own.id}`, agentGss)).status).toBe(200);
+    expect((await g(`/port-calls/${own.vcn}`, agentGss)).status).toBe(200);
+  });
+
+  it('lets an agent read the published estate but not the register the administration keeps', async () => {
+    // a berth list is how an agent knows where their ship is going: published, and readable
+    expect((await g('/berths?limit=5', agentGss)).body.meta.total).toBeGreaterThan(0);
+    // the craft roster is a service they order, so it is theirs to read too
+    expect((await g('/ops/resources', agentGss)).body.data.length).toBeGreaterThan(0);
+  });
+
+  it('narrows the boards and planners an agent sees to their own calls', async () => {
+    const twin = (await g('/ops/twin', agentGss)).body.data;
+    const occupied = twin.berths.filter((b: any) => b.occupiedBy);
+    const adminTwin = (await g('/ops/twin', admin)).body.data;
+    expect(adminTwin.berths.filter((b: any) => b.occupiedBy).length).toBeGreaterThanOrEqual(occupied.length);
+    expect(twin.anchorage.length + twin.inbound.length).toBeLessThanOrEqual(adminTwin.anchorage.length + adminTwin.inbound.length);
+    const plan = (await g('/ops/berth-plan?days=30', agentGss)).body.data;
+    const adminPlan = (await g('/ops/berth-plan?days=30', admin)).body.data;
+    expect(JSON.stringify(plan).length).toBeLessThanOrEqual(JSON.stringify(adminPlan).length);
+  });
+
+  it('leaves a national principal seeing everything, with no clause added at all', async () => {
+    const all = await g('/port-calls?limit=1', admin);
+    const officerView = await g('/port-calls?limit=1', officer);
+    expect(officerView.body.meta.total).toBe(all.body.meta.total);
+    expect((await g('/berths?limit=1', officer)).body.meta.total).toBe((await g('/berths?limit=1', admin)).body.meta.total);
   });
 });

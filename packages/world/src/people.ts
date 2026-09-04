@@ -1,7 +1,19 @@
-import { ROLE_CATALOGUE } from '@maritime/contracts';
+import { ROLE_CATALOGUE, type TenancyScope } from '@maritime/contracts';
 import { Prng, H, stableId } from './prng';
 
-export interface WorldUser { id: string; name: string; email: string; roleName: string; designation: string; department: string; phone: string; login: boolean; active: boolean; lastLoginAt: string | null }
+export interface WorldUser {
+  id: string; name: string; email: string; roleName: string; designation: string; department: string; phone: string;
+  login: boolean; active: boolean; lastLoginAt: string | null;
+  /** What this account may see. Absent is the administration's own staff, who see the whole register. */
+  scope?: TenancyScope;
+}
+
+/* The industry logins, and the company each of them belongs to. An agent is not a member of the
+ * administration: they lodge their own calls, see their own invoices, and nothing of anyone else's — which
+ * is the tenancy rule the registers enforce, and it only means anything if an account actually carries it. */
+const ACCOUNT_SCOPES: Record<string, TenancyScope> = {
+  'agent@maritime.example': { level: 'COMPANY', companies: ['GSS'] },
+};
 
 const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
   AE: [
@@ -93,7 +105,7 @@ export function buildPeople(rng: Prng, profile: string, now: Date): WorldUser[] 
   const out: WorldUser[] = [];
   const used = new Set<string>();
   const push = (u: Omit<WorldUser, 'id'>) => { if (used.has(u.email)) return; used.add(u.email); out.push({ id: stableId('user', u.email), ...u }); };
-  LOGIN_USERS[p].forEach(([name, email, roleName, designation], i) => push({ name, email, roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i), login: true, active: true, lastLoginAt: new Date(now.getTime() - rng.int(1, 40) * H).toISOString() }));
+  LOGIN_USERS[p].forEach(([name, email, roleName, designation], i) => push({ name, email, roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i), login: true, active: true, scope: ACCOUNT_SCOPES[email], lastLoginAt: new Date(now.getTime() - rng.int(1, 40) * H).toISOString() }));
   STAFF[p].forEach(([name, designation, roleName], i) => push({ name, email: emailOf(name), roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i + 10), login: false, active: true, lastLoginAt: rng.chance(0.9) ? new Date(now.getTime() - rng.int(1, 900) * H).toISOString() : null }));
   let gi = 0;
   for (const [dept, desigs, count] of DEPTS) {

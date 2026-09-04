@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { Prng, buildWorld, servicesFor, stableId, type WorldPortCall, type WorldVessel } from '@maritime/world';
+import { Prng, buildWorld, geoFor, servicesFor, stableId, type WorldPortCall, type WorldVessel } from '@maritime/world';
 import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
 import { toMT, type CallService, type CargoOp, type HistoryEntry } from './calls';
@@ -53,10 +53,13 @@ export async function seedPorts(databaseUrl: string, profile = 'AE') {
     for (const t of world.tariffs) await upsertTariff(c, { id: t.id, code: t.code, name: t.name, category: t.category, unit: t.unit, rate: t.rate, currency: t.currency, active: t.active });
     for (const i of world.invoices) await upsertInvoice(c, i);
 
+    /* The estate is what makes the port partition real: a berth belongs to the port it is built in, and a
+     * call inherits its port from the berth it is allocated. Everything else follows from these two rows. */
+    const homePort = geoFor(world.profile).portCode;
     for (const b of world.berths) {
-      await c.query(`INSERT INTO berths(id, code, name, terminal, berth_type, loa_max, draft_max, status, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'')
-        ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, terminal = EXCLUDED.terminal, berth_type = EXCLUDED.berth_type, loa_max = EXCLUDED.loa_max, draft_max = EXCLUDED.draft_max, status = EXCLUDED.status, updated_at = now()`,
-        [b.id, b.code, b.name, b.terminal, b.berthType, b.loaMax, b.draftMax, b.status]);
+      await c.query(`INSERT INTO berths(id, code, name, terminal, berth_type, loa_max, draft_max, status, remarks, scope_port) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'',$9)
+        ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, terminal = EXCLUDED.terminal, berth_type = EXCLUDED.berth_type, loa_max = EXCLUDED.loa_max, draft_max = EXCLUDED.draft_max, status = EXCLUDED.status, scope_port = EXCLUDED.scope_port, updated_at = now()`,
+        [b.id, b.code, b.name, b.terminal, b.berthType, b.loaMax, b.draftMax, b.status, homePort]);
     }
     for (const o of world.berthOutages) {
       await c.query('INSERT INTO berth_outages(id, berth_id, from_at, to_at, days, kind, reason, recorded_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO UPDATE SET berth_id = EXCLUDED.berth_id, from_at = EXCLUDED.from_at, to_at = EXCLUDED.to_at, days = EXCLUDED.days, kind = EXCLUDED.kind, reason = EXCLUDED.reason, recorded_by = EXCLUDED.recorded_by',
@@ -88,9 +91,9 @@ export async function seedPorts(databaseUrl: string, profile = 'AE') {
 
     let jobs = 0; let outages = 0;
     for (const r of world.resources) {
-      await c.query(`INSERT INTO resources(id, code, name, type, spec, status, current_task, master, user_id, contact, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-        ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, type = EXCLUDED.type, spec = EXCLUDED.spec, status = EXCLUDED.status, current_task = EXCLUDED.current_task, master = EXCLUDED.master, user_id = EXCLUDED.user_id, contact = EXCLUDED.contact, remarks = EXCLUDED.remarks, updated_at = now()`,
-        [r.id, r.code, r.name, r.type, r.spec, r.status, r.currentTask, r.master, r.userId, r.contact, r.remarks]);
+      await c.query(`INSERT INTO resources(id, code, name, type, spec, status, current_task, master, user_id, contact, remarks, scope_port) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, type = EXCLUDED.type, spec = EXCLUDED.spec, status = EXCLUDED.status, current_task = EXCLUDED.current_task, master = EXCLUDED.master, user_id = EXCLUDED.user_id, contact = EXCLUDED.contact, remarks = EXCLUDED.remarks, scope_port = EXCLUDED.scope_port, updated_at = now()`,
+        [r.id, r.code, r.name, r.type, r.spec, r.status, r.currentTask, r.master, r.userId, r.contact, r.remarks, homePort]);
       await c.query('DELETE FROM resource_jobs WHERE resource_id = $1', [r.id]);
       for (const j of r.jobs) {
         await c.query('INSERT INTO resource_jobs(id, resource_id, at, ended_at, kind, vcn, port_call_id, vessel_name, berth, hours, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT (id) DO NOTHING',

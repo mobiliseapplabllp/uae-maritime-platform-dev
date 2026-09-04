@@ -2,11 +2,12 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, PORTCALL_STATUS, PORTCALL_TRANSITIONS, canTransition, getJurisdiction, type PageQuery, type PortCallStatus } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, enqueue, escapeLike, eventFromContext, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, enqueue, escapeLike, eventFromContext, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal, type Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { assertBerthAvailable } from './berthing';
 import { CARGO_OPERATIONS, CARGO_UNITS, CLOSED_STATUSES, OPEN_STATUSES, SERVICE_TYPES, VIEW_SQL, findCall, insertCall, lockCall, movementsOf, newId, nextVcn, publishState, sofOf, stamp, toApi, toMT, updateCall, type CallApi, type CargoOp, type CallService, type HistoryEntry, type Patch, type SofEntry, type View } from './calls';
 import { buildEstimate, variance } from './pda';
+import { CALL_SCOPE } from './scope';
 import { activeTariffs } from './subjects';
 import { HOUR, iso } from './history';
 
@@ -42,7 +43,7 @@ export class PortCallsController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
 
   @RequirePerm('portcalls.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-eta', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -53,6 +54,7 @@ export class PortCallsController {
     if (query.from) { args.push(new Date(query.from)); where.push(`pc.eta >= $${args.length}`); }
     if (query.to) { args.push(new Date(query.to)); where.push(`pc.eta <= $${args.length}`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(pc.vcn ILIKE $${args.length} OR pc.vessel_name ILIKE $${args.length} OR pc.vessel_imo ILIKE $${args.length} OR pc.agent_name ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, { ...CALL_SCOPE, alias: 'pc' });
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM port_calls pc ${w}`, args);
     const rows = await this.pool.query<View>(`${VIEW_SQL} ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, pc.vcn LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -66,8 +68,8 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const row = await findCall(this.pool, id); if (!row) throw notFound('Port call not found');
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const row = await findCall(this.pool, id, user.scope); if (!row) throw notFound('Port call not found');
     return this.detail(this.pool, row);
   }
 
@@ -116,9 +118,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.edit') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>) {
+  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       if (CLOSED_STATUSES.includes(before.status as PortCallStatus)) throw badRequest(`A ${words(before.status)} call is read-only`);
       const patch: Patch = {};
       const set = <K extends keyof Patch>(k: K, v: Patch[K]) => { if (v !== undefined) patch[k] = v; };
@@ -143,9 +145,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.delete') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockCall(c, id); if (!row) throw notFound('Port call not found');
+      const row = await lockCall(c, id, user.scope); if (!row) throw notFound('Port call not found');
       if (!['ANNOUNCED', 'CANCELLED'].includes(row.status)) throw badRequest('Only announced or cancelled calls can be deleted — the rest are operational record');
       await c.query('DELETE FROM port_calls WHERE id = $1', [row.id]);
       await this.audit.record(c, { action: 'DELETE', entity: 'PortCall', entityId: row.id, entityLabel: row.vcn, before: toApi(row) });
@@ -159,7 +161,7 @@ export class PortCallsController {
   @RequirePerm('portcalls.transition') @Post(':id/transition')
   async transition(@Param('id') id: string, @Body(zod(transitionSchema)) b: z.infer<typeof transitionSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const from = before.status as PortCallStatus; const to = b.to;
       if (!PORTCALL_TRANSITIONS[from]) throw conflict(`Unknown status "${from}" — cannot move`);
       if (!canTransition(PORTCALL_TRANSITIONS, from, to)) throw conflict(`A ${words(from)} call cannot move to ${words(to)}`);
@@ -192,9 +194,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.edit') @Post(':id/services')
-  async addService(@Param('id') id: string, @Body(zod(serviceSchema)) b: z.infer<typeof serviceSchema>) {
+  async addService(@Param('id') id: string, @Body(zod(serviceSchema)) b: z.infer<typeof serviceSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       if (CLOSED_STATUSES.includes(before.status as PortCallStatus)) throw badRequest(`A ${words(before.status)} call is read-only`);
       const entry: CallService = { id: newId(), type: b.type, tariffCode: b.tariffCode ?? '', description: b.description ?? '', qty: b.qty, unit: b.unit ?? '', at: stamp(b.at ?? new Date()), remarks: b.remarks ?? '', createdAt: new Date().toISOString() };
       const row = await updateCall(c, before.id, { services: [...(before.services ?? []), entry] });
@@ -205,9 +207,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.edit') @Delete(':id/services/:serviceId')
-  async removeService(@Param('id') id: string, @Param('serviceId') serviceId: string) {
+  async removeService(@Param('id') id: string, @Param('serviceId') serviceId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const svc = (before.services ?? []).find((s) => s.id === serviceId); if (!svc) throw notFound('Service entry not found');
       const row = await updateCall(c, before.id, { services: (before.services ?? []).filter((s) => s.id !== serviceId) });
       await this.audit.record(c, { action: 'SERVICE_DELETE', entity: 'PortCall', entityId: row.id, entityLabel: `${row.vcn} — ${svc.type}`, before: svc });
@@ -217,9 +219,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('cargo.manage') @Post(':id/cargo')
-  async addCargo(@Param('id') id: string, @Body(zod(cargoSchema)) b: z.infer<typeof cargoSchema>) {
+  async addCargo(@Param('id') id: string, @Body(zod(cargoSchema)) b: z.infer<typeof cargoSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       if (CLOSED_STATUSES.includes(before.status as PortCallStatus)) throw badRequest(`A ${words(before.status)} call is read-only`);
       const op: CargoOp = { id: newId(), cargoType: b.cargoType, operation: b.operation, qty: b.qty, unit: b.unit, qtyMT: toMT(b.qty, b.unit), gangs: b.gangs ?? 0, startedAt: stamp(b.startedAt), completedAt: stamp(b.completedAt), remarks: b.remarks ?? '', createdAt: new Date().toISOString() };
       const row = await updateCall(c, before.id, { cargoOps: [...(before.cargo_ops ?? []), op] });
@@ -230,9 +232,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('cargo.manage') @Put(':id/cargo/:opId')
-  async updateCargo(@Param('id') id: string, @Param('opId') opId: string, @Body(zod(cargoPatchSchema)) b: z.infer<typeof cargoPatchSchema>) {
+  async updateCargo(@Param('id') id: string, @Param('opId') opId: string, @Body(zod(cargoPatchSchema)) b: z.infer<typeof cargoPatchSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const ops = before.cargo_ops ?? []; const op = ops.find((o) => o.id === opId); if (!op) throw notFound('Cargo operation not found');
       const next: CargoOp = { ...op,
         cargoType: b.cargoType ?? op.cargoType, operation: b.operation ?? op.operation, qty: b.qty ?? op.qty, unit: b.unit ?? op.unit, gangs: b.gangs ?? op.gangs,
@@ -246,9 +248,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('cargo.manage') @Delete(':id/cargo/:opId')
-  async removeCargo(@Param('id') id: string, @Param('opId') opId: string) {
+  async removeCargo(@Param('id') id: string, @Param('opId') opId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const op = (before.cargo_ops ?? []).find((o) => o.id === opId); if (!op) throw notFound('Cargo operation not found');
       const row = await updateCall(c, before.id, { cargoOps: (before.cargo_ops ?? []).filter((o) => o.id !== opId) });
       await this.audit.record(c, { action: 'CARGO_DELETE', entity: 'PortCall', entityId: row.id, entityLabel: `${row.vcn} — ${op.cargoType}`, before: op });
@@ -259,8 +261,8 @@ export class PortCallsController {
 
   /** Statement of Facts — compiled from the call, plus whatever the harbour desk typed in by hand. */
   @RequirePerm('portcalls.view') @Get(':id/sof')
-  async sof(@Param('id') id: string) {
-    const row = await findCall(this.pool, id); if (!row) throw notFound('Port call not found');
+  async sof(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const row = await findCall(this.pool, id, user.scope); if (!row) throw notFound('Port call not found');
     const call = toApi(row);
     return { call: { id: call.id, vcn: call.vcn, status: call.status, agentCode: call.agentCode, agentName: call.agentName, eta: call.eta, atd: call.atd, vessel: call.vessel, berth: call.berth }, events: sofOf(call), movements: movementsOf(call) };
   }
@@ -268,7 +270,7 @@ export class PortCallsController {
   @RequirePerm('portcalls.edit') @Post(':id/sof')
   async addSofEntry(@Param('id') id: string, @Body(zod(sofEntrySchema)) b: z.infer<typeof sofEntrySchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const entry: SofEntry = { id: newId(), at: b.at.toISOString(), event: b.event, detail: b.detail ?? '', by: b.by ?? user?.name ?? 'system' };
       const row = await updateCall(c, before.id, { sofEntries: [...(before.sof_entries ?? []), entry] });
       await this.audit.record(c, { action: 'SOF_ADD', entity: 'PortCall', entityId: row.id, entityLabel: `${row.vcn} — ${entry.event}`, after: entry });
@@ -279,9 +281,9 @@ export class PortCallsController {
   }
 
   @RequirePerm('portcalls.edit') @Delete(':id/sof/:entryId')
-  async removeSofEntry(@Param('id') id: string, @Param('entryId') entryId: string) {
+  async removeSofEntry(@Param('id') id: string, @Param('entryId') entryId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const entry = (before.sof_entries ?? []).find((e) => e.id === entryId); if (!entry) throw notFound('Statement entry not found');
       const row = await updateCall(c, before.id, { sofEntries: (before.sof_entries ?? []).filter((e) => e.id !== entryId) });
       await this.audit.record(c, { action: 'SOF_DELETE', entity: 'PortCall', entityId: row.id, entityLabel: `${row.vcn} — ${entry.event}`, before: entry });
@@ -292,8 +294,8 @@ export class PortCallsController {
 
   /** The estimate carried on the call, and how it reads against the invoice that eventually closed it. */
   @RequirePerm('invoices.view', 'portcalls.view') @Get(':id/pda')
-  async getPda(@Param('id') id: string) {
-    const row = await findCall(this.pool, id); if (!row) throw notFound('Port call not found');
+  async getPda(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const row = await findCall(this.pool, id, user.scope); if (!row) throw notFound('Port call not found');
     const call = toApi(row);
     if (!call.pda) throw notFound('No cost estimate has been generated for this call');
     const inv = await this.pool.query<{ number: string; lines: CallApi['pda'] extends null ? never : { code: string; description: string; unit: string; qty: number; rate: number; amount: number }[]; total: string }>(
@@ -305,7 +307,7 @@ export class PortCallsController {
   @RequirePerm('invoices.create', 'portcalls.edit') @Post(':id/pda')
   async generatePda(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockCall(c, id); if (!before) throw notFound('Port call not found');
+      const before = await lockCall(c, id, user.scope); if (!before) throw notFound('Port call not found');
       const call = toApi(before);
       if (!call.vesselGrt) throw badRequest('The vessel needs a GRT before an estimate can be made');
       const tariffs = await activeTariffs(c);

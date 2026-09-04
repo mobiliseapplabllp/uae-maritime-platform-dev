@@ -1,10 +1,11 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
-import { EVENTS, RESOURCE_TYPES } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, paged, withTx, zod, type Principal } from '@maritime/service-kit';
+import { EVENTS, NATIONAL_SCOPE, RESOURCE_TYPES } from '@maritime/contracts';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, paged, scopeWhere, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import { OPEN_STATUSES } from './calls';
+import { BERTH_SCOPE, CALL_SCOPE, RESOURCE_SCOPE, scopedWhere } from './scope';
 import { toApi as berthApi, type BerthRow } from './berths';
 import { JOB_KINDS, RESOURCE_STATUS, bucketJobs, core, findResource, historyReport, jobsOf, publishResource, publishResourceDeleted, resourceOutagesOf, serviceDigest, toApi as resourceApi, type JobApi, type JobRow, type OutageApi, type ResourceOutageRow, type ResourceRow } from './resources';
 import { DAY, availability, clampMonths, dayKey, dayStart, daysBetween, iso, monthWindow, num, round1 } from './history';
@@ -29,9 +30,12 @@ export class OpsController {
 
   /** Everything the quay view needs in one call: the estate with its occupants, who is at anchor and who is inbound. */
   @RequirePerm('portcalls.view') @Get('twin')
-  async twin() {
-    const berths = (await this.pool.query<BerthRow>('SELECT * FROM berths ORDER BY terminal, code')).rows;
-    const active = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE pc.status = ANY($1) ORDER BY pc.eta`, [OPEN_STATUSES])).rows;
+  async twin(@CurrentUser() user: Principal) {
+    const sb = scopedWhere(user.scope, BERTH_SCOPE);
+    const berths = (await this.pool.query<BerthRow>(`SELECT * FROM berths ${sb.sql} ORDER BY terminal, code`, sb.args)).rows;
+    const cw = ['pc.status = ANY($1)']; const ca: unknown[] = [OPEN_STATUSES];
+    scopeWhere(user.scope, cw, ca, { ...CALL_SCOPE, alias: 'pc' });
+    const active = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE ${cw.join(' AND ')} ORDER BY pc.eta`, ca)).rows;
     const byBerth = new Map(active.filter((c) => c.status === 'BERTHED' && c.berth_id).map((c) => [String(c.berth_id), c]));
     const brief = (c: TwinCall) => ({ callId: c.id, vcn: c.vcn, vesselId: c.vessel_id, vessel: c.vessel_name, type: c.v_type, loa: num(c.v_loa) });
     return {
@@ -47,10 +51,13 @@ export class OpsController {
 
   /** The day programme: expected arrivals, planned berthings, planned sailings and what actually sailed, grouped by day. */
   @RequirePerm('portcalls.view') @Get('schedule')
-  async schedule(@Query('days') daysQ?: string) {
+  async schedule(@CurrentUser() user: Principal, @Query('days') daysQ?: string) {
     const days = Math.min(14, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || 5));
     const start = dayStart(); const from = new Date(start.getTime() - DAY); const to = new Date(start.getTime() + days * DAY);
-    const rows = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE pc.status <> 'CANCELLED' AND ((pc.eta BETWEEN $1 AND $2) OR (pc.etd BETWEEN $1 AND $2) OR (pc.atd BETWEEN $1 AND $2) OR pc.status = 'BERTHED')`, [from, to])).rows;
+    const sw = ["pc.status <> 'CANCELLED'", '((pc.eta BETWEEN $1 AND $2) OR (pc.etd BETWEEN $1 AND $2) OR (pc.atd BETWEEN $1 AND $2) OR pc.status = \'BERTHED\')'];
+    const sa: unknown[] = [from, to];
+    scopeWhere(user.scope, sw, sa, { ...CALL_SCOPE, alias: 'pc' });
+    const rows = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE ${sw.join(' AND ')}`, sa)).rows;
     const events: { callId: string; vcn: string; vesselId: string; vessel: string; type: string | null; berth: string; agent: string; status: string; kind: string; at: string; planned: boolean }[] = [];
     for (const c of rows) {
       const base = { callId: c.id, vcn: c.vcn, vesselId: c.vessel_id, vessel: c.vessel_name, type: c.v_type, berth: c.berth_code || '—', agent: c.agent_name, status: c.status };
@@ -67,14 +74,20 @@ export class OpsController {
 
   /** Berth window planner: every berth a lane, calls as planned or actual blocks, overlaps computed here. */
   @RequirePerm('portcalls.view') @Get('berth-plan')
-  async berthPlan(@Query('from') fromQ?: string, @Query('days') daysQ?: string) {
+  async berthPlan(@CurrentUser() user: Principal, @Query('from') fromQ?: string, @Query('days') daysQ?: string) {
     const winDays = Math.min(30, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || 5));
     const from = fromQ && !Number.isNaN(new Date(fromQ).getTime()) ? new Date(fromQ) : new Date(Date.now() - DAY);
     const to = new Date(from.getTime() + (winDays + 1) * DAY);
-    const berths = (await this.pool.query<BerthRow>('SELECT * FROM berths ORDER BY terminal, code')).rows;
-    const held = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE pc.berth_id IS NOT NULL AND pc.status = ANY($1) AND ((pc.atb IS NOT NULL AND pc.atb < $3 AND (pc.atd IS NULL OR pc.atd > $2)) OR (pc.atb IS NULL AND pc.etb IS NOT NULL AND pc.etb < $3 AND pc.etd > $2))`,
-      [['CONFIRMED', 'AT_ANCHORAGE', 'BERTHED', 'SAILED'], from, to])).rows;
-    const inbound = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE pc.status = ANY($1) AND (pc.berth_id IS NULL OR pc.etb IS NULL) AND pc.eta < $2 ORDER BY pc.eta LIMIT 20`, [['ANNOUNCED', 'CONFIRMED', 'AT_ANCHORAGE'], to])).rows;
+    const sb = scopedWhere(user.scope, BERTH_SCOPE);
+    const berths = (await this.pool.query<BerthRow>(`SELECT * FROM berths ${sb.sql} ORDER BY terminal, code`, sb.args)).rows;
+    const hw = ['pc.berth_id IS NOT NULL', 'pc.status = ANY($1)', '((pc.atb IS NOT NULL AND pc.atb < $3 AND (pc.atd IS NULL OR pc.atd > $2)) OR (pc.atb IS NULL AND pc.etb IS NOT NULL AND pc.etb < $3 AND pc.etd > $2))'];
+    const ha: unknown[] = [['CONFIRMED', 'AT_ANCHORAGE', 'BERTHED', 'SAILED'], from, to];
+    scopeWhere(user.scope, hw, ha, { ...CALL_SCOPE, alias: 'pc' });
+    const held = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE ${hw.join(' AND ')}`, ha)).rows;
+    const iw = ['pc.status = ANY($1)', '(pc.berth_id IS NULL OR pc.etb IS NULL)', 'pc.eta < $2'];
+    const ia: unknown[] = [['ANNOUNCED', 'CONFIRMED', 'AT_ANCHORAGE'], to];
+    scopeWhere(user.scope, iw, ia, { ...CALL_SCOPE, alias: 'pc' });
+    const inbound = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE ${iw.join(' AND ')} ORDER BY pc.eta LIMIT 20`, ia)).rows;
     const blocks = held.map((c) => ({ id: c.id, vcn: c.vcn, berthId: String(c.berth_id), berthCode: c.berth_code, status: c.status, vessel: { name: c.vessel_name, loa: num(c.v_loa), type: c.v_type }, start: iso(c.atb ?? c.etb)!, end: iso(c.atd ?? c.etd), actual: !!c.atb }));
     const byBerth = new Map<string, typeof blocks>();
     for (const b of blocks) { const l = byBerth.get(b.berthId) ?? []; l.push(b); byBerth.set(b.berthId, l); }
@@ -96,11 +109,12 @@ export class OpsController {
 
   /** The craft board — one digest per craft; the jobs array never leaves the server. */
   @RequirePerm('portcalls.view') @Get('resources')
-  async resources(@Query('months') monthsQ?: string, @Query('type') type?: string, @Query('status') status?: string) {
+  async resources(@CurrentUser() user: Principal, @Query('months') monthsQ?: string, @Query('type') type?: string, @Query('status') status?: string) {
     const months = clampMonths(monthsQ, 12); const { from, to } = monthWindow(months);
     const where: string[] = []; const args: unknown[] = [];
     if (type) { args.push(type); where.push(`type = $${args.length}`); }
     if (status) { args.push(status); where.push(`status = $${args.length}`); }
+    scopeWhere(user.scope, where, args, RESOURCE_SCOPE);
     const rows = (await this.pool.query<ResourceRow>(`SELECT * FROM resources ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY type, code`, args)).rows;
     const { jobsBy, outagesBy } = await this.loadRecords(rows.map((r) => r.id));
     const data = rows.map((r) => ({ ...core(r), service: serviceDigest(jobsBy.get(r.id) ?? [], outagesBy.get(r.id) ?? [], { from, to }) }));
@@ -109,9 +123,10 @@ export class OpsController {
 
   /** Fleet-level utilisation — jobs and assist hours per month across every craft, the busiest units and fleet availability. */
   @RequirePerm('portcalls.view') @Get('resources/utilisation')
-  async utilisation(@Query('months') monthsQ?: string) {
+  async utilisation(@CurrentUser() user: Principal, @Query('months') monthsQ?: string) {
     const months = clampMonths(monthsQ, 12); const { bounds, from, to } = monthWindow(months); const win = { from, to };
-    const rows = (await this.pool.query<ResourceRow>('SELECT * FROM resources ORDER BY type, code')).rows;
+    const sr = scopedWhere(user.scope, RESOURCE_SCOPE);
+    const rows = (await this.pool.query<ResourceRow>(`SELECT * FROM resources ${sr.sql} ORDER BY type, code`, sr.args)).rows;
     const { jobsBy, outagesBy } = await this.loadRecords(rows.map((r) => r.id));
     const buckets = new Map(bounds.map((b) => [b.key, { month: b.key, label: b.label, jobs: 0, hours: 0 }]));
     const kinds = new Map<string, { kind: string; jobs: number; hours: number }>();
@@ -144,8 +159,8 @@ export class OpsController {
 
   /** One craft's service record — the utilisation reading plus a page of its jobs. */
   @RequirePerm('portcalls.view') @Get('resources/:id/history')
-  async history(@Param('id') id: string, @Query('months') monthsQ?: string, @Query('page') pageQ?: string, @Query('limit') limitQ?: string, @Query('kind') kind?: string) {
-    const r = await findResource(this.pool, id); if (!r) throw notFound('Resource not found');
+  async history(@Param('id') id: string, @CurrentUser() user: Principal, @Query('months') monthsQ?: string, @Query('page') pageQ?: string, @Query('limit') limitQ?: string, @Query('kind') kind?: string) {
+    const r = await findResource(this.pool, id, user.scope); if (!r) throw notFound('Resource not found');
     const jobs = await jobsOf(this.pool, r.id); const outages = await resourceOutagesOf(this.pool, r.id);
     const report = historyReport(r, jobs, outages, clampMonths(monthsQ, 12));
     const page = Math.max(1, Number.parseInt(String(pageQ ?? ''), 10) || 1);
@@ -156,8 +171,8 @@ export class OpsController {
   }
 
   @RequirePerm('portcalls.view') @Get('resources/:id')
-  async resource(@Param('id') id: string, @Query('months') monthsQ?: string) {
-    const r = await findResource(this.pool, id); if (!r) throw notFound('Resource not found');
+  async resource(@Param('id') id: string, @CurrentUser() user: Principal, @Query('months') monthsQ?: string) {
+    const r = await findResource(this.pool, id, user.scope); if (!r) throw notFound('Resource not found');
     const months = clampMonths(monthsQ, 12); const { from, to } = monthWindow(months);
     const jobs = await jobsOf(this.pool, r.id); const outages = await resourceOutagesOf(this.pool, r.id);
     return { ...core(r), service: serviceDigest(jobs, outages, { from, to }), outages };
@@ -176,14 +191,14 @@ export class OpsController {
 
   /** The duty officer's board: mark a craft tasked, back on station, under maintenance or off duty. */
   @RequirePerm('portcalls.edit', 'masters.manage') @Put('resources/:id')
-  async setStatus(@Param('id') id: string, @Body(zod(statusSchema)) b: z.infer<typeof statusSchema>) {
+  async setStatus(@Param('id') id: string, @Body(zod(statusSchema)) b: z.infer<typeof statusSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await findResource(c, id); if (!before) throw notFound('Resource not found');
+      const before = await findResource(c, id, user.scope); if (!before) throw notFound('Resource not found');
       const status = b.status ?? before.status;
       const cols: Record<string, unknown> = { status, current_task: status === 'TASKED' ? (b.currentTask ?? before.current_task) : '', remarks: b.remarks, master: b.master, contact: b.contact, spec: b.spec, name: b.name };
       const keys = Object.keys(cols).filter((k) => cols[k] !== undefined);
       await c.query(`UPDATE resources SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [before.id, ...keys.map((k) => cols[k])]);
-      const r = (await findResource(c, before.id))!;
+      const r = (await findResource(c, before.id, NATIONAL_SCOPE))!;
       await this.audit.record(c, { action: 'UPDATE', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${r.name}`, before: core(before), after: core(r) });
       await publishResource(c, this.env, r, { event: EVENTS.ports.resourceChanged, data: { change: 'STATUS', from: before.status, to: r.status } });
       const { from, to } = monthWindow(12);
@@ -192,9 +207,9 @@ export class OpsController {
   }
 
   @RequirePerm('masters.manage') @Delete('resources/:id')
-  async removeResource(@Param('id') id: string) {
+  async removeResource(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const r = await findResource(c, id); if (!r) throw notFound('Resource not found');
+      const r = await findResource(c, id, user.scope); if (!r) throw notFound('Resource not found');
       if (r.status === 'TASKED') throw badRequest('This craft is on a job — stand her down first');
       await c.query('DELETE FROM resources WHERE id = $1', [r.id]);
       await this.audit.record(c, { action: 'DELETE', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${r.name}`, before: core(r) });
@@ -207,7 +222,7 @@ export class OpsController {
   @RequirePerm('portcalls.edit') @Post('resources/:id/jobs')
   async assign(@Param('id') id: string, @Body(zod(jobSchema)) b: z.infer<typeof jobSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const r = await findResource(c, id); if (!r) throw notFound('Resource not found');
+      const r = await findResource(c, id, user.scope); if (!r) throw notFound('Resource not found');
       if (r.status === 'MAINTENANCE' || r.status === 'OFF_DUTY') throw conflict(`${r.code} is ${r.status.toLowerCase().replace('_', ' ')} and cannot be tasked`);
       const at = b.at ? new Date(b.at) : new Date();
       if (Number.isNaN(at.getTime())) throw badRequest('A job needs a valid time');
@@ -223,7 +238,7 @@ export class OpsController {
         [r.id, at, endedAt, b.kind, vcn, b.portCallId ?? null, vesselName, berth, hours, b.remarks ?? ''])).rows[0];
       const task = b.task ?? (vcn ? `${vcn} — ${b.kind.toLowerCase().replace(/_/g, ' ')}` : b.kind.toLowerCase().replace(/_/g, ' '));
       if (!endedAt) await c.query("UPDATE resources SET status = 'TASKED', current_task = $2, updated_at = now() WHERE id = $1", [r.id, task]);
-      const fresh = (await findResource(c, r.id))!;
+      const fresh = (await findResource(c, r.id, NATIONAL_SCOPE))!;
       await this.audit.record(c, { action: 'JOB_ASSIGN', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${b.kind}${vcn ? ` (${vcn})` : ''}`, after: { jobId: job.id, kind: b.kind, at: at.toISOString(), vcn, hours }, actor: user ? undefined : { id: 'system', name: 'system', kind: 'system' } });
       await publishResource(c, this.env, fresh, { event: EVENTS.ports.resourceChanged, data: { change: 'JOB_ASSIGNED', jobId: job.id, kind: b.kind, vcn, portCallId: b.portCallId ?? null, at: at.toISOString(), hours } });
       const { from, to } = monthWindow(12);
@@ -233,9 +248,9 @@ export class OpsController {
 
   /** Close an open job: the craft goes back on station and the hours join her record. */
   @RequirePerm('portcalls.edit') @Put('resources/:id/jobs/:jobId')
-  async closeJob(@Param('id') id: string, @Param('jobId') jobId: string, @Body(zod(z.object({ endedAt: z.string().optional(), hours: z.coerce.number().min(0).max(240).optional(), remarks: text(1000).optional() }))) b: { endedAt?: string; hours?: number; remarks?: string }) {
+  async closeJob(@Param('id') id: string, @Param('jobId') jobId: string, @Body(zod(z.object({ endedAt: z.string().optional(), hours: z.coerce.number().min(0).max(240).optional(), remarks: text(1000).optional() }))) b: { endedAt?: string; hours?: number; remarks?: string }, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const r = await findResource(c, id); if (!r) throw notFound('Resource not found');
+      const r = await findResource(c, id, user.scope); if (!r) throw notFound('Resource not found');
       const job = (await c.query<JobRow>('SELECT * FROM resource_jobs WHERE id = $1 AND resource_id = $2', [jobId, r.id])).rows[0];
       if (!job) throw notFound('Job not found');
       const endedAt = b.endedAt ? new Date(b.endedAt) : new Date();
@@ -243,7 +258,7 @@ export class OpsController {
       await c.query('UPDATE resource_jobs SET ended_at = $2, hours = $3, remarks = COALESCE($4, remarks) WHERE id = $1', [jobId, endedAt, hours, b.remarks ?? null]);
       const stillOpen = await c.query<{ n: string }>('SELECT count(*) AS n FROM resource_jobs WHERE resource_id = $1 AND ended_at IS NULL', [r.id]);
       if (Number(stillOpen.rows[0].n) === 0 && r.status === 'TASKED') await c.query("UPDATE resources SET status = 'AVAILABLE', current_task = '', updated_at = now() WHERE id = $1", [r.id]);
-      const fresh = (await findResource(c, r.id))!;
+      const fresh = (await findResource(c, r.id, NATIONAL_SCOPE))!;
       await this.audit.record(c, { action: 'JOB_CLOSE', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${job.kind}`, before: { jobId, endedAt: null }, after: { jobId, endedAt: endedAt.toISOString(), hours } });
       await publishResource(c, this.env, fresh, { event: EVENTS.ports.resourceChanged, data: { change: 'JOB_CLOSED', jobId, hours } });
       const { from, to } = monthWindow(12);
@@ -253,17 +268,17 @@ export class OpsController {
 
   /** A craft off the water: docking, survey or leave. */
   @RequirePerm('masters.manage', 'portcalls.edit') @Post('resources/:id/outages')
-  async addResourceOutage(@Param('id') id: string, @Body(zod(resourceOutageSchema)) b: z.infer<typeof resourceOutageSchema>) {
+  async addResourceOutage(@Param('id') id: string, @Body(zod(resourceOutageSchema)) b: z.infer<typeof resourceOutageSchema>, @CurrentUser() user: Principal) {
     const from = new Date(b.from); const to = new Date(b.to);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw badRequest('An outage needs a valid from and to');
     if (to <= from) throw badRequest('An outage must end after it starts');
     return withTx(this.pool, async (c) => {
-      const r = await findResource(c, id); if (!r) throw notFound('Resource not found');
+      const r = await findResource(c, id, user.scope); if (!r) throw notFound('Resource not found');
       const clash = await c.query('SELECT id FROM resource_outages WHERE resource_id = $1 AND from_at < $3 AND to_at > $2 LIMIT 1', [r.id, from, to]);
       if (clash.rowCount) throw conflict(`${r.code} already has an out-of-service window across those dates`);
       const row = (await c.query<ResourceOutageRow>('INSERT INTO resource_outages(resource_id, from_at, to_at, days, reason) VALUES ($1,$2,$3,$4,$5) RETURNING *', [r.id, from, to, daysBetween(from, to), b.reason])).rows[0];
       if (from <= new Date() && to > new Date()) await c.query("UPDATE resources SET status = 'MAINTENANCE', current_task = '', updated_at = now() WHERE id = $1", [r.id]);
-      const fresh = (await findResource(c, r.id))!;
+      const fresh = (await findResource(c, r.id, NATIONAL_SCOPE))!;
       await this.audit.record(c, { action: 'OUTAGE_ADD', entity: 'Resource', entityId: r.id, entityLabel: `${r.code} — ${b.reason || 'out of service'}`, after: { id: row.id, from: from.toISOString(), to: to.toISOString(), reason: b.reason } });
       await publishResource(c, this.env, fresh, { event: EVENTS.ports.resourceChanged, data: { change: 'OUTAGE_ADDED', outageId: row.id, from: from.toISOString(), to: to.toISOString(), reason: b.reason } });
       return historyReport(fresh, await jobsOf(c, fresh.id), await resourceOutagesOf(c, fresh.id), 12);

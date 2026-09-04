@@ -1,6 +1,6 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
-import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
+import { NATIONAL_SCOPE, EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
 import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { findCall, publishState, updateCall } from './calls';
@@ -17,7 +17,8 @@ export async function applyDetention(c: PoolClient, deps: Deps, event: EventEnve
   const ref = d.portCallId ?? d.vcn ?? null;
   const detained = d.released ? false : d.detention !== false;
   if (!ref) return false;
-  const row = await findCall(c, String(ref)); if (!row) return false;
+  // the inspection service is not a tenant: a detention applies to the call wherever it sits
+  const row = await findCall(c, String(ref), NATIONAL_SCOPE); if (!row) return false;
   if (row.detention === detained) return false;
   const next = await updateCall(c, row.id, { detention: detained });
   await deps.audit.record(c, { action: detained ? 'DETAIN' : 'RELEASE', entity: 'PortCall', entityId: next.id, entityLabel: next.vcn, before: { detention: row.detention }, after: { detention: detained }, note: String(d.reason ?? d.note ?? ''), actor: { id: 'inspection', name: 'Inspection', kind: 'system' } });

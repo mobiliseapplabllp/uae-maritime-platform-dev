@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { EVENTS, makeEvent, type Actor, type EventEnvelope, type PortCallStatus } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { EVENTS, NATIONAL_SCOPE, makeEvent, type Actor, type EventEnvelope, type PortCallStatus, type TenancyScope } from '@maritime/contracts';
+import { enqueue, eventFromContext, nextNumber, scopeWhere, type Queryable } from '@maritime/service-kit';
+import { CALL_SCOPE } from './scope';
 import type { Env } from './env';
 import { HOUR, iso, num, round1 } from './history';
 
@@ -52,12 +53,20 @@ export function toApi(r: View) {
 }
 export type CallApi = ReturnType<typeof toApi>;
 
-export async function findCall(c: Queryable, idOrVcn: string): Promise<View | null> {
-  const r = await c.query<View>(`${VIEW_SQL} WHERE pc.id::text = $1 OR pc.vcn = $1`, [idOrVcn]); return r.rows[0] ?? null;
+/* Every handler that touches one call comes through here, which is why the tenancy filter lives here and not
+ * in each of them. It goes into the WHERE clause: a call outside the reader's scope is not found rather than
+ * found and refused, so its existence is not disclosed, and a handler added later cannot forget to check. */
+export async function findCall(c: Queryable, idOrVcn: string, scope: TenancyScope): Promise<View | null> {
+  const where = ['(pc.id::text = $1 OR pc.vcn = $1)']; const args: unknown[] = [idOrVcn];
+  scopeWhere(scope, where, args, { ...CALL_SCOPE, alias: 'pc' });
+  const r = await c.query<View>(`${VIEW_SQL} WHERE ${where.join(' AND ')}`, args);
+  return r.rows[0] ?? null;
 }
-export async function lockCall(c: Queryable, idOrVcn: string): Promise<View | null> {
-  const l = await c.query<{ id: string }>('SELECT id FROM port_calls WHERE id::text = $1 OR vcn = $1 FOR UPDATE', [idOrVcn]);
-  return l.rows[0] ? findCall(c, l.rows[0].id) : null;
+export async function lockCall(c: Queryable, idOrVcn: string, scope: TenancyScope): Promise<View | null> {
+  const where = ['(id::text = $1 OR vcn = $1)']; const args: unknown[] = [idOrVcn];
+  scopeWhere(scope, where, args, CALL_SCOPE);
+  const l = await c.query<{ id: string }>(`SELECT id FROM port_calls WHERE ${where.join(' AND ')} FOR UPDATE`, args);
+  return l.rows[0] ? findCall(c, l.rows[0].id, scope) : null;
 }
 const COLS: Record<string, string> = { status: 'status', vesselId: 'vessel_id', vesselName: 'vessel_name', vesselImo: 'vessel_imo', vesselType: 'vessel_type', vesselFlag: 'vessel_flag', agentCode: 'agent_code', agentName: 'agent_name', purpose: 'purpose', eta: 'eta', etb: 'etb', etd: 'etd', ata: 'ata', atb: 'atb', atd: 'atd', berthId: 'berth_id', berthCode: 'berth_code', prevPort: 'prev_port', nextPort: 'next_port', draftArrival: 'draft_arrival', draftDeparture: 'draft_departure', crew: 'crew', remarks: 'remarks', detention: 'detention', services: 'services', cargoOps: 'cargo_ops', sofEntries: 'sof_entries', statusHistory: 'status_history', pda: 'pda' };
 export type Patch = Partial<{ status: string; vesselId: string; vesselName: string; vesselImo: string; vesselType: string | null; vesselFlag: string | null; agentCode: string; agentName: string; purpose: string; eta: Date; etb: Date | null; etd: Date | null; ata: Date | null; atb: Date | null; atd: Date | null; berthId: string | null; berthCode: string | null; prevPort: string; nextPort: string; draftArrival: number | null; draftDeparture: number | null; crew: Crew; remarks: string; detention: boolean; services: CallService[]; cargoOps: CargoOp[]; sofEntries: SofEntry[]; statusHistory: HistoryEntry[]; pda: Pda | null }>;
@@ -67,13 +76,14 @@ export async function updateCall(c: Queryable, id: string, patch: Patch): Promis
     const vals = keys.map((k) => { const v = (patch as Record<string, unknown>)[k]; return v !== null && typeof v === 'object' && !(v instanceof Date) ? JSON.stringify(v) : v; });
     await c.query(`UPDATE port_calls SET ${keys.map((k, i) => `${COLS[k]} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [id, ...vals]);
   }
-  return (await findCall(c, id))!;
+  // the caller already proved it may see this call when it locked it; this is the write reading itself back
+  return (await findCall(c, id, NATIONAL_SCOPE))!;
 }
 export interface NewCall { vcn: string; vesselId: string; vesselName: string; vesselImo: string; vesselType?: string | null; vesselFlag?: string | null; agentCode?: string; agentName?: string; purpose?: string; status?: string; eta: Date; etb?: Date | null; etd?: Date | null; berthId?: string | null; berthCode?: string | null; prevPort?: string; nextPort?: string; draftArrival?: number | null; crew?: Crew; remarks?: string; statusHistory: HistoryEntry[] }
 export async function insertCall(c: Queryable, n: NewCall): Promise<View> {
   const r = await c.query<{ id: string }>('INSERT INTO port_calls(vcn, vessel_id, vessel_name, vessel_imo, vessel_type, vessel_flag, agent_code, agent_name, purpose, status, eta, etb, etd, berth_id, berth_code, prev_port, next_port, draft_arrival, crew, remarks, status_history) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id',
     [n.vcn, n.vesselId, n.vesselName, n.vesselImo, n.vesselType ?? null, n.vesselFlag ?? null, n.agentCode ?? '', n.agentName ?? '', n.purpose ?? '', n.status ?? 'ANNOUNCED', n.eta, n.etb ?? null, n.etd ?? null, n.berthId ?? null, n.berthCode ?? null, n.prevPort ?? '', n.nextPort ?? '', n.draftArrival ?? null, JSON.stringify(n.crew ?? { count: 0, master: '' }), n.remarks ?? '', JSON.stringify(n.statusHistory)]);
-  return (await findCall(c, r.rows[0].id))!;
+  return (await findCall(c, r.rows[0].id, NATIONAL_SCOPE))!;
 }
 /** `${prefix}-YYYY-NNNNN`: one atomic series per calendar year of the ETA. */
 export async function nextVcn(c: Queryable, env: Env, eta: Date): Promise<string> {

@@ -2,10 +2,11 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import { BERTH_STATUS, BERTH_TYPES, OUTAGE_KINDS, findBerth, outageReport, outagesOf, publishBerth, publishBerthDeleted, toApi, type BerthRow } from './berths';
 import { ACTIVE_STATUSES } from './calls';
+import { BERTH_SCOPE, CALL_SCOPE, scopedWhere } from './scope';
 import { availability, clampMonths, daysBetween, iso, monthWindow, num, overlapDays, round1, DAY } from './history';
 
 /* The berth estate and its downtime record. Allocation checks run against the limits kept here, so a berth carrying
@@ -28,12 +29,13 @@ export class BerthsController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
 
   @RequirePerm('masters.view', 'portcalls.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'code', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
     eq('terminal', query.terminal); eq('berth_type', query.berthType); eq('status', query.status);
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(code ILIKE $${args.length} OR name ILIKE $${args.length} OR terminal ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, BERTH_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM berths ${w}`, args);
     const rows = await this.pool.query<BerthRow>(`SELECT * FROM berths ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, code LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -45,10 +47,11 @@ export class BerthsController {
 
   /** Estate-wide downtime — which berths, which causes, how availability trends. Declared before `:id` so the word is not read as an id. */
   @RequirePerm('masters.view', 'portcalls.view') @Get('downtime')
-  async downtime(@Query('months') monthsQ?: string) {
+  async downtime(@CurrentUser() user: Principal, @Query('months') monthsQ?: string) {
     const months = clampMonths(monthsQ, 12);
     const { bounds, from, to } = monthWindow(months);
-    const rows = (await this.pool.query<BerthRow>('SELECT * FROM berths ORDER BY code')).rows;
+    const sc = scopedWhere(user.scope, BERTH_SCOPE);
+    const rows = (await this.pool.query<BerthRow>(`SELECT * FROM berths ${sc.sql} ORDER BY code`, sc.args)).rows;
     const outs = (await this.pool.query<{ berth_id: string; from_at: Date; to_at: Date; days: string; kind: string; reason: string }>('SELECT berth_id, from_at, to_at, days, kind, reason FROM berth_outages')).rows;
     const byBerth = new Map<string, { from: Date; to: Date; days: number; kind: string; reason: string }[]>();
     for (const o of outs) { const l = byBerth.get(o.berth_id) ?? []; l.push({ from: o.from_at, to: o.to_at, days: Number(o.days) || 0, kind: o.kind, reason: o.reason }); byBerth.set(o.berth_id, l); }
@@ -92,10 +95,13 @@ export class BerthsController {
 
   /** The berth board: every berth with who holds it now, who is next and whether it is out of service. */
   @RequirePerm('masters.view', 'portcalls.view') @Get('board')
-  async board() {
-    const berths = (await this.pool.query<BerthRow>('SELECT * FROM berths ORDER BY terminal, code')).rows;
+  async board(@CurrentUser() user: Principal) {
+    const sc = scopedWhere(user.scope, BERTH_SCOPE);
+    const berths = (await this.pool.query<BerthRow>(`SELECT * FROM berths ${sc.sql} ORDER BY terminal, code`, sc.args)).rows;
+    const callWhere = ['pc.status = ANY($1)']; const callArgs: unknown[] = [['ANNOUNCED', ...ACTIVE_STATUSES]];
+    scopeWhere(user.scope, callWhere, callArgs, { ...CALL_SCOPE, alias: 'pc' });
     const calls = (await this.pool.query<{ id: string; vcn: string; berth_id: string | null; status: string; vessel_id: string; vessel_name: string; eta: Date; etb: Date | null; etd: Date | null; ata: Date | null; atb: Date | null; loa: string | null; v_type: string | null }>(
-      `SELECT pc.id, pc.vcn, pc.berth_id, pc.status, pc.vessel_id, pc.vessel_name, pc.eta, pc.etb, pc.etd, pc.ata, pc.atb, v.loa, v.type AS v_type FROM port_calls pc LEFT JOIN vessels v ON v.id = pc.vessel_id WHERE pc.status = ANY($1) ORDER BY pc.eta`, [['ANNOUNCED', ...ACTIVE_STATUSES]])).rows;
+      `SELECT pc.id, pc.vcn, pc.berth_id, pc.status, pc.vessel_id, pc.vessel_name, pc.eta, pc.etb, pc.etd, pc.ata, pc.atb, v.loa, v.type AS v_type FROM port_calls pc LEFT JOIN vessels v ON v.id = pc.vessel_id WHERE ${callWhere.join(' AND ')} ORDER BY pc.eta`, callArgs)).rows;
     const now = new Date();
     const live = (await this.pool.query<{ berth_id: string; from_at: Date; to_at: Date; kind: string; reason: string }>('SELECT berth_id, from_at, to_at, kind, reason FROM berth_outages WHERE to_at > now() ORDER BY from_at')).rows;
     return {
@@ -116,14 +122,14 @@ export class BerthsController {
   }
 
   @RequirePerm('masters.view', 'portcalls.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const b = await findBerth(this.pool, id); if (!b) throw notFound('Berth not found');
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const b = await findBerth(this.pool, id, user.scope); if (!b) throw notFound('Berth not found');
     return toApi(b, await outagesOf(this.pool, b.id));
   }
 
   @RequirePerm('masters.view', 'portcalls.view') @Get(':id/outages')
-  async outages(@Param('id') id: string, @Query('months') monthsQ?: string) {
-    const b = await findBerth(this.pool, id); if (!b) throw notFound('Berth not found');
+  async outages(@Param('id') id: string, @CurrentUser() user: Principal, @Query('months') monthsQ?: string) {
+    const b = await findBerth(this.pool, id, user.scope); if (!b) throw notFound('Berth not found');
     return outageReport(b, await outagesOf(this.pool, b.id), clampMonths(monthsQ, 12));
   }
 
@@ -140,13 +146,13 @@ export class BerthsController {
   }
 
   @RequirePerm('masters.manage') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>) {
+  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await findBerth(c, id); if (!before) throw notFound('Berth not found');
+      const before = await findBerth(c, id, user.scope); if (!before) throw notFound('Berth not found');
       const cols: Record<string, unknown> = { code: b.code, name: b.name, terminal: b.terminal, berth_type: b.berthType, loa_max: b.loaMax, draft_max: b.draftMax, status: b.status, remarks: b.remarks };
       const keys = Object.keys(cols).filter((k) => cols[k] !== undefined);
       if (keys.length) await c.query(`UPDATE berths SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [before.id, ...keys.map((k) => cols[k])]);
-      const row = (await findBerth(c, before.id))!;
+      const row = (await findBerth(c, before.id, user.scope))!;
       await this.audit.record(c, { action: 'UPDATE', entity: 'Berth', entityId: row.id, entityLabel: row.code, before: toApi(before), after: toApi(row) });
       await publishBerth(c, this.env, row, { event: EVENTS.ports.berthChanged, data: { change: 'UPDATED' } });
       return toApi(row, await outagesOf(c, row.id));
@@ -154,9 +160,9 @@ export class BerthsController {
   }
 
   @RequirePerm('masters.manage') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await findBerth(c, id); if (!row) throw notFound('Berth not found');
+      const row = await findBerth(c, id, user.scope); if (!row) throw notFound('Berth not found');
       const inUse = await c.query<{ n: string }>('SELECT count(*) AS n FROM port_calls WHERE berth_id = $1 AND status = ANY($2)', [row.id, ACTIVE_STATUSES]);
       if (Number(inUse.rows[0].n) > 0) throw badRequest('This berth has active or planned port calls — free it first');
       await c.query('DELETE FROM berths WHERE id = $1', [row.id]);
@@ -173,7 +179,7 @@ export class BerthsController {
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw badRequest('An outage needs a valid from and to');
     if (to <= from) throw badRequest('An outage must end after it starts');
     return withTx(this.pool, async (c) => {
-      const berth = await findBerth(c, id); if (!berth) throw notFound('Berth not found');
+      const berth = await findBerth(c, id, user.scope); if (!berth) throw notFound('Berth not found');
       const clash = await c.query<{ from_at: Date; to_at: Date }>('SELECT from_at, to_at FROM berth_outages WHERE berth_id = $1 AND from_at < $3 AND to_at > $2 LIMIT 1', [berth.id, from, to]);
       if (clash.rowCount) throw conflict(`Berth ${berth.code} already has an outage recorded across that window`);
       const r = await c.query<{ id: string }>('INSERT INTO berth_outages(berth_id, from_at, to_at, days, kind, reason, recorded_by) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id', [berth.id, from, to, daysBetween(from, to), b.kind, b.reason, b.by ?? user?.name ?? '']);
@@ -184,9 +190,9 @@ export class BerthsController {
   }
 
   @RequirePerm('masters.manage') @Delete(':id/outages/:outageId')
-  async removeOutage(@Param('id') id: string, @Param('outageId') outageId: string) {
+  async removeOutage(@Param('id') id: string, @Param('outageId') outageId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const berth = await findBerth(c, id); if (!berth) throw notFound('Berth not found');
+      const berth = await findBerth(c, id, user.scope); if (!berth) throw notFound('Berth not found');
       const r = await c.query<{ id: string; kind: string; from_at: Date; to_at: Date }>('DELETE FROM berth_outages WHERE id = $1 AND berth_id = $2 RETURNING id, kind, from_at, to_at', [outageId, berth.id]);
       if (!r.rowCount) throw notFound('Outage not found');
       await this.audit.record(c, { action: 'OUTAGE_DELETE', entity: 'Berth', entityId: berth.id, entityLabel: `${berth.code} — ${r.rows[0].kind}`, before: { id: r.rows[0].id, from: iso(r.rows[0].from_at), to: iso(r.rows[0].to_at), kind: r.rows[0].kind } });

@@ -160,11 +160,19 @@ describe('revenue — the rate card', () => {
 
 describe('revenue — the invoice book', () => {
   it('seeds the book and pages, filters, searches and sorts it', async () => {
+    /* The seeded world runs up to today, so the book grows by a few invoices every day it is not reseeded.
+     * These assertions are on its shape — that the statuses partition the whole book, that collection is
+     * what the ledger says — rather than on a count that was true on the day it was written. */
     const all = await g('/invoices?limit=1');
-    expect(all.body.meta.total).toBe(827);
+    const total = all.body.meta.total;
+    expect(total).toBeGreaterThan(800);
     const paid = await g('/invoices?status=PAID&limit=1');
-    expect(paid.body.meta.total).toBe(794);
-    expect((await g('/invoices?status=CANCELLED&limit=5')).body.meta.total).toBe(2);
+    const cancelled = await g('/invoices?status=CANCELLED&limit=5');
+    const issued = await g('/invoices?status=ISSUED&limit=1');
+    const draft = await g('/invoices?status=DRAFT&limit=1');
+    expect(paid.body.meta.total + cancelled.body.meta.total + issued.body.meta.total + draft.body.meta.total).toBe(total);
+    expect(paid.body.meta.total / total).toBeGreaterThan(0.9);
+    expect(cancelled.body.meta.total).toBeGreaterThan(0);
     const page2 = await g('/invoices?limit=5&page=2&sort=number');
     expect(page2.body.data).toHaveLength(5); expect(page2.body.meta.page).toBe(2);
     const one = paid.body.data[0];
@@ -175,9 +183,9 @@ describe('revenue — the invoice book', () => {
     expect(byCall.body.meta.total).toBe(1);
     const window = await g('/invoices?from=2024-01-01&to=2024-12-31&limit=1');
     expect(window.body.meta.total).toBeGreaterThan(0);
-    expect(window.body.meta.total).toBeLessThan(827);
+    expect(window.body.meta.total).toBeLessThan(total);
     const summary = await g('/invoices/summary');
-    expect(summary.body.data.byStatus.PAID.count).toBe(794);
+    expect(summary.body.data.byStatus.PAID.count).toBe(paid.body.meta.total);
     expect(summary.body.data.collectionPct).toBeGreaterThan(80);
     expect(summary.body.data.currency).toBe('AED');
   });

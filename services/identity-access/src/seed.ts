@@ -20,10 +20,11 @@ export async function seedIdentity(databaseUrl: string, profile?: string) {
     }
     for (const u of world.users) {
       await c.query(
-        `INSERT INTO users(id, name, email, password_hash, role_id, designation, department, phone, active, last_login_at)
-         VALUES ($1, $2, lower($3), $4, $5, $6, $7, $8, $9, $10)
-         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role_id = EXCLUDED.role_id, designation = EXCLUDED.designation, department = EXCLUDED.department, phone = EXCLUDED.phone, active = EXCLUDED.active, updated_at = now()`,
-        [u.id, u.name, u.email, hash, roleIds.get(u.roleName), u.designation, u.department, u.phone, u.active, u.lastLoginAt]);
+        `INSERT INTO users(id, name, email, password_hash, role_id, designation, department, phone, active, scope, last_login_at)
+         VALUES ($1, $2, lower($3), $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role_id = EXCLUDED.role_id, designation = EXCLUDED.designation, department = EXCLUDED.department, phone = EXCLUDED.phone, active = EXCLUDED.active, scope = EXCLUDED.scope, updated_at = now()`,
+        [u.id, u.name, u.email, hash, roleIds.get(u.roleName), u.designation, u.department, u.phone, u.active,
+         JSON.stringify(u.scope ?? { level: 'NATIONAL' }), u.lastLoginAt]);
     }
     return { roles: roleIds.size, users: world.users.length, profile: world.profile };
   });

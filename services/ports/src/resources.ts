@@ -1,5 +1,6 @@
-import { EVENTS, RESOURCE_TYPES, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { EVENTS, RESOURCE_TYPES, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
+import { enqueue, eventFromContext, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { RESOURCE_SCOPE } from './scope';
 import type { Env } from './env';
 import { DAY, availability, iso, monthKey, monthWindow, round1, type MonthBucket } from './history';
 
@@ -20,8 +21,11 @@ export const outageApi = (o: ResourceOutageRow): OutageApi => ({ id: o.id, from:
 export const core = (r: ResourceRow) => ({ id: r.id, code: r.code, name: r.name, type: r.type, spec: r.spec, status: r.status, currentTask: r.current_task, master: r.master, userId: r.user_id, contact: r.contact, remarks: r.remarks });
 export const toApi = (r: ResourceRow, jobs: JobApi[] = [], outages: OutageApi[] = []) => ({ ...core(r), jobs, outages, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at) });
 
-export async function findResource(c: Queryable, ref: string): Promise<ResourceRow | null> {
-  const r = await c.query<ResourceRow>('SELECT * FROM resources WHERE id::text = $1 OR code = $1', [ref]);
+/* The choke point for one craft, so the tenancy filter is here and not in the eight handlers that read it. */
+export async function findResource(c: Queryable, ref: string, scope: TenancyScope): Promise<ResourceRow | null> {
+  const where = ['(id::text = $1 OR code = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, RESOURCE_SCOPE);
+  const r = await c.query<ResourceRow>(`SELECT * FROM resources WHERE ${where.join(' AND ')}`, args);
   return r.rows[0] ?? null;
 }
 export async function jobsOf(c: Queryable, resourceId: string): Promise<JobApi[]> {

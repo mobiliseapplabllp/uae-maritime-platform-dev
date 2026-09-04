@@ -1,5 +1,6 @@
-import { EVENTS, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { EVENTS, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
+import { enqueue, eventFromContext, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { BERTH_SCOPE } from './scope';
 import type { Env } from './env';
 import { availability, iso, monthWindow, num, overlapDays, round1, type MonthBucket } from './history';
 
@@ -22,8 +23,12 @@ export const toApi = (b: BerthRow, outages: OutageApi[] = []) => ({
 });
 export type BerthApi = ReturnType<typeof toApi>;
 
-export async function findBerth(c: Queryable, ref: string): Promise<BerthRow | null> {
-  const r = await c.query<BerthRow>('SELECT * FROM berths WHERE id::text = $1 OR code = $1', [ref]);
+/* Every handler that touches one berth comes through here, so the tenancy filter lives here rather than in
+ * each of them: a berth in another port is not found rather than found and refused. */
+export async function findBerth(c: Queryable, ref: string, scope: TenancyScope): Promise<BerthRow | null> {
+  const where = ['(id::text = $1 OR code = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, BERTH_SCOPE);
+  const r = await c.query<BerthRow>(`SELECT * FROM berths WHERE ${where.join(' AND ')}`, args);
   return r.rows[0] ?? null;
 }
 export async function outagesOf(c: Queryable, berthId: string): Promise<OutageApi[]> {

@@ -4,6 +4,7 @@ export * from './context';
 export * from './auth/jwt';
 export * from './auth/principal';
 export * from './auth/guard';
+export * from './scope';
 export * from './http/envelope';
 export * from './http/pagination';
 export * from './http/validation';
