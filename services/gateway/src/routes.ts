@@ -78,6 +78,7 @@ export const SERVICES: UpstreamService[] = [
   { name: 'revenue', envKey: 'REVENUE_URL', port: 5428 },
   { name: 'ai-assistant', envKey: 'AI_ASSISTANT_URL', port: 5501 },
   { name: 'ai-agents', envKey: 'AI_AGENTS_URL', port: 5502 },
+  { name: 'ai-platform', envKey: 'AI_PLATFORM_URL', port: 5503 },
 ];
 
 /** Public prefix → service. Order is irrelevant; resolution sorts longest prefix first. */
@@ -140,6 +141,7 @@ export const ROUTES: RoutePrefix[] = [
   // AI layer (every agent action goes through ai-tool-gateway behind these services)
   { prefix: '/api/ai', service: 'ai-assistant' },
   { prefix: '/api/agents', service: 'ai-agents' },
+  { prefix: '/api/ai-platform', service: 'ai-platform' },
 ];
 
 /** Upstream URL for a service: the env override when set, otherwise the native default. */

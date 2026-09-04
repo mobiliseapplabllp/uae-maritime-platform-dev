@@ -125,9 +125,9 @@ services:
       PORTS_URL: http://ports:5426
       FACILITIES_URL: http://facilities:5427
       REVENUE_URL: http://revenue:5428
+      AI_PLATFORM_URL: http://ai-platform:5503
       AI_ASSISTANT_URL: http://ai-assistant:5501
       AI_AGENTS_URL: http://ai-agents:5502
-      INSIGHTS_URL: http://insights-api:5503
   - { name: identity-access, tier: platform, port: 5401, image: maritime/identity-access, env: { KEYCLOAK_CLIENT_ID: web } }
   - { name: mdm, tier: platform, port: 5402, image: maritime/mdm }
   - { name: audit-ledger, tier: platform, port: 5403, image: maritime/audit-ledger }
@@ -149,4 +149,4 @@ services:
   - { name: revenue, tier: domain, port: 5428, image: maritime/revenue }
   - { name: ai-assistant, tier: ai, port: 5501, image: maritime/ai-assistant, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
   - { name: ai-agents, tier: ai, port: 5502, image: maritime/ai-agents, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
-  - { name: insights-api, tier: ai, port: 5503, image: maritime/insights-api }
+  - { name: ai-platform, tier: ai, port: 5503, image: maritime/ai-platform, env: { SERVING_MODE: stub, ALLOWED_PROD_RESIDENCY: AE } }

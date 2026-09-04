@@ -104,6 +104,10 @@ export const EVENTS = {
     agentConfigured: 'ai.agent.configured', agentSuspended: 'ai.agent.suspended', agentRan: 'ai.agent.ran',
     // added by the assistant: an answer given from the platform's own records, with the records it cited
     answered: 'ai.assistant.answered', conversationStarted: 'ai.assistant.conversation-started',
+    // added by the model platform: the registry lifecycle, and the two things a model can do wrong quietly —
+    // answer slower than the platform committed to, and start being asked about a different world than it was fitted to
+    modelRegistered: 'ai.model.registered', modelApproved: 'ai.model.approved', modelDeployed: 'ai.model.deployed',
+    modelRetired: 'ai.model.retired', modelDrifted: 'ai.model.drifted', inferenceBreached: 'ai.inference.breached',
   },
   /** Read-model snapshots: every domain service publishes the API-shaped record after each change so reporting and search stay current. data = { kind, entity } / { kind, id }. */
   readModel: { upserted: 'readmodel.upserted', deleted: 'readmodel.deleted' },

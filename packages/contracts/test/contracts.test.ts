@@ -18,7 +18,7 @@ describe('permission catalogue', () => {
     expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(10);
     for (const r of ROLE_CATALOGUE) for (const p of r.permissions) expect(isKnownPermission(p), `${r.name}: ${p}`).toBe(true);
     const counts = Object.fromEntries(ROLE_CATALOGUE.map((r) => [r.code, r.permissions.length]));
-    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 16 });
+    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 17 });
   });
 
   it('gives the two external roles disjoint reach', () => {

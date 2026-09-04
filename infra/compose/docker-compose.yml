@@ -307,15 +307,15 @@ services:
     image: maritime/ai-agents:${IMAGE_TAG:-dev}
     environment: { <<: *common-env, SERVICE_NAME: ai-agents, PORT: "5502", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ai", AI_TOOL_GATEWAY_URL: http://gateway:5200 }
     ports: ["5502:5502"]
-  insights-api:
+  # The model platform. `stub` serving needs no model server, so the whole registry, drift and pipeline
+  # surface is exercisable from a laptop; a deployment sets SERVING_MODE=live and an endpoint.
+  ai-platform:
     <<: *service
     profiles: [ai]
-    build: { context: ../.., dockerfile: ai/insights-api/Dockerfile }
-    image: maritime/insights-api:${IMAGE_TAG:-dev}
-    environment: { <<: *common-env, SERVICE_NAME: insights-api, PORT: "5503", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_ai" }
+    build: { <<: *build }
+    image: maritime/ai-platform:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ai-platform, PORT: "5503", DATABASE_URL: "${POSTGRES_PREFIX:-postgres://maritime:maritime@postgres:5432}/maritime_ai_platform", SERVING_MODE: "${SERVING_MODE:-stub}", ALLOWED_PROD_RESIDENCY: "${ALLOWED_PROD_RESIDENCY:-AE}" }
     ports: ["5503:5503"]
-
-  # ---- edge --------------------------------------------------------------------------------------------
   gateway:
     build: { <<: *build, args: { SERVICE: services/gateway, PORT: "5200" } }
     image: maritime/gateway:${IMAGE_TAG:-dev}
@@ -347,7 +347,6 @@ services:
       REVENUE_URL: http://revenue:5428
       AI_ASSISTANT_URL: http://ai-assistant:5501
       AI_AGENTS_URL: http://ai-agents:5502
-      INSIGHTS_URL: http://insights-api:5503
     ports: ["5200:5200"]
     depends_on:
       identity-access:
