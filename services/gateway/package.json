@@ -22,6 +22,7 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@maritime/contracts": "workspace:*",
     "@swc/cli": "0.8.1",
     "@swc/core": "1.16.1",
     "typescript": "5.9.3",

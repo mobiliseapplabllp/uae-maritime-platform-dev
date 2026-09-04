@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { buildGateway } from '../src/app';
 import { type Env, loadEnv } from '../src/env';
+import { UPSTREAM_SERVICES } from '@maritime/contracts';
 import { ROUTES, SERVICES, matchRoute, resolveRoutes } from '../src/routes';
 
 interface Seen { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }
@@ -73,6 +74,14 @@ describe('route table', () => {
       .map((d) => d.name)
       .sort();
     expect(SERVICES.map((s) => s.name).sort()).toEqual(onDisk);
+  });
+  /* src/routes.ts is deliberately import-free: the Kong and nginx renderers load it directly with
+   * Node's type stripping, so it cannot pull in @maritime/contracts. That leaves two hand-kept
+   * copies of the registry, which is exactly how the table drifted before — so the copies are
+   * pinned to each other here instead, where a test-only import costs the renderers nothing. */
+  it('agrees with the shared registry in @maritime/contracts', () => {
+    const shape = (x: { name: string; envKey: string; port: number }) => `${x.name} ${x.envKey} ${x.port}`;
+    expect(SERVICES.map(shape).sort()).toEqual(UPSTREAM_SERVICES.map(shape).sort());
   });
   it('gives every service a distinct port and env key', () => {
     expect(new Set(SERVICES.map((s) => s.port)).size).toBe(SERVICES.length);

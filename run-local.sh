@@ -162,15 +162,28 @@ case "${1:-up}" in
     bash infra/local/runtime.sh stop 2>&1 | sed 's/^/   /'
     ok "stopped" ;;
   update)
-    say "Fetching the latest work"
-    git remote get-url origin >/dev/null 2>&1 || die "No git remote is configured. Add one first:
+    # MARITIME_UPDATE_REEXEC marks the second half of a self-update: the pull already happened in the
+    # process that exec'd us, so skip straight to building.
+    if [ "${MARITIME_UPDATE_REEXEC:-0}" != "1" ]; then
+      say "Fetching the latest work"
+      git remote get-url origin >/dev/null 2>&1 || die "No git remote is configured. Add one first:
      git remote add origin https://github.com/<owner>/<repo>.git"
-    BEFORE=$(git rev-parse HEAD)
-    git pull --ff-only origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | sed 's/^/   /' || die "pull failed — resolve it, then run ./run-local.sh update again"
-    AFTER=$(git rev-parse HEAD)
-    if [ "$BEFORE" = "$AFTER" ]; then ok "already up to date"; else
-      ok "$(git log --oneline "$BEFORE..$AFTER" | wc -l | tr -d ' ') new commit(s)"
-      git log --oneline "$BEFORE..$AFTER" | head -10 | sed 's/^/     /'
+      BEFORE=$(git rev-parse HEAD)
+      SELF_BEFORE=$(cksum "$ROOT/run-local.sh" | awk '{print $1, $2}')
+      git pull --ff-only origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | sed 's/^/   /' || die "pull failed — resolve it, then run ./run-local.sh update again"
+      AFTER=$(git rev-parse HEAD)
+      if [ "$BEFORE" = "$AFTER" ]; then ok "already up to date"; else
+        ok "$(git log --oneline "$BEFORE..$AFTER" | wc -l | tr -d ' ') new commit(s)"
+        git log --oneline "$BEFORE..$AFTER" | head -10 | sed 's/^/     /'
+      fi
+      # Bash reads a script incrementally, by byte offset. If the pull rewrote this file, everything
+      # after this point would be read out of the new file at the offset reached in the old one — the
+      # remaining steps become a splice of two versions, and steps added by the update are skipped
+      # entirely. Hand over to the new file instead, so one coherent version runs the rest.
+      if [ "$SELF_BEFORE" != "$(cksum "$ROOT/run-local.sh" | awk '{print $1, $2}')" ]; then
+        say "run-local.sh changed in that pull — restarting it so the rest runs from one version"
+        MARITIME_UPDATE_REEXEC=1 exec bash "$ROOT/run-local.sh" update
+      fi
     fi
     install_and_build
     # A pull can bring a service that did not exist last time, and a service with no database fails

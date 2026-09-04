@@ -581,6 +581,9 @@ importers:
         specifier: 3.25.76
         version: 3.25.76
     devDependencies:
+      '@maritime/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@swc/cli':
         specifier: 0.8.1
         version: 0.8.1(@swc/core@1.16.1)
