@@ -1,7 +1,8 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { type PageQuery } from '@maritime/contracts';
-import { KIT_ENV, KIT_POOL, RequirePerm, escapeLike, paged, parsePage } from '@maritime/service-kit';
+import { CurrentUser, type Principal, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, paged, parsePage, scopeWhere } from '@maritime/service-kit';
+import { SUBJECT_SCOPE } from './scope';
 import type { Env } from './env';
 import {
   AUDIT_RESULTS, COMPANY_CATEGORIES, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, FACILITY_TYPES, ISPS_STATUS,
@@ -72,7 +73,7 @@ export class DirectoryController {
   }
 
   @RequirePerm('facilities.view') @Get('obligations')
-  async obligations(@Query() query: PageQuery & { status?: string; kind?: string; subjectKind?: string; overdue?: string }) {
+  async obligations(@Query() query: PageQuery & { status?: string; kind?: string; subjectKind?: string; overdue?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'dueAt', sortable: ['dueAt', 'raisedAt', 'subjectName', 'kind', 'status'], maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const add = (sql: (i: number) => string, value: unknown) => { args.push(value); where.push(sql(args.length)); };
@@ -81,6 +82,7 @@ export class DirectoryController {
     if (query.subjectKind) add((i) => `subject_kind = $${i}`, query.subjectKind);
     if (query.overdue === 'true') where.push(`status = 'OPEN' AND due_at IS NOT NULL AND due_at < now()`);
     if (p.q) add((i) => `(title ILIKE $${i} OR detail ILIKE $${i} OR subject_name ILIKE $${i} OR source_ref ILIKE $${i})`, `%${escapeLike(p.q)}%`);
+    scopeWhere(user.scope, where, args, SUBJECT_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const col: Record<string, string> = { dueAt: 'due_at', raisedAt: 'raised_at', subjectName: 'subject_name', kind: 'kind', status: 'status' };
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM obligations ${w}`, args);
@@ -89,7 +91,7 @@ export class DirectoryController {
   }
 
   @RequirePerm('facilities.view') @Get('audits')
-  async audits(@Query() query: PageQuery & { result?: string; subjectKind?: string; subjectId?: string; from?: string; to?: string }) {
+  async audits(@Query() query: PageQuery & { result?: string; subjectKind?: string; subjectId?: string; from?: string; to?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-date', sortable: ['date', 'number', 'subjectName', 'result'], maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const add = (sql: (i: number) => string, value: unknown) => { args.push(value); where.push(sql(args.length)); };
@@ -99,6 +101,7 @@ export class DirectoryController {
     if (query.from) add((i) => `audited_on >= $${i}`, new Date(query.from));
     if (query.to) add((i) => `audited_on <= $${i}`, new Date(`${query.to}T23:59:59Z`));
     if (p.q) add((i) => `(number ILIKE $${i} OR subject_name ILIKE $${i} OR auditor ILIKE $${i} OR remarks ILIKE $${i} OR scope ILIKE $${i})`, `%${escapeLike(p.q)}%`);
+    scopeWhere(user.scope, where, args, SUBJECT_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const col: Record<string, string> = { date: 'audited_on', number: 'number', subjectName: 'subject_name', result: 'result' };
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM audits ${w}`, args);

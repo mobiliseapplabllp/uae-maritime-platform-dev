@@ -2,7 +2,8 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
+import { COMPANY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
   AUDIT_RESULTS, COMPANY_CATEGORIES, COMPANY_STATUS, OBLIGATION_KINDS, auditApi, canChangeStatus, companyApi, obligationApi, ratingFrom,
@@ -43,7 +44,7 @@ export class CompaniesController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
 
   @RequirePerm('facilities.view') @Get()
-  async list(@Query() query: PageQuery & { category?: string; type?: string; status?: string; rating?: string; city?: string }) {
+  async list(@Query() query: PageQuery & { category?: string; type?: string; status?: string; rating?: string; city?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'name', sortable: Object.keys(SORT), maxLimit: 1000 });
     const where: string[] = []; const args: unknown[] = [];
     const add = (sql: (i: number) => string, value: unknown) => { args.push(value); where.push(sql(args.length)); };
@@ -53,6 +54,7 @@ export class CompaniesController {
     if (query.city) add((i) => `lower(city) = lower($${i})`, query.city);
     if (query.rating) add((i) => `rating >= $${i}`, Number(query.rating));
     if (p.q) add((i) => `(name ILIKE $${i} OR code ILIKE $${i} OR coalesce(name_ar,'') ILIKE $${i} OR contact_name ILIKE $${i} OR tax_id ILIKE $${i} OR registration_no ILIKE $${i})`, `%${escapeLike(p.q)}%`);
+    scopeWhere(user.scope, where, args, COMPANY_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM companies ${w}`, args);
     const rows = await this.pool.query<CompanyRow>(`SELECT * FROM companies ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, code LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -60,33 +62,33 @@ export class CompaniesController {
   }
 
   @RequirePerm('facilities.view') @Get(':id')
-  async get(@Param('id') id: string) { return fullCompany(this.pool, await loadCompany(this.pool, id)); }
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) { return fullCompany(this.pool, await loadCompany(this.pool, id, user.scope)); }
 
   /** What this company holds, from the local snapshot of the instrument register. */
   @RequirePerm('facilities.view') @Get(':id/instruments')
-  async instruments(@Param('id') id: string) {
-    const c = await loadCompany(this.pool, id);
+  async instruments(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
     return instrumentsFor(this.pool, [c.id]);
   }
 
   @RequirePerm('facilities.view') @Get(':id/audits')
-  async audits(@Param('id') id: string) {
-    const c = await loadCompany(this.pool, id);
+  async audits(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
     const history = await auditsFor(this.pool, 'COMPANY', c.id);
     return { subjectId: c.id, subjectName: c.name, rating: Number(c.rating), computed: ratingFrom(history), audits: history };
   }
 
   @RequirePerm('facilities.view') @Get(':id/obligations')
-  async obligations(@Param('id') id: string) {
-    const c = await loadCompany(this.pool, id);
+  async obligations(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
     const list = await obligationsFor(this.pool, 'COMPANY', c.id);
     return { subjectId: c.id, subjectName: c.name, open: list.filter((o) => o.status === 'OPEN').length, overdue: list.filter((o) => o.overdue).length, obligations: list };
   }
 
   /** The renewals this company owes, from the expiry dates on its snapshot. */
   @RequirePerm('facilities.view') @Get(':id/renewals')
-  async renewals(@Param('id') id: string, @Query('window') window?: string) {
-    const c = await loadCompany(this.pool, id);
+  async renewals(@Param('id') id: string, @CurrentUser() user: Principal, @Query('window') window?: string) {
+    const c = await loadCompany(this.pool, id, user.scope);
     return renewalWorkList(this.pool, Number(window) || this.env.RENEWAL_WINDOW_DAYS, { subjectId: c.id });
   }
 
@@ -110,9 +112,9 @@ export class CompaniesController {
   }
 
   @RequirePerm('facilities.manage') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>) {
+  async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await loadCompany(c, id, true);
+      const before = await loadCompany(c, id, user.scope, true);
       if (b.status && b.status !== before.status) throw conflict('A company\'s standing is changed through its status endpoint, with the reason it was changed for');
       if (b.code && b.code.toUpperCase() !== before.code.toUpperCase()) {
         const dupe = await c.query('SELECT id FROM companies WHERE upper(code) = upper($1) AND id <> $2', [b.code, before.id]);
@@ -136,9 +138,9 @@ export class CompaniesController {
    * reason, the whole line of them is kept, and a suspension or blacklisting is announced so the desks
    * that let a company work inside port limits hear about it. */
   @RequirePerm('facilities.approve') @Post(':id/status')
-  async changeStatus(@Param('id') id: string, @Body(zod(statusBody)) b: z.infer<typeof statusBody>, @CurrentUser() user?: Principal) {
+  async changeStatus(@Param('id') id: string, @Body(zod(statusBody)) b: z.infer<typeof statusBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await loadCompany(c, id, true);
+      const before = await loadCompany(c, id, user.scope, true);
       const verdict = canChangeStatus(before.status, b.status, b.reason);
       if (!verdict.ok) throw verdict.error.includes('reason') ? badRequest(verdict.error) : conflict(verdict.error);
       const r = await c.query<CompanyRow>(
@@ -163,11 +165,11 @@ export class CompaniesController {
    * non-conformity found this month weighs on the register far more than one found four years ago —
    * and the non-conformity itself becomes an obligation the company has to clear. */
   @RequirePerm('facilities.manage') @Post(':id/audits')
-  async audit_(@Param('id') id: string, @Body(zod(auditBody)) b: z.infer<typeof auditBody>, @CurrentUser() user?: Principal) {
+  async audit_(@Param('id') id: string, @Body(zod(auditBody)) b: z.infer<typeof auditBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await loadCompany(c, id, true);
+      const before = await loadCompany(c, id, user.scope, true);
       const done = await recordAudit(c, this.env, this.audit, { kind: 'COMPANY', id: before.id, name: before.name }, b, user);
-      const after = await loadCompany(c, before.id);
+      const after = await loadCompany(c, before.id, user.scope);
       await publishCompany(c, this.env, after, {}, {
         event: EVENTS.facilities.companyAudited,
         data: { auditNo: done.row.number, result: done.row.result, auditor: done.row.auditor, rating: done.rating, previousRating: Number(before.rating), audits: done.audits },
@@ -177,18 +179,18 @@ export class CompaniesController {
   }
 
   @RequirePerm('facilities.manage') @Post(':id/obligations')
-  async raise(@Param('id') id: string, @Body(zod(obligationBody)) b: z.infer<typeof obligationBody>, @CurrentUser() user?: Principal) {
+  async raise(@Param('id') id: string, @Body(zod(obligationBody)) b: z.infer<typeof obligationBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const company = await loadCompany(c, id, true);
+      const company = await loadCompany(c, id, user.scope, true);
       const row = await raiseObligation(c, this.env, this.audit, { kind: 'COMPANY', id: company.id, name: company.name }, b, user);
       return obligationApi(row);
     });
   }
 
   @RequirePerm('facilities.manage') @Post(':id/obligations/:obligationId/clear')
-  async clear(@Param('id') id: string, @Param('obligationId') obligationId: string, @Body(zod(clearBody)) b: z.infer<typeof clearBody>, @CurrentUser() user?: Principal) {
+  async clear(@Param('id') id: string, @Param('obligationId') obligationId: string, @Body(zod(clearBody)) b: z.infer<typeof clearBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const company = await loadCompany(c, id);
+      const company = await loadCompany(c, id, user.scope);
       return obligationApi(await clearObligation(c, this.env, this.audit, 'COMPANY', company.id, obligationId, b.note, user));
     });
   }
@@ -197,9 +199,9 @@ export class CompaniesController {
    * retired to inactive, because that history is part of the record. A row created in error and never
    * used has no history to protect, so it goes. */
   @RequirePerm('facilities.manage') @Delete(':id')
-  async remove(@Param('id') id: string, @CurrentUser() user?: Principal) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await loadCompany(c, id, true);
+      const before = await loadCompany(c, id, user.scope, true);
       const used = await c.query<{ n: string }>(
         `SELECT (SELECT count(*) FROM instruments WHERE subject_id = $1)
               + (SELECT count(*) FROM audits WHERE subject_kind = 'COMPANY' AND subject_id = $1)

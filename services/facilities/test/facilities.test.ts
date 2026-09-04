@@ -14,6 +14,8 @@ const DB = 'maritime_facilities_test'; const URL = `postgres://maritime:maritime
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const clerk = tok('clerk'); const registrar = tok('registrar'); const viewer = tok('viewer'); const nobody = tok('nobody');
+/* An operator on the directory rather than an officer reading it: Gulf Star maintains their own entry. */
+const agentGss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -37,6 +39,7 @@ beforeAll(async () => {
     registrar: { ...base, id: 'registrar', sub: 'registrar', name: 'Registrar', perms: ['facilities.view', 'facilities.approve'] },
     viewer: { ...base, id: 'viewer', sub: 'viewer', name: 'Compliance Analyst', perms: ['facilities.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['reports.view'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['facilities.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   };
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: new StaticPrincipalResolver(people) }) });
   await app.init(); server = app.getHttpServer(); audit = app.get(AuditClient);
@@ -444,5 +447,73 @@ describe('facilities — who may do what', () => {
     const entries = await outbox(EVENTS.audit.recorded);
     expect(entries.map((e) => e.data.action)).toEqual(expect.arrayContaining(['CREATE', 'AUDIT', 'OBLIGATION_RAISED', 'SUSPEND']));
     expect(entries.every((e) => e.data.entityLabel && e.data.entity)).toBe(true);
+  });
+});
+
+/* ================================================================ tenancy on the directory === */
+
+describe('facilities — tenancy', () => {
+  it('gives every entry an owner, derived from what the row already names', async () => {
+    const co = await pool.query<{ n: string; owned: string }>(
+      "SELECT count(*)::text AS n, count(*) FILTER (WHERE scope_company <> '')::text AS owned FROM companies");
+    expect(Number(co.rows[0].owned)).toBe(Number(co.rows[0].n));
+    // a facility's owner is the company that operates it, and it never drifts from the operator on the row
+    const drift = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM port_facilities f JOIN companies c ON c.id = f.operator_id
+        WHERE f.scope_company <> c.code`);
+    expect(Number(drift.rows[0].n)).toBe(0);
+    // and an obligation or an audit belongs to whoever it was raised against
+    for (const table of ['obligations', 'audits']) {
+      const r = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${table} t JOIN companies c ON c.id = t.subject_id
+          WHERE t.subject_kind = 'COMPANY' AND t.scope_company <> c.code`);
+      expect(Number(r.rows[0].n)).toBe(0);
+    }
+  });
+
+  it('shows an operator their own entry and no one else\'s, on the register and by id', async () => {
+    const mine = await g('/facilities/companies?limit=500', agentGss);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBe(1);
+    expect(mine.body.data[0].code).toBe('GSS');
+    const all = await g('/facilities/companies?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(1);
+
+    const other = all.body.data.find((c: { code: string }) => c.code !== 'GSS');
+    expect((await g(`/facilities/companies/${other.id}`, agentGss)).status).toBe(404);
+    expect((await g(`/facilities/companies/${other.code}`, agentGss)).status).toBe(404);
+    expect((await g(`/facilities/companies/${other.id}`, admin)).status).toBe(200);
+    expect((await g(`/facilities/companies/${mine.body.data[0].id}`, agentGss)).status).toBe(200);
+    // the sub-resources hang off the same load, so they are covered by it rather than by their own check
+    expect((await g(`/facilities/companies/${other.id}/audits`, agentGss)).status).toBe(404);
+    expect((await g(`/facilities/companies/${other.id}/obligations`, agentGss)).status).toBe(404);
+    expect((await g(`/facilities/companies/${other.id}/instruments`, agentGss)).status).toBe(404);
+  });
+
+  it('shows an operator the facilities they run, not the estate', async () => {
+    const mine = await g('/facilities/port-facilities?limit=500', agentGss);
+    const all = await g('/facilities/port-facilities?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+    expect(mine.body.data.every((f: { operatorName: string }) => f.operatorName.length > 0)).toBe(true);
+    const other = all.body.data.find((f: { id: string }) => !mine.body.data.some((m: { id: string }) => m.id === f.id));
+    expect(other).toBeTruthy();
+    expect((await g(`/facilities/port-facilities/${other.id}`, agentGss)).status).toBe(404);
+  });
+
+  it('shows an operator the obligations raised against them and no other company\'s', async () => {
+    const mine = await g('/facilities/obligations?limit=500', agentGss);
+    const all = await g('/facilities/obligations?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(0);
+    expect(mine.body.meta.total).toBeLessThanOrEqual(all.body.meta.total);
+    const gssIds = new Set((await pool.query<{ id: string }>("SELECT id FROM obligations WHERE scope_company = 'GSS'")).rows.map((r) => r.id));
+    expect(mine.body.data.every((o: { id: string }) => gssIds.has(o.id))).toBe(true);
+    const audits = await g('/facilities/audits?limit=500', agentGss);
+    const allAudits = await g('/facilities/audits?limit=500', admin);
+    expect(allAudits.body.meta.total).toBeGreaterThan(audits.body.meta.total);
+  });
+
+  it('leaves an officer reading the whole directory, with no clause added at all', async () => {
+    expect((await g('/facilities/companies?limit=1', viewer)).body.meta.total).toBe((await g('/facilities/companies?limit=1', admin)).body.meta.total);
+    expect((await g('/facilities/audits?limit=1', viewer)).body.meta.total).toBe((await g('/facilities/audits?limit=1', admin)).body.meta.total);
   });
 });

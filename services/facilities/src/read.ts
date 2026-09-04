@@ -1,5 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
-import { notFound } from '@maritime/service-kit';
+import { notFound, scopeWhere } from '@maritime/service-kit';
+import { COMPANY_SCOPE, FACILITY_SCOPE } from './scope';
+import type { TenancyScope } from '@maritime/contracts';
 import {
   auditApi, companyApi, facilityApi, instrumentApi, obligationApi, statusEntryApi,
   type AuditApi, type AuditRow, type CompanyApi, type CompanyRow, type FacilityApi, type FacilityRow,
@@ -12,13 +14,20 @@ import {
 
 export type Q = Pool | PoolClient;
 
-export async function loadCompany(c: Q, id: string, lock = false): Promise<CompanyRow> {
-  const r = await c.query<CompanyRow>(`SELECT * FROM companies WHERE id = $1 OR upper(code) = upper($1)${lock ? ' FOR UPDATE' : ''}`, [id]);
+/* Every handler that touches one company or one facility comes through here, which is why the tenancy
+ * filter is here: the clause is in the query, so a record outside the reader's scope raises the same "not
+ * found" a record that never existed would, and a handler added later cannot forget it. */
+export async function loadCompany(c: Q, id: string, scope: TenancyScope, lock = false): Promise<CompanyRow> {
+  const where = ['(id = $1 OR upper(code) = upper($1))']; const args: unknown[] = [id];
+  scopeWhere(scope, where, args, COMPANY_SCOPE);
+  const r = await c.query<CompanyRow>(`SELECT * FROM companies WHERE ${where.join(' AND ')}${lock ? ' FOR UPDATE' : ''}`, args);
   if (!r.rows[0]) throw notFound('Company not found');
   return r.rows[0];
 }
-export async function loadFacility(c: Q, id: string, lock = false): Promise<FacilityRow> {
-  const r = await c.query<FacilityRow>(`SELECT * FROM port_facilities WHERE id = $1 OR upper(code) = upper($1)${lock ? ' FOR UPDATE' : ''}`, [id]);
+export async function loadFacility(c: Q, id: string, scope: TenancyScope, lock = false): Promise<FacilityRow> {
+  const where = ['(id = $1 OR upper(code) = upper($1))']; const args: unknown[] = [id];
+  scopeWhere(scope, where, args, FACILITY_SCOPE);
+  const r = await c.query<FacilityRow>(`SELECT * FROM port_facilities WHERE ${where.join(' AND ')}${lock ? ' FOR UPDATE' : ''}`, args);
   if (!r.rows[0]) throw notFound('Port facility not found');
   return r.rows[0];
 }

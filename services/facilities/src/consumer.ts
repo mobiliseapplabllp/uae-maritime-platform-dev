@@ -1,6 +1,6 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
-import { EVENTS, makeEvent, subjectFor, type EventEnvelope } from '@maritime/contracts';
+import { NATIONAL_SCOPE, EVENTS, makeEvent, subjectFor, type EventEnvelope } from '@maritime/contracts';
 import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, enqueue, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { facilityApi, publishCompany, type CompanyRow, type FacilityRow, type Row } from './directory';
@@ -84,7 +84,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   }
 
   if (result.kind === 'company') {
-    const row = await loadCompany(c, String(entity.id)).catch(() => null);
+    const row = await loadCompany(c, String(entity.id), NATIONAL_SCOPE).catch(() => null);
     if (!row) return;
     await publishCompany(c, deps.env, row as CompanyRow, {}, { cause: event });
   }
