@@ -23,8 +23,19 @@ pg_stop() { command -v pg_ctlcluster >/dev/null && pg_ctlcluster 16 main stop ||
 
 nats_start() {
   if curl -fs "http://127.0.0.1:8222/healthz" >/dev/null 2>&1; then echo "nats: already up (:$NATS_PORT)"; return; fi
-  nohup "$BIN/nats-server" -js -sd "$RUN/nats-data" -p "$NATS_PORT" -m 8222 > "$LOG/nats.log" 2>&1 &
-  echo $! > "$RUN/nats.pid"; sleep 1; echo "nats: up (:$NATS_PORT, monitor :8222)"
+  # a copy vendored under .local/bin wins; otherwise take whatever the package manager installed
+  local exe="$BIN/nats-server"
+  [ -x "$exe" ] || exe="$(command -v nats-server 2>/dev/null)"
+  if [ -z "$exe" ]; then
+    echo "nats: not installed — services will fall back to an in-process bus (EVENT_BUS=memory)."
+    echo "      install it with:  brew install nats-server   (or see https://nats.io/download/)"
+    return
+  fi
+  nohup "$exe" -js -sd "$RUN/nats-data" -p "$NATS_PORT" -m 8222 > "$LOG/nats.log" 2>&1 &
+  echo $! > "$RUN/nats.pid"
+  for _ in $(seq 1 20); do curl -fs "http://127.0.0.1:8222/healthz" >/dev/null 2>&1 && break; sleep 1; done
+  if curl -fs "http://127.0.0.1:8222/healthz" >/dev/null 2>&1; then echo "nats: up (:$NATS_PORT, monitor :8222)"
+  else echo "nats: FAILED to start — see $LOG/nats.log"; tail -5 "$LOG/nats.log" 2>/dev/null | sed 's/^/      /'; fi
 }
 nats_stop() { [ -f "$RUN/nats.pid" ] && kill "$(cat "$RUN/nats.pid")" 2>/dev/null || true; rm -f "$RUN/nats.pid"; echo "nats: stopped"; }
 

@@ -11,8 +11,14 @@ port_of() { node -e "const s=require('$ROOT/services/$1/dist/env.js'); console.l
 start_one() {
   local s="$1"; [ -f "$ROOT/services/$s/dist/main.js" ] || { echo "$s: not built"; return; }
   if [ -f "$RUN/$s.pid" ] && kill -0 "$(cat "$RUN/$s.pid")" 2>/dev/null; then echo "$s: already running"; return; fi
-  # setsid detaches the service into its own session, so it survives the shell that started it
-  (cd "$ROOT/services/$s" && setsid nohup node dist/main.js > "$LOG/$s.log" 2>&1 < /dev/null & echo $! > "$RUN/$s.pid")
+  # Detach so the service outlives the shell that started it. setsid is util-linux and is
+  # absent on macOS, so fall back to plain nohup there — the subshell exits immediately and
+  # the process is reparented, which achieves the same thing.
+  if command -v setsid >/dev/null 2>&1; then
+    (cd "$ROOT/services/$s" && setsid nohup node dist/main.js > "$LOG/$s.log" 2>&1 < /dev/null & echo $! > "$RUN/$s.pid")
+  else
+    (cd "$ROOT/services/$s" && nohup node dist/main.js > "$LOG/$s.log" 2>&1 < /dev/null & echo $! > "$RUN/$s.pid")
+  fi
   echo "$s: started (:$(port_of "$s"))"
 }
 stop_one() {

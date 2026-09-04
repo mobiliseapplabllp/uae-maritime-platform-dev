@@ -88,7 +88,11 @@ start_services() {
   if curl -fs "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1; then
     ok "web already running on :$WEB_PORT"
   else
-    (cd apps/web && setsid nohup pnpm dev > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    if command -v setsid >/dev/null 2>&1; then
+      (cd apps/web && setsid nohup pnpm dev > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    else
+      (cd apps/web && nohup pnpm dev > "$LOG/web.log" 2>&1 < /dev/null & echo $! > "$LOCAL/run/web.pid")
+    fi
     for _ in $(seq 1 40); do curl -fs "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1 && break; sleep 1; done
     ok "web on :$WEB_PORT"
   fi

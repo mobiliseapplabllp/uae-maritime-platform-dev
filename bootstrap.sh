@@ -119,9 +119,22 @@ bold "6/6  Starting everything"
 LOGDIR="${MARITIME_LOCAL_DIR:-$ROOT/.local}/log"; mkdir -p "$LOGDIR"
 # not piped: the detached services would hold the pipe open and the reader would never see EOF
 bash infra/local/services.sh start > "$LOGDIR/start.log" 2>&1
-ok "$(grep -c 'started\|already running' "$LOGDIR/start.log") services running"
+# count what is actually answering, not what the start log claims it launched
+sleep 6
+LIVE=$(bash infra/local/services.sh status 2>/dev/null | grep -c ': up')
+TOTAL=$(ls services | wc -l | tr -d ' ')
+if [ "$LIVE" -eq "$TOTAL" ]; then ok "$LIVE/$TOTAL services answering"
+else
+  warn "$LIVE/$TOTAL services answering — these are not:"
+  bash infra/local/services.sh status 2>/dev/null | grep ': down' | sed 's/^/       /'
+  warn "their logs are in $LOGDIR/ — one file per service"
+fi
 work "starting the web app"
-( cd "$ROOT/apps/web" && setsid nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+if command -v setsid >/dev/null 2>&1; then
+  ( cd "$ROOT/apps/web" && setsid nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+else
+  ( cd "$ROOT/apps/web" && nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+fi
 # Vite pre-bundles every dependency on a cold start, which on a first run can take
 # well over a minute on a laptop; wait generously, and show the log if it never binds.
 WEB_OK=0
