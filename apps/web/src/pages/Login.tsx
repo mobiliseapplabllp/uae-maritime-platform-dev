@@ -22,6 +22,9 @@ const ROLES = [
   { email: 'surveyor@maritime.example', role: 'Marine Surveyor', who: 'Inspections, certificates, compliance' },
   { email: 'finance@maritime.example', role: 'Finance Officer', who: 'Tariffs, invoicing, collections' },
   { email: 'agent@maritime.example', role: 'Shipping Agent', who: 'Announce calls, track invoices' },
+  // The two external tenants read disjoint registers — calls and invoices against crew — which is the
+  // clearest way to show that the partition is a property of the data and not of the screen.
+  { email: 'crewing@maritime.example', role: 'Manning Agent', who: 'The seafarers this agency placed' },
 ];
 const FACTS = ['Thirteen operational modules over one shared dataset', 'Deny-by-default RBAC · immutable audit on every write', 'Digitally signed certificates with public verification', 'Grounded AI assistance with per-answer citations'];
 

@@ -14,15 +14,15 @@ describe('world', () => {
     for (const s of SECTIONS) { const rows = w[s] as { id: string }[]; expect(rows.length, s).toBeGreaterThan(0); for (const r of rows) expect(r.id, s).toMatch(UUID); expect(ids(rows).size, s).toBe(rows.length); }
   });
   it('is deterministic — two builds are deep-equal', () => { expect(buildWorld({ profile: 'AE', now })).toEqual(w); });
-  it('seeds the seven login accounts, staff and a directory of about 130 users with unique emails', () => {
-    expect(w.users.filter((u) => u.login)).toHaveLength(7);
+  it('seeds the eight login accounts, staff and a directory of about 130 users with unique emails', () => {
+    expect(w.users.filter((u) => u.login)).toHaveLength(8);
     expect(w.users.length).toBeGreaterThanOrEqual(125);
     expect(new Set(w.users.map((u) => u.email)).size).toBe(w.users.length);
     expect(w.users.find((u) => u.email === 'admin@maritime.example')?.roleName).toBe('Super Admin');
   });
-  it('covers all nineteen lookup categories, 24 berths, 18 companies and 31 vessels', () => {
+  it('covers all nineteen lookup categories, 24 berths, 20 companies and 31 vessels', () => {
     expect(new Set(w.lookups.map((l) => l.category)).size).toBe(19);
-    expect(w.berths).toHaveLength(24); expect(w.companies).toHaveLength(18); expect(w.vessels).toHaveLength(31);
+    expect(w.berths).toHaveLength(24); expect(w.companies).toHaveLength(20); expect(w.vessels).toHaveLength(31);
     expect(w.vessels.filter((v) => v.real)).toHaveLength(8);
     for (const v of w.vessels) expect(imoCheck(v.imo.slice(0, 6))).toBe(v.imo[6]);
   });
@@ -128,5 +128,32 @@ describe('world', () => {
     expect(inw.registry.filter((r) => r.state === 'REGISTERED')).toHaveLength(14); expect(Math.min(...inw.registrations.filter((r) => r.officialNumber).map((r) => Number(r.officialNumber)))).toBe(900001);
     expect(inw.legalInstruments.some((i) => i.refNo === 'MSA-1958')).toBe(true); expect(inw.legalInstruments.every((i) => i.titleAr === undefined)).toBe(true);
     expect(inw.seafarers.every((s) => s.seafarerIdLabel === 'INDoS')).toBe(true);
+  });
+
+  it('places every seafarer with a licensed manning agency, or names none at all', () => {
+    // The register partitions on the recruitment and placement service, so the world has to state one — and
+    // has to state more than one agency, or "an agency sees its own crew" is indistinguishable from national.
+    const agencies = w.companies.filter((c) => c.types.includes('MANNING_AGENCY')).map((c) => c.code);
+    expect(agencies.length).toBeGreaterThan(1);
+    const placed = w.seafarers.filter((s) => s.manningAgentCode);
+    const direct = w.seafarers.filter((s) => !s.manningAgentCode);
+    expect(placed.length).toBeGreaterThan(direct.length);
+    expect(direct.length, 'no seafarer is engaged directly, which is the other lawful route').toBeGreaterThan(0);
+    for (const s of placed) {
+      expect(agencies, `${s.name} names an agency that is not licensed`).toContain(s.manningAgentCode);
+      expect(s.manningAgentName).toBeTruthy();
+    }
+    // every agency actually holds placements, so no reader is scoped to an empty set by accident
+    for (const code of agencies) expect(placed.filter((s) => s.manningAgentCode === code).length, code).toBeGreaterThan(0);
+  });
+
+  it('gives the two external logins disjoint tenancies', () => {
+    const agent = w.users.find((u) => u.email === 'agent@maritime.example')!;
+    const crewing = w.users.find((u) => u.email === 'crewing@maritime.example')!;
+    expect(agent.scope).toEqual({ level: 'COMPANY', companies: ['GSS'] });
+    expect(crewing.scope).toEqual({ level: 'COMPANY', companies: ['MCA'] });
+    expect(crewing.roleName).toBe('Manning Agent');
+    // the manning agency the demo signs in as is one that actually placed somebody
+    expect(w.seafarers.filter((s) => s.manningAgentCode === 'MCA').length).toBeGreaterThan(0);
   });
 });

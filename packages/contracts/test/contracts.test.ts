@@ -13,12 +13,28 @@ describe('permission catalogue', () => {
     expect(ALL_PERMISSIONS).toHaveLength(66);
     expect(new Set(ALL_PERMISSIONS).size).toBe(66);
   });
-  it('seeds fifteen roles whose permissions are all known, nine of them system roles', () => {
-    expect(ROLE_CATALOGUE).toHaveLength(15);
-    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(9);
+  it('seeds sixteen roles whose permissions are all known, ten of them system roles', () => {
+    expect(ROLE_CATALOGUE).toHaveLength(16);
+    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(10);
     for (const r of ROLE_CATALOGUE) for (const p of r.permissions) expect(isKnownPermission(p), `${r.name}: ${p}`).toBe(true);
     const counts = Object.fromEntries(ROLE_CATALOGUE.map((r) => [r.code, r.permissions.length]));
-    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 11, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 16 });
+    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 16 });
+  });
+
+  it('gives the two external roles disjoint reach', () => {
+    // A shipping agent and a manning agency are both company-scoped tenants, and they are not the same
+    // tenant: one lodges calls and pays invoices, the other places seafarers. Neither should acquire the
+    // other's register by being external.
+    const role = (code: string) => ROLE_CATALOGUE.find((r) => r.code === code)!;
+    expect(role('AG').permissions).not.toContain('seafarers.view');
+    expect(role('MA').permissions).not.toContain('portcalls.view');
+    expect(role('MA').permissions).not.toContain('invoices.view');
+    // neither may reach anything the administration keeps to itself
+    for (const code of ['AG', 'MA']) {
+      for (const withheld of ['users.view', 'incidents.view', 'inspections.view', 'audit.view', 'settings.manage', 'nmc.view']) {
+        expect(role(code).permissions, `${code} holds ${withheld}`).not.toContain(withheld);
+      }
+    }
   });
   it('denies by default and honours the wildcard', () => {
     expect(hasPerm(['vessels.view'], 'vessels.view')).toBe(true);

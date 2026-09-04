@@ -134,6 +134,7 @@ const en = {
     benchmark: 'Benchmark', target: 'Target', basis: 'Basis', source: 'Source', confirmed: 'Confirmed', unverified: 'Unverified',
   },
   seafarers: {
+    placedBy: 'Placed by', directEngagement: 'Direct engagement', manningAgent: 'Manning agent',
     crumbRegister: 'Crew register',
     registerTitle: 'Crew & Manning', registerSub: 'Seafarer identity, competency documents and verified sea service',
     searchPlaceholder: 'Search name, CDC no or {{id}}…', dashboardTitle: 'Crew dashboard',

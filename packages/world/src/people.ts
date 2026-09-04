@@ -13,6 +13,10 @@ export interface WorldUser {
  * is the tenancy rule the registers enforce, and it only means anything if an account actually carries it. */
 const ACCOUNT_SCOPES: Record<string, TenancyScope> = {
   'agent@maritime.example': { level: 'COMPANY', companies: ['GSS'] },
+  // A manning agency is the other kind of external tenant, and a different one on purpose: a shipping agent
+  // is scoped to the calls and invoices they lodge, a manning agent to the seafarers they placed. The two see
+  // disjoint registers, which is what makes the partition worth demonstrating with two accounts rather than one.
+  'crewing@maritime.example': { level: 'COMPANY', companies: ['MCA'] },
 };
 
 const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
@@ -22,6 +26,7 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     ['Cdr. Saeed Al Hammadi', 'surveyor@maritime.example', 'Marine Surveyor', 'Chief Marine Surveyor'],
     ['Mariam Al Shamsi', 'finance@maritime.example', 'Finance Officer', 'Manager — Billing'],
     ['Rakesh Nair (Gulf Star Shipping)', 'agent@maritime.example', 'Shipping Agent', 'Boarding Agent'],
+    ['Sameera Haddad (Maritime Crewing Associates)', 'crewing@maritime.example', 'Manning Agent', 'Crewing Manager'],
     ['Vinod Menon', 'ops2@maritime.example', 'Harbour Master', 'Dy. Harbour Master'],
     ['Lt. Noura Al Zaabi', 'nmc@maritime.example', 'NMC Duty Officer', 'Duty Officer — Maritime Centre'],
   ],
@@ -31,6 +36,7 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     ['Cdr. Suresh Patel', 'surveyor@maritime.example', 'Marine Surveyor', 'Chief Marine Surveyor'],
     ['Meenakshi Iyer', 'finance@maritime.example', 'Finance Officer', 'Manager — Billing'],
     ['Kalpesh Bhatt (Harbour Shipping)', 'agent@maritime.example', 'Shipping Agent', 'Boarding Agent'],
+    ['Sunita Deshpande (Maritime Crewing Associates)', 'crewing@maritime.example', 'Manning Agent', 'Crewing Manager'],
     ['Vinod Menon', 'ops2@maritime.example', 'Harbour Master', 'Dy. Harbour Master'],
     ['Lt. Aditi Rathore', 'nmc@maritime.example', 'NMC Duty Officer', 'Duty Officer — Surveillance Centre'],
   ],

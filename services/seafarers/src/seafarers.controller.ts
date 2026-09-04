@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, SEAFARER_RANKS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { scopeWhere, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal } from '@maritime/service-kit';
+import { scopeWhere, scopeOfRecord, isNational, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, forbidden, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal } from '@maritime/service-kit';
 import { SEAFARER_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
@@ -22,6 +22,7 @@ const seafarerBody = z.object({
   name: text(160).min(1), cdcNo: text(60).min(1), seafarerId: text(60).default(''), nationalId: text(60).default(''),
   dob: date, nationality: text(120).default(''), rank: z.enum(SEAFARER_RANKS),
   phone: text(60).default(''), email: text(200).default(''), status: z.enum(SEAFARER_STATUS).default('ACTIVE'), remarks: text(2000).default(''),
+  manningAgentCode: text(20).default(''), manningAgentName: text(200).default(''),
 });
 const seafarerPatch = seafarerBody.partial();
 const certBody = z.object({
@@ -38,8 +39,8 @@ const signOnBody = z.object({ vesselId: text(80).min(1), rank: z.enum(SEAFARER_R
 const signOffBody = z.object({ remarks: text(1000).optional() }).partial();
 
 const SORT: Record<string, string> = { name: 'name', rank: 'rank', cdcNo: 'cdc_no', seafarerId: 'seafarer_id', nationality: 'nationality', status: 'status', currentVesselName: 'current_vessel_name', signedOnAt: 'signed_on_at', createdAt: 'created_at', updatedAt: 'updated_at' };
-const COLS: Record<string, string> = { name: 'name', cdcNo: 'cdc_no', seafarerId: 'seafarer_id', nationalId: 'national_id', dob: 'dob', nationality: 'nationality', rank: 'rank', phone: 'phone', email: 'email', status: 'status', remarks: 'remarks' };
-type ListQuery = PageQuery & { rank?: string; status?: string; nationality?: string; currentVesselId?: string; vesselId?: string; certAlerts?: string; onboard?: string };
+const COLS: Record<string, string> = { name: 'name', cdcNo: 'cdc_no', seafarerId: 'seafarer_id', nationalId: 'national_id', dob: 'dob', nationality: 'nationality', rank: 'rank', phone: 'phone', email: 'email', status: 'status', remarks: 'remarks', manningAgentCode: 'manning_agent_code', manningAgentName: 'manning_agent_name' };
+type ListQuery = PageQuery & { rank?: string; status?: string; nationality?: string; currentVesselId?: string; vesselId?: string; certAlerts?: string; onboard?: string; manningAgentCode?: string };
 
 @Controller('seafarers')
 export class SeafarersController {
@@ -68,6 +69,7 @@ export class SeafarersController {
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
     eq('rank', query.rank); eq('status', query.status); eq('nationality', query.nationality); eq('current_vessel_id', query.currentVesselId ?? query.vesselId);
+    eq('manning_agent_code', query.manningAgentCode);
     if (String(query.onboard) === 'true') where.push('current_vessel_id IS NOT NULL');
     if (String(query.onboard) === 'false') where.push('current_vessel_id IS NULL');
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(name ILIKE $${args.length} OR cdc_no ILIKE $${args.length} OR seafarer_id ILIKE $${args.length} OR national_id ILIKE $${args.length} OR current_vessel_name ILIKE $${args.length})`); }
@@ -117,8 +119,13 @@ export class SeafarersController {
   }
 
   @RequirePerm('seafarers.create') @Post()
-  async create(@Body(zod(seafarerBody)) body: z.infer<typeof seafarerBody>) {
+  async create(@Body(zod(seafarerBody)) body: z.infer<typeof seafarerBody>, @CurrentUser() user: Principal) {
     const j = getJurisdiction(this.env.JURISDICTION);
+    // An agency places seafarers under its own licence and nobody else's, so the agent on a record it
+    // creates is its own — stamped from the author's scope, not taken from the request.
+    const own = scopeOfRecord(user.scope).company;
+    if (own) body.manningAgentCode = own;
+    else if (body.manningAgentCode && !isNational(user.scope)) throw forbidden('Only the administration may place a seafarer with another agency');
     return withTx(this.pool, async (c) => {
       const dupe = await c.query('SELECT id FROM seafarers WHERE cdc_no = $1', [body.cdcNo]);
       if (dupe.rowCount) throw conflict(`CDC ${body.cdcNo} is already on the register`);

@@ -46,7 +46,7 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const { registrations, registry, closureVesselId } = buildRegistrations(root.fork('registry'), profile, vessels, users, now);
   const invoices = buildInvoices(root.fork('invoices'), profile, portCalls, vessels, companies, tariffs, now, closureVesselId);
   const inspections = buildInspections(root.fork('inspections'), portCalls, vessels, checklistTemplates, users, lookups, now);
-  const seafarers = buildSeafarers(root.fork('seafarers'), profile, vessels, now);
+  const seafarers = buildSeafarers(root.fork('seafarers'), profile, vessels, companies, now);
   const legalInstruments = buildLegalInstruments(root.fork('legislation'), profile, users, now);
   const licences = buildLicences(root.fork('licences'), profile, companies, vessels, seafarers, berths, registry, users, now);
   const vesselCertificates = buildVesselCertificates(root.fork('certificates'), profile, vessels, licences, registry, now);

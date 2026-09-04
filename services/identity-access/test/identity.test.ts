@@ -64,7 +64,7 @@ describe('identity-access', () => {
     const list = await request(server as never).get('/users?limit=5&q=harbour').set('authorization', `Bearer ${tokens.admin}`);
     expect(list.body.meta.total).toBeGreaterThan(0); expect(list.body.data.length).toBeLessThanOrEqual(5);
     const roles = await request(server as never).get('/roles').set('authorization', `Bearer ${tokens.admin}`);
-    expect(roles.body.data).toHaveLength(15);
+    expect(roles.body.data).toHaveLength(16);
     const pilotRole = roles.body.data.find((r: { name: string }) => r.name === 'Port Pilot');
     // the policy applies wherever a password is set, not only where a person types one
     const weak = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Test Pilot', email: 'test.pilot@maritime.example', password: 'Pilot@2026', roleId: pilotRole.id });

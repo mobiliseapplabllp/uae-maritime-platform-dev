@@ -1,4 +1,4 @@
-/** The fifteen roles delivered with the platform. Nine are system roles guaranteed by the seeder. */
+/** The sixteen roles delivered with the platform. Ten are system roles guaranteed by the seeder. */
 export interface RoleDefinition { code: string; name: string; description: string; system: boolean; permissions: string[] }
 
 const P = (...ps: string[]) => ps;
@@ -22,8 +22,17 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
       'invoices.issue','invoices.pay','invoices.delete','tariffs.view','tariffs.manage','masters.view',
       'legislation.view','facilities.view','ai.use','reports.view','incidents.view') },
   { code: 'AG', name: 'Shipping Agent', description: 'External agent — announce calls, track invoices', system: true,
+    // facilities.view opens the company directory and the licence register. For an agent that is their own
+    // entry and their own licences: the tenancy predicate on those registers is ownership, so the permission
+    // grants a view of themselves, not of the industry.
     permissions: P('dashboard.view','vessels.view','portcalls.view','portcalls.create','invoices.view','legislation.view','ai.use',
-      'registry.view','registry.apply','services.view','services.apply') },
+      'registry.view','registry.apply','services.view','services.apply','facilities.view') },
+  { code: 'MA', name: 'Manning Agent', description: 'Licensed recruitment and placement service — its own seafarers', system: true,
+    // A manning agency is licensed under MLC 2006 Regulation 1.4 and answers to the administration for the
+    // seafarers it places. It reads and maintains its own placements — the register partitions on the agent
+    // named on each seafarer — and nothing of any other agency's crew.
+    permissions: P('dashboard.view','seafarers.view','seafarers.edit','certificates.view','vessels.view',
+      'legislation.view','facilities.view','services.view','services.apply','ai.use') },
   { code: 'ND', name: 'NMC Duty Officer', description: 'Surveillance centre — traffic picture, incidents, SAR', system: true,
     permissions: P('dashboard.view','nmc.view','nmc.manage','risk.view','vessels.view','portcalls.view','inspections.view','legislation.view','ai.use','reports.view',
       'incidents.view','incidents.create','incidents.manage','incidents.close') },

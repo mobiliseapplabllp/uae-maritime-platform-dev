@@ -33,6 +33,7 @@ export default function SeafarersList() {
         { key: 'seafarerId', label: idLabel, mono: true, render: (r) => r.seafarerId || '—' },
         { key: 'rank', label: t('seafarers.rank'), sortable: true },
         { key: 'nationality', label: t('seafarers.nationality') },
+        { key: 'manningAgentName', label: t('seafarers.placedBy'), render: (r) => (r.manningAgent ? <EntityHover type="company" id={r.manningAgent.code}><span>{r.manningAgent.name}</span></EntityHover> : <Chip size="small" variant="outlined" label={t('seafarers.directEngagement')} sx={{ height: 20, fontSize: 10.5 }} />) },
         { key: 'currentVesselName', label: t('seafarers.onBoard'), render: (r) => (r.currentVesselId ? <EntityHover type="vessel" id={r.currentVesselId}><span>{r.currentVesselName}</span></EntityHover> : <Chip size="small" variant="outlined" label={t('seafarers.ashore')} sx={{ height: 20, fontSize: 10.5 }} />) },
         { key: 'certAlerts', label: t('seafarers.certAlerts'), align: 'center', render: (r) => (r.certAlerts ? <Badge badgeContent={r.certAlerts} color="error"><Chip size="small" label={t('seafarers.review')} color="warning" variant="outlined" sx={{ height: 20, fontSize: 10.5 }} /></Badge> : '—') },
         { key: 'totalSeaDays', label: t('seafarers.seaDays'), align: 'right', render: (r) => fmtNum(r.totalSeaDays), mono: true },

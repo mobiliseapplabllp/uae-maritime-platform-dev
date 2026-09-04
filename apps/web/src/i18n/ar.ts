@@ -135,6 +135,7 @@ const ar: Dictionary = {
     benchmark: 'المؤشر', target: 'المستهدف', basis: 'الأساس', source: 'المصدر', confirmed: 'مؤكد', unverified: 'غير مؤكد',
   },
   seafarers: {
+    placedBy: 'جهة التوظيف', directEngagement: 'تعاقد مباشر', manningAgent: 'وكيل التطقيم',
     crumbRegister: 'سجل البحّارة',
     registerTitle: 'البحّارة والتطقيم', registerSub: 'هوية البحّار ووثائق الكفاءة والخدمة البحرية الموثّقة',
     searchPlaceholder: 'ابحث بالاسم أو رقم دفتر البحّار أو {{id}}…', dashboardTitle: 'لوحة البحّارة',

@@ -3,19 +3,19 @@ import { scopeWhere, type ScopeOptions } from '@maritime/service-kit';
 
 /* What the crew register belongs to.
  *
- * It is national: a seafarer's certificates and sea service are held by the administration that issued
- * them, not by whoever is employing them this month, so a port officer reads the whole register and no
- * partition applies.
+ * It is the administration's register: a seafarer's certificates, medical fitness and discharge record are
+ * held by the authority that issued them, and a port officer reads the whole of it.
  *
- * It is not readable by a company at all. That is stated rather than defaulted, and it is the strict
- * reading on purpose: the register holds a person's medical fitness, their discharge record and their
- * certificate history, and a manning agent browsing another agent's crew — or their own former crew — is
- * not something to arrive at by leaving a default unexamined.
+ * A company reads only the seafarers it placed. The partition is the recruitment and placement service named
+ * on the record — the relationship the administration licenses under MLC 2006 Regulation 1.4 — and not the
+ * operator of whichever ship the person is aboard this month, which would hand a shipping agent the
+ * discharge history of someone they have no standing over.
  *
- * Known gap: a manning agent cannot see their own crew either, because a seafarer row names no employer.
- * Giving them that view means adding one to the register, which is a change to what the domain records and
- * not something a tenancy pass should invent. */
-export const SEAFARER_SCOPE: ScopeOptions = { columns: [], publicToCompanies: false };
+ * Ownership semantics, so there is no empty escape: a seafarer engaged directly by an owner carries no agent
+ * and is the administration's alone. That is the strict reading and it is deliberate — the register holds a
+ * person's medical fitness and their certificate history, and an agency browsing crew it never placed is not
+ * something to arrive at by leaving a default unexamined. */
+export const SEAFARER_SCOPE: ScopeOptions = { columns: ['company'], publicToCompanies: false };
 
 /** A whole-register read as one reader may see it: the WHERE clause and its arguments, or neither. */
 export function scopedWhere(scope: TenancyScope, opts: ScopeOptions, alias = ''): { sql: string; args: unknown[] } {

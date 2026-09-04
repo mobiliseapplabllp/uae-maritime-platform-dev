@@ -29,6 +29,8 @@ beforeAll(async () => {
      * over their own records — which is the case these surfaces used to answer nationally. */
     gss: { ...principal('gss', ['vessels.view', 'portcalls.view', 'invoices.view', 'legislation.view', 'registry.view', 'dashboard.view']), scope: { level: 'COMPANY' as const, companies: ['GSS'] } },
     registrar: principal('registrar', ['legislation.view', 'legislation.manage']),
+    /* The other kind of external tenant: a licensed manning agency, scoped to the seafarers it placed. */
+    mca: { ...principal('mca', ['seafarers.view', 'dashboard.view']), scope: { level: 'COMPANY' as const, companies: ['MCA'] } },
   }) };
   app = await createApp({ env, module: buildAppModule(env, resolver) });
   await app.init(); server = app.getHttpServer();
@@ -142,6 +144,34 @@ describe('reporting', () => {
       const nationalDash = (await get('/dashboard')).body.data.kpis;
       expect(agentDash.vesselsAtBerth).toBeLessThanOrEqual(nationalDash.vesselsAtBerth);
       expect(nationalDash.vesselsAtBerth).toBeGreaterThan(0);
+    });
+  });
+
+  describe('the crew read model follows the register', () => {
+    it('confines a manning agency to the seafarers it placed', async () => {
+      const placed = (await pool.query("SELECT name FROM rm_seafarers WHERE scope_company = 'MCA'")).rows.map((r) => r.name as string);
+      const others = (await pool.query("SELECT name FROM rm_seafarers WHERE scope_company <> 'MCA'")).rows.map((r) => r.name as string);
+      expect(placed.length).toBeGreaterThan(0);
+      expect(others.length).toBeGreaterThan(0);
+
+      const term = placed[0].split(' ')[0];
+      const groups = (await get(`/search?q=${encodeURIComponent(term)}`, 'mca')).body.data.groups;
+      const found = (groups.find((g: { type: string }) => g.type === 'seafarer')?.items ?? []) as { label: string }[];
+      for (const s of found) expect(placed, `${s.label} is not an MCA placement`).toContain(s.label);
+
+      const cards = await pool.query("SELECT id FROM rm_seafarers WHERE scope_company <> 'MCA' LIMIT 1");
+      expect((await get(`/cards/seafarer/${cards.rows[0].id}`, 'mca')).status).toBe(404);
+      const own = await pool.query("SELECT id FROM rm_seafarers WHERE scope_company = 'MCA' LIMIT 1");
+      expect((await get(`/cards/seafarer/${own.rows[0].id}`, 'mca')).status).toBe(200);
+    });
+
+    it('counts only its own placements in the crew stat strip', async () => {
+      const mine = Number((await pool.query("SELECT count(*) AS n FROM rm_seafarers WHERE scope_company = 'MCA'")).rows[0].n);
+      const cards = (await get('/stats/seafarers', 'mca')).body.data.cards as { label: string; value: number }[];
+      const national = (await get('/stats/seafarers')).body.data.cards as { label: string; value: number }[];
+      const roll = (c: { label: string; value: number }[]) => c[0].value;
+      expect(roll(cards)).toBe(mine);
+      expect(roll(national)).toBeGreaterThan(roll(cards));
     });
   });
 });

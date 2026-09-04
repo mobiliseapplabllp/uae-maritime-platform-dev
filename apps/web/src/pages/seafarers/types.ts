@@ -9,6 +9,8 @@ export interface SeaServiceRecord { id: string; vesselId?: string | null; vessel
 export interface SeafarerRow {
   id: string; cdcNo: string; seafarerId?: string; seafarerIdLabel?: string; nationalId?: string; nationalIdLabel?: string; name: string; dob?: string | null; nationality?: string; rank: string;
   phone?: string; email?: string; status: SeafarerStatus; currentVesselId?: string | null; currentVesselName?: string | null; signedOnAt?: string | null; remarks?: string; certAlerts: number; totalSeaDays: number;
+  /** The licensed recruitment and placement service holding the engagement; null for a direct engagement. */
+  manningAgentCode?: string; manningAgentName?: string; manningAgent?: { code: string; name: string } | null;
 }
 /** GET /seafarers/:id — the record with its documents and service history. */
 export interface Seafarer extends SeafarerRow { certificates: SeafarerCertificate[]; seaService: SeaServiceRecord[] }

@@ -64,7 +64,9 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
       ...r,
       scope: company(r.billTo?.companyId ? companyById.get(r.billTo.companyId)?.code : (r.portCallId ? callById.get(r.portCallId)?.agentCode : null)),
     })));
-    for (const [kind, key] of [['inspection', 'inspections'], ['incident', 'incidents'], ['seafarer', 'seafarers'], ['legalInstrument', 'legalInstruments'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
+    // A seafarer belongs to the agency that placed them; the world states it, so the projection carries it.
+    await run('seafarer', pick<{ manningAgentCode?: string }>(world, 'seafarers').map((r) => ({ ...r, scope: company(r.manningAgentCode) })));
+    for (const [kind, key] of [['inspection', 'inspections'], ['incident', 'incidents'], ['legalInstrument', 'legalInstruments'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
     const cats = new Map<string, number>(); for (const l of world.lookups) cats.set(l.category, (cats.get(l.category) ?? 0) + 1);
     for (const [category, entries] of cats) await c.query('INSERT INTO rm_lookup_counts(category, entries) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET entries = EXCLUDED.entries', [category, entries]);
     for (const r of REPORTS) await c.query('INSERT INTO report_definitions(key, name, name_ar, category, description, perm, params, columns, query_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, category = EXCLUDED.category, description = EXCLUDED.description, perm = EXCLUDED.perm, params = EXCLUDED.params, columns = EXCLUDED.columns, query_key = EXCLUDED.query_key', [r.key, r.name, r.nameAr, r.category, r.description, r.perm, JSON.stringify(r.params), JSON.stringify(r.columns), r.queryKey]);

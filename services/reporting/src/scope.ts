@@ -31,9 +31,9 @@ export const RESOURCE_SCOPE: ScopeOptions = { columns: ['port'], publicToCompani
 export const INCIDENT_SCOPE: ScopeOptions = { columns: ['port'], publicToCompanies: false };
 /** Survey and audit records likewise. */
 export const INSPECTION_SCOPE: ScopeOptions = { columns: ['port'], publicToCompanies: false };
-/** The crew register is national and internal; a manning agent's own crew is a register question, not a
- *  reporting one, and until the register can answer it reporting must not guess. */
-export const SEAFARER_SCOPE: ScopeOptions = { columns: [], publicToCompanies: false };
+/** Crew: a manning agency reads the seafarers it placed, and no other agency's — the same partition the
+ *  register applies, on the same recruitment-and-placement relationship. */
+export const SEAFARER_SCOPE: ScopeOptions = { columns: ['company'] };
 /** Staff directory: internal. */
 export const USER_SCOPE: ScopeOptions = { columns: [], publicToCompanies: false };
 /** Tariffs and checklist templates are published reference data. */

@@ -130,6 +130,11 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
       const n = (series.get(key) ?? 0) + 1; series.set(key, n);
       const number = `${key}-${String(n).padStart(4, '0')}`;
       const kind = licence.subjectKind === 'PORT_FACILITY' ? 'FACILITY' : 'COMPANY';
+      // The number is positional within its year, so a world that gains a subject renumbers the series from
+      // that point on. Upserting by id then walks a number onto a row that another id still holds, and the
+      // unique index refuses it — which is how a reseed against a changed world used to fail. Free the
+      // number first; the row that held it is about to be given its own.
+      await c.query('DELETE FROM audits WHERE number = $1 AND id <> $2', [number, stableId('facaudit', `${licence.licenseNo}:${ix}`)]);
       await c.query(
         `INSERT INTO audits(id, number, subject_kind, subject_id, subject_name, audited_on, auditor_id, auditor, result, scope, remarks, instrument_id, instrument_no, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)

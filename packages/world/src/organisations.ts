@@ -15,7 +15,13 @@ export function buildCompanies(rng: Prng, profile: string, now: Date): WorldComp
     ['NMC', 'Noor Marine Chandlers', 'SUPPLIER', ['SHIP_CHANDLER']], ['EDY', 'Emirates Dry Dock & Repairs', 'SERVICE_PROVIDER', ['REPAIR_YARD']],
     ['GCC', 'Gulf Compass Calibration Services', 'SERVICE_PROVIDER', ['COMPASS_CALIBRATION']], ['SLS', 'SafeLife LSA Servicing LLC', 'SERVICE_PROVIDER', ['LSA_SERVICING', 'FFA_SERVICING']],
     ['DMC', 'Deepwater Marine Contractors', 'SERVICE_PROVIDER', ['DIVING_CONTRACTOR']], ['PCS', 'Pearl Coast Surveyors', 'SERVICE_PROVIDER', ['MARINE_SURVEYOR', 'SMALL_VESSEL_SURVEY']],
-    ['MCA', 'Maritime Crewing Associates', 'SERVICE_PROVIDER', ['MANNING_AGENCY']], ['AMI', 'Arabian Maritime Institute', 'INSTITUTE', ['TRAINING_INSTITUTE']],
+    // Three licensed recruitment and placement services. One would have been enough to model a manning
+    // agency; it takes more than one for "an agent sees their own crew and nobody else's" to be a claim the
+    // register can be held to.
+    ['MCA', 'Maritime Crewing Associates', 'SERVICE_PROVIDER', ['MANNING_AGENCY']],
+    ['ANC', 'Anchor Crew Management LLC', 'SERVICE_PROVIDER', ['MANNING_AGENCY']],
+    ['KRM', 'Khaleej Recruitment & Manning FZE', 'SERVICE_PROVIDER', ['MANNING_AGENCY', 'TRAINING_INSTITUTE']],
+    ['AMI', 'Arabian Maritime Institute', 'INSTITUTE', ['TRAINING_INSTITUTE']],
   ] : [
     ['KSA', 'Harbour Shipping Agency', 'AGENCY', ['SHIPPING_AGENCY']], ['BMS', 'Bharat Marine Services', 'AGENCY', ['SHIPPING_AGENCY', 'SHIP_CHANDLER']],
     ['OAP', 'Oceanic Agencies Pvt Ltd', 'AGENCY', ['SHIPPING_AGENCY']], ['WCM', 'WestCoast Maritime Services', 'AGENCY', ['SHIPPING_AGENCY']],
@@ -25,7 +31,10 @@ export function buildCompanies(rng: Prng, profile: string, now: Date): WorldComp
     ['NMC', 'Neptune Marine Chandlers', 'SUPPLIER', ['SHIP_CHANDLER']], ['EDY', 'Eastern Dry Dock & Repairs', 'SERVICE_PROVIDER', ['REPAIR_YARD']],
     ['GCC', 'Gulf Compass Calibration Services', 'SERVICE_PROVIDER', ['COMPASS_CALIBRATION']], ['SLS', 'SafeLife LSA Servicing', 'SERVICE_PROVIDER', ['LSA_SERVICING', 'FFA_SERVICING']],
     ['DMC', 'Deepwater Marine Contractors', 'SERVICE_PROVIDER', ['DIVING_CONTRACTOR']], ['PCS', 'Pearl Coast Surveyors', 'SERVICE_PROVIDER', ['MARINE_SURVEYOR', 'SMALL_VESSEL_SURVEY']],
-    ['MCA', 'Maritime Crewing Associates', 'SERVICE_PROVIDER', ['MANNING_AGENCY']], ['AMI', 'Coastal Maritime Institute', 'INSTITUTE', ['TRAINING_INSTITUTE']],
+    ['MCA', 'Maritime Crewing Associates', 'SERVICE_PROVIDER', ['MANNING_AGENCY']],
+    ['ANC', 'Anchor Crew Management Pvt Ltd', 'SERVICE_PROVIDER', ['MANNING_AGENCY']],
+    ['IMR', 'Indus Maritime Recruitment', 'SERVICE_PROVIDER', ['MANNING_AGENCY', 'TRAINING_INSTITUTE']],
+    ['AMI', 'Coastal Maritime Institute', 'INSTITUTE', ['TRAINING_INSTITUTE']],
   ];
   const statuses: WorldCompany['status'][] = ['ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'SUSPENDED', 'INACTIVE'];
   return defs.map(([code, name, category, types], i) => ({

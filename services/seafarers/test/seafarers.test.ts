@@ -16,6 +16,7 @@ const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET,
 const admin = tok('admin'); const desk = tok('desk'); const clerk = tok('clerk'); const nobody = tok('nobody');
 /* An operator, not an officer: they read what is theirs and nothing else. */
 const agentgss = tok('agent-gss');
+const mca = tok('manning-mca'); const anc = tok('manning-anc');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -37,6 +38,9 @@ beforeAll(async () => {
     clerk: { ...base, id: 'clerk', sub: 'clerk', name: 'Records Clerk', perms: ['seafarers.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
     'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['seafarers.view', 'dashboard.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
+    /* The two licensed manning agencies with placements on this register, and one with none. */
+    'manning-mca': { ...base, id: 'manning-mca', sub: 'manning-mca', name: 'Maritime Crewing Associates', kind: 'agent' as const, perms: ['seafarers.view', 'seafarers.create', 'seafarers.edit', 'dashboard.view'], scope: { level: 'COMPANY', companies: ['MCA'] } },
+    'manning-anc': { ...base, id: 'manning-anc', sub: 'manning-anc', name: 'Anchor Crew Management', kind: 'agent' as const, perms: ['seafarers.view', 'dashboard.view'], scope: { level: 'COMPANY', companies: ['ANC'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -396,5 +400,62 @@ describe('seafarers — tenancy', () => {
 
   it('leaves a national desk reading the whole register, with no clause added at all', async () => {
     expect((await g('/seafarers?limit=1', desk)).body.meta.total).toBe((await g('/seafarers?limit=1', admin)).body.meta.total);
+  });
+
+  /*
+   * The register used to name no employer at all, so it could only be national and a manning agency could
+   * not be shown its own crew. It names the recruitment and placement service now, and partitions on it.
+   */
+  it('shows a manning agency the seafarers it placed, and only those', async () => {
+    const national = (await g('/seafarers?limit=500', admin)).body;
+    const mine = (await g('/seafarers?limit=500', mca)).body;
+    const theirs = (await g('/seafarers?limit=500', anc)).body;
+
+    expect(mine.meta.total).toBeGreaterThan(0);
+    expect(theirs.meta.total).toBeGreaterThan(0);
+    expect(mine.meta.total).toBeLessThan(national.meta.total);
+    // the two agencies do not overlap, and neither is the whole register
+    for (const s of mine.data) expect(s.manningAgentCode, `${s.name} is not an MCA placement`).toBe('MCA');
+    for (const s of theirs.data) expect(s.manningAgentCode).toBe('ANC');
+    expect(mine.meta.total + theirs.meta.total).toBeLessThan(national.meta.total);
+  });
+
+  it('answers "not found" for a seafarer another agency placed, and for one engaged direct', async () => {
+    const all = (await g('/seafarers?limit=500', admin)).body.data as { id: string; manningAgentCode: string }[];
+    const other = all.find((s) => s.manningAgentCode === 'ANC')!;
+    const direct = all.find((s) => !s.manningAgentCode);
+    expect((await g(`/seafarers/${other.id}`, mca)).status).toBe(404);
+    expect((await g(`/seafarers/${other.id}/card`, mca)).status).toBe(404);
+    if (direct) {
+      // no agent means the administration's own record, not one shared with every agency for want of an owner
+      expect((await g(`/seafarers/${direct.id}`, mca)).status).toBe(404);
+      expect((await g(`/seafarers/${direct.id}`, admin)).status).toBe(200);
+    }
+  });
+
+  it('counts only its own placements in the crew dashboard', async () => {
+    const mine = (await g('/seafarers/dashboard', mca)).body.data.kpis;
+    const national = (await g('/seafarers/dashboard', admin)).body.data.kpis;
+    const listed = (await g('/seafarers?limit=500', mca)).body.meta.total;
+    expect(mine.roll).toBe(listed);
+    expect(mine.roll).toBeLessThan(national.roll);
+    expect(mine.onboard + mine.ashore).toBe(mine.roll);
+  });
+
+  it('places a new seafarer with the agency that created them, whatever the request asked for', async () => {
+    const created = await post('/seafarers', {
+      name: 'Probe Placement', cdcNo: `AUH-PROBE-${Date.now()}`, rank: 'Able Seaman', nationality: 'India',
+      manningAgentCode: 'ANC', manningAgentName: 'Anchor Crew Management',
+    }, mca);
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    // the agent on the record is the author's own; an agency cannot place a seafarer under another licence
+    expect(created.body.data.manningAgentCode).toBe('MCA');
+    expect((await g(`/seafarers/${created.body.data.id}`, mca)).status).toBe(200);
+    expect((await g(`/seafarers/${created.body.data.id}`, anc)).status).toBe(404);
+    await del(`/seafarers/${created.body.data.id}`, admin);
+  });
+
+  it('still closes the register to a company that places nobody', async () => {
+    expect((await g('/seafarers?limit=500', agentgss)).body.meta.total).toBe(0);
   });
 });

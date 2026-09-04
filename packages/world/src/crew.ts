@@ -2,6 +2,7 @@ import { getJurisdiction, SEAFARER_RANKS, SEAFARER_CERT_TYPES } from '@maritime/
 import { Prng, D, HIST_START, stableId, iso } from './prng';
 import { NAME_POOLS } from './people';
 import type { WorldVessel } from './vessels';
+import type { WorldCompany } from './organisations';
 
 export type SeafarerRank = (typeof SEAFARER_RANKS)[number];
 export interface WorldSeafarerCert { certType: string; grade: string; number: string; issuer: string; issueDate: string; expiryDate: string; remarks: string }
@@ -9,6 +10,15 @@ export interface WorldSeaService { vesselId: string | null; vesselName: string; 
 export interface WorldSeafarer {
   id: string; cdcNo: string; seafarerId: string; seafarerIdLabel: string; nationalId: string; nationalIdLabel: string; name: string; dob: string; nationality: string; rank: SeafarerRank;
   phone: string; email: string; status: 'ACTIVE' | 'SHORE_LEAVE' | 'SIGNED_OFF' | 'SUSPENDED'; currentVesselId: string | null; currentVesselName: string | null; signedOnAt: string | null;
+  /**
+   * The licensed recruitment and placement service holding this seafarer's engagement (MLC 2006,
+   * Regulation 1.4), by company code — or empty for one engaged directly by a shipowner, which is the other
+   * lawful route and about a fifth of any real register.
+   *
+   * It is the stable relationship, which is why the register is partitioned on it rather than on whichever
+   * ship the seafarer happens to be aboard this month.
+   */
+  manningAgentCode: string; manningAgentName: string;
   certificates: WorldSeafarerCert[]; seaService: WorldSeaService[]; remarks: string;
 }
 
@@ -35,8 +45,14 @@ const isDeck = (r: string) => /Master|Chief Officer|Second Officer|Third Officer
 const gradeFor = (rank: string, i: number) => (/Engineer/.test(rank) ? `MEO Class ${rank.startsWith('Chief') ? '1' : '2'}` : rank === 'Master' ? 'Master (FG)' : `Class ${2 + (i % 2)}`);
 
 /** ~150 seafarers on the fictional fleet: ranks from the contracts, sea service walked back to 2023, about 55% signed on now. */
-export function buildSeafarers(rng: Prng, profile: string, vessels: WorldVessel[], now: Date, count = 150): WorldSeafarer[] {
+export function buildSeafarers(rng: Prng, profile: string, vessels: WorldVessel[], companies: WorldCompany[], now: Date, count = 150): WorldSeafarer[] {
   const j = getJurisdiction(profile); const ae = j.code === 'AE';
+  // Placements are not spread evenly: one house is much the largest, and roughly a fifth of the register is
+  // engaged directly by an owner and has no agent at all.
+  const manning = companies.filter((c) => c.types.includes('MANNING_AGENCY'));
+  const placements: [WorldCompany | null, number][] = manning.length
+    ? [[manning[0], 40], ...manning.slice(1).map((c, k) => [c, k === 0 ? 26 : 16] as [WorldCompany, number]), [null, 18]]
+    : [[null, 1]];
   const fleet = vessels.filter((v) => !v.real); const issuer = ae ? 'Ministry of Energy and Infrastructure — Maritime Sector' : 'DG Shipping, India';
   const [CoC, GMDSS, MED, BST, AFF, MFA, SSO, TANK, CDC] = SEAFARER_CERT_TYPES;
   const out: WorldSeafarer[] = [];
@@ -65,6 +81,7 @@ export function buildSeafarers(rng: Prng, profile: string, vessels: WorldVessel[
       cursor = from - rng.int(20, 90) * D;
     }
     const national = nationality === j.name;
+    const placedWith = rng.weighted(placements);
     out.push({
       id: stableId('seafarer', `${j.code}:${i}`), cdcNo: ae ? `AUH-${52000 + i * 37}` : `MUM-${52000 + i * 37}`,
       seafarerId: ae ? `SID-784-${String(100000 + i * 911).slice(0, 6)}` : `8INL${3200 + i * 13}`, seafarerIdLabel: j.identity.seafarerIdLabel,
@@ -73,7 +90,9 @@ export function buildSeafarers(rng: Prng, profile: string, vessels: WorldVessel[
       phone: ae ? `+971 5${i % 9} ${String(2000000 + i * 991177).slice(0, 3)} ${String(2000000 + i * 991177).slice(3, 7)}` : `+91 98${String(20000000 + i * 991177).slice(0, 8)}`,
       email: `${name.toLowerCase().replace(/[^a-z]+/g, '.')}${i}@crew.example`,
       status: i % 50 === 49 ? 'SUSPENDED' : onboard ? 'ACTIVE' : i % 3 === 0 ? 'SHORE_LEAVE' : 'SIGNED_OFF',
-      currentVesselId: vessel?.id ?? null, currentVesselName: vessel?.name ?? null, signedOnAt: signedOnAt ? iso(signedOnAt) : null, certificates, seaService, remarks: '',
+      currentVesselId: vessel?.id ?? null, currentVesselName: vessel?.name ?? null, signedOnAt: signedOnAt ? iso(signedOnAt) : null,
+      manningAgentCode: placedWith?.code ?? '', manningAgentName: placedWith?.name ?? '',
+      certificates, seaService, remarks: '',
     });
   }
   return out;

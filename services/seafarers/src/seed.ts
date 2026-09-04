@@ -18,12 +18,13 @@ export async function seedSeafarers(databaseUrl: string, profile = 'AE') {
 
     let certificates = 0; let service = 0;
     for (const s of world.seafarers) {
-      await c.query(`INSERT INTO seafarers(id, cdc_no, seafarer_id, seafarer_id_label, national_id, national_id_label, name, dob, nationality, rank, phone, email, status, current_vessel_id, current_vessel_name, signed_on_at, remarks)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      await c.query(`INSERT INTO seafarers(id, cdc_no, seafarer_id, seafarer_id_label, national_id, national_id_label, name, dob, nationality, rank, phone, email, status, current_vessel_id, current_vessel_name, signed_on_at, remarks, manning_agent_code, manning_agent_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
         ON CONFLICT (id) DO UPDATE SET cdc_no = EXCLUDED.cdc_no, seafarer_id = EXCLUDED.seafarer_id, seafarer_id_label = EXCLUDED.seafarer_id_label, national_id = EXCLUDED.national_id, national_id_label = EXCLUDED.national_id_label,
           name = EXCLUDED.name, dob = EXCLUDED.dob, nationality = EXCLUDED.nationality, rank = EXCLUDED.rank, phone = EXCLUDED.phone, email = EXCLUDED.email, status = EXCLUDED.status,
-          current_vessel_id = EXCLUDED.current_vessel_id, current_vessel_name = EXCLUDED.current_vessel_name, signed_on_at = EXCLUDED.signed_on_at, remarks = EXCLUDED.remarks, updated_at = now()`,
-        [s.id, s.cdcNo, s.seafarerId, s.seafarerIdLabel, s.nationalId, s.nationalIdLabel, s.name, s.dob.slice(0, 10), s.nationality, s.rank, s.phone, s.email, s.status, s.currentVesselId, s.currentVesselName, s.signedOnAt, s.remarks]);
+          current_vessel_id = EXCLUDED.current_vessel_id, current_vessel_name = EXCLUDED.current_vessel_name, signed_on_at = EXCLUDED.signed_on_at, remarks = EXCLUDED.remarks,
+          manning_agent_code = EXCLUDED.manning_agent_code, manning_agent_name = EXCLUDED.manning_agent_name, updated_at = now()`,
+        [s.id, s.cdcNo, s.seafarerId, s.seafarerIdLabel, s.nationalId, s.nationalIdLabel, s.name, s.dob.slice(0, 10), s.nationality, s.rank, s.phone, s.email, s.status, s.currentVesselId, s.currentVesselName, s.signedOnAt, s.remarks, s.manningAgentCode, s.manningAgentName]);
 
       for (const cert of s.certificates) {
         await c.query(`INSERT INTO seafarer_certificates(id, seafarer_id, cert_type, grade, number, issuer, issue_date, expiry_date, remarks)

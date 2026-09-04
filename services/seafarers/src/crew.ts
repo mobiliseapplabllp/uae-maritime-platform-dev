@@ -1,6 +1,6 @@
 import { EVENTS, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
 import { certStatus } from '@maritime/world';
-import { visibleTo, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { visibleTo, recordScope, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
 import { SEAFARER_SCOPE } from './scope';
 import type { Env } from './env';
 
@@ -21,6 +21,8 @@ export interface SeafarerRow {
   id: string; cdc_no: string; seafarer_id: string; seafarer_id_label: string; national_id: string; national_id_label: string;
   name: string; dob: Date | null; nationality: string; rank: string; phone: string; email: string; status: string;
   current_vessel_id: string | null; current_vessel_name: string | null; signed_on_at: Date | null; remarks: string;
+  /** The recruitment and placement service holding the engagement, and the tenancy key derived from it. */
+  manning_agent_code: string; manning_agent_name: string; scope_company: string;
   created_at: Date; updated_at: Date;
 }
 export interface CertRow {
@@ -58,6 +60,8 @@ export function seafarerApi(s: SeafarerRow, extra: SeafarerExtras = {}) {
     nationalId: s.national_id, nationalIdLabel: s.national_id_label, name: s.name, dob: dateOnly(s.dob), nationality: s.nationality, rank: s.rank,
     phone: s.phone, email: s.email, status: s.status, currentVesselId: s.current_vessel_id, currentVesselName: s.current_vessel_name,
     signedOnAt: iso(s.signed_on_at), remarks: s.remarks,
+    manningAgentCode: s.manning_agent_code, manningAgentName: s.manning_agent_name,
+    manningAgent: s.manning_agent_code ? { code: s.manning_agent_code, name: s.manning_agent_name } : null,
     certAlerts: certificates.filter((c) => c.status !== 'VALID').length,
     totalSeaDays: seaService.reduce((t, x) => t + x.days, 0),
     seaServiceDays: seaService.reduce((t, x) => t + x.days, 0),
@@ -72,10 +76,12 @@ export type SeafarerApi = ReturnType<typeof seafarerApi>;
  * in the fourteen that call it: a reader the register is closed to is answered "not found", the same answer
  * a seafarer who was never on it would get. */
 export async function findSeafarer(c: Queryable, ref: string, scope: TenancyScope): Promise<SeafarerRow | null> {
-  if (!visibleTo(scope, {}, SEAFARER_SCOPE)) return null;
   const byId = /^[0-9a-f-]{36}$/i.test(ref);
   const r = await c.query<SeafarerRow>(byId ? 'SELECT * FROM seafarers WHERE id = $1' : 'SELECT * FROM seafarers WHERE cdc_no = $1', [ref]);
-  return r.rows[0] ?? null;
+  const row = r.rows[0];
+  // The row decides now that it names an agent: a reader outside the placement is answered as though the
+  // record were not there, which is the same answer a seafarer who was never on the register would get.
+  return row && visibleTo(scope, row, SEAFARER_SCOPE) ? row : null;
 }
 export async function certsOf(c: Queryable, id: string, now = new Date(), windowDays?: number): Promise<CertApi[]> {
   const r = await c.query<CertRow>('SELECT * FROM seafarer_certificates WHERE seafarer_id = $1 ORDER BY expiry_date', [id]);
@@ -95,7 +101,7 @@ export async function publishSeafarer(c: Queryable, env: Env, s: SeafarerRow, op
   const mk = <T,>(type: string, data: T) => (opts.cause
     ? makeEvent({ type, source: env.SERVICE_NAME, data, subject: s.id, correlationId: opts.cause.correlationid, causationId: opts.cause.id, actor: opts.actor ?? opts.cause.actor })
     : eventFromContext(env.SERVICE_NAME, type, data, { subject: s.id, actor: opts.actor }));
-  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'seafarer', entity }));
+  await enqueue(c, mk(EVENTS.readModel.upserted, { kind: 'seafarer', entity: { ...entity, scope: recordScope(s) } }));
   if (opts.event) await enqueue(c, mk(opts.event, { seafarerId: s.id, name: s.name, rank: s.rank, cdcNo: s.cdc_no, status: s.status, currentVesselId: s.current_vessel_id, seafarer: entity, ...(opts.data ?? {}) }));
   return entity;
 }

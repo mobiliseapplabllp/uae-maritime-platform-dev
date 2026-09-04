@@ -20,6 +20,9 @@ beforeAll(async () => {
   const resolver = new StaticPrincipalResolver({
     admin: { id: 'admin', sub: 'admin', name: 'Admin', email: 'admin@maritime.example', perms: ['*'], scope: { level: 'NATIONAL' }, kind: 'user', active: true },
     viewer: { id: 'viewer', sub: 'viewer', name: 'Viewer', email: 'viewer@maritime.example', perms: ['masters.view', 'settings.view', 'facilities.view', 'vessels.view'], scope: { level: 'NATIONAL' }, kind: 'user', active: true },
+    // An external member of the port community: holds facilities.view over the directory, and is one of the
+    // companies in it.
+    agent: { id: 'agent', sub: 'agent', name: 'Agent', email: 'agent@maritime.example', perms: ['facilities.view'], scope: { level: 'COMPANY', companies: ['GSS'] }, kind: 'user', active: true },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer();
@@ -64,5 +67,45 @@ describe('mdm', () => {
     const one = vs.body.data[0];
     const upd = await request(server as never).put(`/golden/vessels/${one.id}`).set('authorization', admin).send({ manager: 'New Managers LLC' }); expect(upd.body.data.manager).toBe('New Managers LLC');
     expect((await request(server as never).put(`/golden/vessels/${one.id}`).set('authorization', viewer).send({ manager: 'x' })).status).toBe(403);
+  });
+});
+
+describe('the company directory and the company file', () => {
+  const as = (who: string) => tok(who);
+
+  it('answers a company by its code and by its id', async () => {
+    // `id` is a uuid and `code` is text, so `WHERE id = $1 OR code = $1` could not be typed and this route
+    // answered 500 to everyone, for either kind of reference. It was never exercised until now.
+    const byCode = await request(server as never).get('/companies/GSS').set('authorization', as('admin')).expect(200);
+    expect(byCode.body.data.code).toBe('GSS');
+    const byId = await request(server as never).get(`/companies/${byCode.body.data.id}`).set('authorization', as('admin')).expect(200);
+    expect(byId.body.data.code).toBe('GSS');
+    expect(byCode.body.data.id).toBe(byId.body.data.id);
+    await request(server as never).get('/companies/NOPE').set('authorization', as('admin')).expect(404);
+  });
+
+  it('publishes the directory to the community and keeps the file to the administration', async () => {
+    const mine = (await request(server as never).get('/companies/GSS').set('authorization', as('agent')).expect(200)).body.data;
+    const theirs = (await request(server as never).get('/companies/WCM').set('authorization', as('agent')).expect(200)).body.data;
+    const official = (await request(server as never).get('/companies/WCM').set('authorization', as('admin')).expect(200)).body.data;
+
+    // a company reads its own record whole
+    expect(mine.taxId).toBeTruthy();
+    expect(mine.rating).toBeTypeOf('number');
+    // and everyone else's as a directory entry: enough to do business with them, nothing more
+    expect(theirs.name).toBe(official.name);
+    expect(theirs.contactEmail).toBe(official.contactEmail);
+    expect(theirs.status).toBe(official.status);
+    for (const withheld of ['taxId', 'registrationNo', 'rating', 'real', 'recordStatus']) {
+      expect(theirs, `${withheld} reached a competitor`).not.toHaveProperty(withheld);
+      expect(official).toHaveProperty(withheld);
+    }
+  });
+
+  it('withholds the file from every row of the list, not only the one that is fetched', async () => {
+    const rows = (await request(server as never).get('/companies?limit=100').set('authorization', as('agent')).expect(200)).body.data;
+    expect(rows.length).toBeGreaterThan(3);
+    const carrying = rows.filter((c: { taxId?: string }) => 'taxId' in c).map((c: { code: string }) => c.code);
+    expect(carrying, 'the list handed over more than the reader owns').toEqual(['GSS']);
   });
 });
