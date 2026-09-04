@@ -10,6 +10,7 @@ import {
   type AckRow, type Attachment, type DashboardRow, type InstrumentRow, type LinkRow, type Row,
 } from './instruments';
 import { acksOf, fullInstrument, loadInstrument, recipientCounts, recipientsIn, recipientsOf, type Q } from './read';
+import { maySeeAcknowledgements } from './scope';
 
 /* Notices and circulars — the legal-instrument register.
  *
@@ -62,7 +63,7 @@ export class LegislationController {
   /* -------------------------------------------------------------------------- register --- */
 
   @RequirePerm('legislation.view') @Get('instruments')
-  async list(@Query() query: PageQuery & { type?: string; status?: string; year?: string; subject?: string; category?: string; tag?: string; ackRequired?: string; issuedBy?: string }) {
+  async list(@Query() query: PageQuery & { type?: string; status?: string; year?: string; subject?: string; category?: string; tag?: string; ackRequired?: string; issuedBy?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-issuedDate', sortable: Object.keys(SORT), maxLimit: 1000 });
     const where: string[] = []; const args: unknown[] = [];
     const add = (sql: (i: number) => string, value: unknown) => { args.push(value); where.push(sql(args.length)); };
@@ -78,7 +79,10 @@ export class LegislationController {
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM legal_instruments ${w}`, args);
     const rows = await this.pool.query<InstrumentRow>(`SELECT * FROM legal_instruments ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, ref_no LIMIT ${p.limit} OFFSET ${p.offset}`, args);
-    const acks = await acksOf(this.pool, rows.rows.map((r) => r.id));
+    /* The register is published, so nothing narrows the rows. The acknowledgement roll travelling on each
+     * of them is not published: it names the officers who have and have not read a circular, which is the
+     * administration's own compliance record and not an operator's business. */
+    const acks = maySeeAcknowledgements(user.scope) ? await acksOf(this.pool, rows.rows.map((r) => r.id)) : new Map();
     return paged(rows.rows.map((r) => instrumentApi(r, { acknowledgedBy: acks.get(r.id) ?? [] })), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
   }
 
@@ -115,7 +119,8 @@ export class LegislationController {
   async get(@Param('id') id: string) { return this.full(this.pool, await this.load(this.pool, id)); }
 
   @RequirePerm('legislation.view') @Get('instruments/:id/acknowledgements')
-  async acknowledgements(@Param('id') id: string) {
+  async acknowledgements(@Param('id') id: string, @CurrentUser() user: Principal) {
+    if (!maySeeAcknowledgements(user.scope)) throw notFound('Instrument not found');
     const row = await this.load(this.pool, id);
     const acknowledged = (await acksOf(this.pool, [row.id])).get(row.id) ?? [];
     const done = new Set(acknowledged.map((a) => a.userId));

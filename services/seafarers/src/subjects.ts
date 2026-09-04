@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { EVENTS, type EventEnvelope } from '@maritime/contracts';
+import { NATIONAL_SCOPE, EVENTS, type EventEnvelope } from '@maritime/contracts';
 import type { Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { findSeafarer, publishSeafarer, type Row } from './crew';
@@ -58,6 +58,7 @@ export async function projectSnapshot(c: PoolClient, env: Env, event: EventEnvel
 
 /** Republishes a seafarer whose record changed because something arrived for them. */
 export async function republishSeafarer(c: PoolClient, env: Env, id: string, cause: EventEnvelope) {
-  const s = await findSeafarer(c, id);
+  // the projection is the platform acting on itself, not a reader
+  const s = await findSeafarer(c, id, NATIONAL_SCOPE);
   if (s) await publishSeafarer(c, env, s, { cause });
 }

@@ -2,7 +2,8 @@ import { Body, Controller, Get, Inject, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { DEFAULT_RISK_WEIGHTS, EVENTS } from '@maritime/contracts';
-import { AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, enqueue, eventFromContext, paged, withTx, zod } from '@maritime/service-kit';
+import { CurrentUser, notFound, visibleTo, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, enqueue, eventFromContext, paged, withTx, zod } from '@maritime/service-kit';
+import { RISK_SCOPE } from './scope';
 import type { Env } from './env';
 import { iso, type Row } from './vessels';
 import { WEIGHT_KEYS, WEIGHT_MAX, computeScores, loadWeights, saveWeights } from './risk';
@@ -19,7 +20,10 @@ export class RiskController {
 
   /** Every active ship with her live, factor-decomposed score; the weights in force travel in `meta`. */
   @RequirePerm('risk.view') @Get('scores')
-  async scores(@Query('band') band?: string) {
+  async scores(@CurrentUser() user: Principal, @Query('band') band?: string) {
+    /* The risk register is how the administration ranks who it distrusts — detentions, deficiencies, agent
+     * performance. It scores the whole fleet or it scores nothing; there is no partial view of a ranking. */
+    if (!visibleTo(user.scope, {}, RISK_SCOPE)) return paged([], { total: 0, page: 1, limit: 1 });
     const { rows, weights } = await computeScores(this.pool, this.env.CERT_EXPIRING_DAYS);
     const out = band ? rows.filter((r) => r.band === band) : rows;
     return paged(out, { total: out.length, page: 1, limit: out.length, weights, computedAt: new Date().toISOString() });
@@ -27,7 +31,8 @@ export class RiskController {
 
   /** Ships in port or inbound, ordered by risk — where surveyor hours should go. */
   @RequirePerm('risk.view') @Get('targeting')
-  async targeting() {
+  async targeting(@CurrentUser() user: Principal) {
+    if (!visibleTo(user.scope, {}, RISK_SCOPE)) return paged([], { total: 0, page: 1, limit: 1 });
     const { rows } = await computeScores(this.pool, this.env.CERT_EXPIRING_DAYS);
     const byVessel = new Map(rows.map((r) => [r.vesselId, r]));
     const calls = await this.pool.query<Row>('SELECT id, vcn, vessel_id, status, eta, berth_code FROM port_calls WHERE status = ANY($1) ORDER BY eta', [ACTIVE_CALLS]);
@@ -39,7 +44,10 @@ export class RiskController {
   }
 
   @RequirePerm('risk.view') @Get('weights')
-  async weights() { return loadWeights(this.pool); }
+  async weights(@CurrentUser() user: Principal) {
+    if (!visibleTo(user.scope, {}, RISK_SCOPE)) throw notFound('Not found');
+    return loadWeights(this.pool);
+  }
 
   /** Weights are policy: a change is recorded against the officer's name and the scores move with it. */
   @RequirePerm('risk.manage') @Put('weights')

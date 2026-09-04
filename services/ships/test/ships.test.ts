@@ -16,6 +16,8 @@ const DB = 'maritime_ships_test'; const URL = `postgres://maritime:maritime@127.
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const registrar = tok('registrar'); const officer = tok('officer'); const clerk = tok('clerk'); const nobody = tok('nobody');
+/* An operator, not an officer: they read what is theirs and nothing else. */
+const agentgss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -36,6 +38,7 @@ beforeAll(async () => {
     officer: { ...base, id: 'officer', sub: 'officer', name: 'Fleet Officer', perms: ['vessels.view', 'vessels.create', 'vessels.edit', 'vessels.delete', 'certificates.view', 'certificates.manage', 'risk.view'] },
     clerk: { ...base, id: 'clerk', sub: 'clerk', name: 'Records Clerk', perms: ['vessels.view', 'registry.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['vessels.view', 'registry.view', 'risk.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -533,5 +536,64 @@ describe('ships — the consumer', () => {
     } finally { client.release(); }
     const after = (await pool.query('SELECT count(*) AS n FROM vessel_certificates WHERE vessel_id = $1', [v.id])).rows[0].n;
     expect(after).toBe(before);
+  });
+});
+
+/* ==================================================== tenancy on the ship register === */
+
+describe('ships — tenancy', () => {
+  it('takes the fleet from the ship\'s appointed agent, and everything hanging off her follows', async () => {
+    const owned = await pool.query<{ n: string; owned: string }>(
+      "SELECT count(*)::text AS n, count(*) FILTER (WHERE scope_company <> '')::text AS owned FROM vessels WHERE agent_code <> ''");
+    expect(Number(owned.rows[0].owned)).toBe(Number(owned.rows[0].n));
+    for (const table of ['registrations', 'vessel_certificates']) {
+      const drift = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${table} t JOIN vessels v ON v.id = t.vessel_id WHERE t.scope_company <> v.scope_company`);
+      expect(Number(drift.rows[0].n)).toBe(0);
+    }
+    // reassigning a ship moves her papers with her, in the database rather than in each path that does it
+    const v = (await pool.query<{ id: string; agent_code: string }>("SELECT id, agent_code FROM vessels WHERE agent_code <> '' LIMIT 1")).rows[0];
+    try {
+      await pool.query("UPDATE vessels SET agent_code = 'ZZZ' WHERE id = $1", [v.id]);
+      const moved = await pool.query<{ n: string }>(
+        "SELECT count(*)::text AS n FROM vessel_certificates WHERE vessel_id = $1 AND scope_company <> 'ZZZ'", [v.id]);
+      expect(Number(moved.rows[0].n)).toBe(0);
+    } finally { await pool.query('UPDATE vessels SET agent_code = $2 WHERE id = $1', [v.id, v.agent_code]); }
+  });
+
+  it('shows an agent the ships they act for, and answers "not found" for the rest', async () => {
+    const mine = await g('/vessels?limit=500', agentgss);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    expect(mine.body.data.every((v: { agentCode: string }) => v.agentCode === 'GSS')).toBe(true);
+    const all = await g('/vessels?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+
+    const other = all.body.data.find((v: { agentCode: string }) => v.agentCode && v.agentCode !== 'GSS');
+    expect((await g(`/vessels/${other.id}`, agentgss)).status).toBe(404);
+    expect((await g(`/vessels/${other.imo}`, agentgss)).status).toBe(404);
+    expect((await g(`/vessels/${other.id}`, admin)).status).toBe(200);
+    expect((await g(`/vessels/${mine.body.data[0].id}`, agentgss)).status).toBe(200);
+  });
+
+  it('gives an agent a dashboard of their own fleet, not the register\'s', async () => {
+    const mine = await g('/vessels/fleet-dashboard', agentgss);
+    const all = await g('/vessels/fleet-dashboard', admin);
+    expect(mine.status).toBe(200);
+    const size = (d: { kpis: { fleet: number; inactive: number } }) => d.kpis.fleet + d.kpis.inactive;
+    expect(size(mine.body.data)).toBeLessThan(size(all.body.data));
+    expect(size(mine.body.data)).toBe((await g('/vessels?limit=1', agentgss)).body.meta.total);
+  });
+
+  it('closes the risk register to an operator: it is how the administration ranks who it distrusts', async () => {
+    expect((await g('/risk/scores', admin)).body.meta.total).toBeGreaterThan(0);
+    expect((await g('/risk/scores', agentgss)).body.data).toHaveLength(0);
+    expect((await g('/risk/targeting', agentgss)).body.data).toHaveLength(0);
+    expect((await g('/risk/weights', agentgss)).status).toBe(404);
+    expect((await g('/risk/weights', admin)).status).toBe(200);
+  });
+
+  it('leaves a national officer reading the whole register, with no clause added at all', async () => {
+    expect((await g('/vessels?limit=1', officer)).body.meta.total).toBe((await g('/vessels?limit=1', admin)).body.meta.total);
   });
 });

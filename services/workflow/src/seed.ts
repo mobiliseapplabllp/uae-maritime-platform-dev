@@ -83,12 +83,21 @@ export async function seedWorkflow(databaseUrl: string, profile?: string) {
       const documents: RequestDocument[] = r.documents.map((x) => ({ code: x.key, documentId: null, name: x.fileName, uploadedAt: x.uploadedAt, verified: x.verified, verifiedBy: x.verified ? x.verifiedBy : null, verifiedAt: x.verifiedAt, notes: x.notes }));
       const timeline: TimelineEntry[] = r.timeline.map((h) => ({ from: h.from, to: h.to, action: actionFor(h.from, h.to), at: h.at, by: { id: null, name: h.by }, note: h.note }));
       const issued = r.status === 'ISSUED' ? { id: r.issuedInstrumentId, number: r.issuedInstrumentNo, type: d.issuesInstrument || null, class: d.issuesInstrument ? instrumentClassOf(d.issuesInstrument) : null, status: 'ISSUED', requestedAt: r.closedAt, issuedAt: r.closedAt } : null;
-      const ins = await c.query(
+      const ins = await c.query<{ inserted: boolean }>(
         `INSERT INTO service_requests(id, number, definition_id, definition_key, definition_name, definition_name_ar, definition_version, environment, category, domain, subject_kind, subject_id, subject_name, subject, applicant, status, current_state, form_data, documents, fees, payment, assignee, checks, sla_due_at, sla_breached, sla_breached_at, submitted_at, decided_at, closed_at, issued_instrument, timeline, created_by, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,1,'PROD',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32) ON CONFLICT (number) DO NOTHING`,
+         VALUES ($1,$2,$3,$4,$5,$6,1,'PROD',$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
+         /* An existing application keeps its own state — it has a lifecycle and re-seeding must not rewind
+          * it. The one thing filled in is a missing identifier: the applicant's company code, which the
+          * block did not used to carry, and without which the request belongs to nobody. */
+         ON CONFLICT (number) DO UPDATE
+           SET applicant = jsonb_set(service_requests.applicant, '{organisationCode}', to_jsonb(EXCLUDED.applicant->>'organisationCode'), true)
+           WHERE COALESCE(service_requests.applicant->>'organisationCode', '') = ''
+             AND COALESCE(EXCLUDED.applicant->>'organisationCode', '') <> ''
+         RETURNING (xmax = 0) AS inserted`,
         [r.id, r.requestNo, definitionId, d.key, d.name, d.nameAr ?? null, d.category, d.domain, r.subjectKind, r.subjectId, r.subjectLabel, JSON.stringify(subjectAttributes(world, r)), JSON.stringify(r.applicant), r.status, r.status, JSON.stringify(r.formData), JSON.stringify(documents), JSON.stringify(fees), JSON.stringify(payment),
           r.assignedToId ? JSON.stringify({ userId: r.assignedToId, name: r.assignedTo }) : null, JSON.stringify(r.checks), r.dueAt, false, null, r.submittedAt, r.decision?.at ?? null, r.closedAt, issued ? JSON.stringify(issued) : null, JSON.stringify(timeline), r.applicant.userId ?? 'seed', r.createdAt, r.closedAt ?? r.submittedAt ?? r.createdAt]);
-      requests += ins.rowCount ?? 0;
+      // rowCount now counts filled-in rows too, so only true inserts are counted as new requests
+      requests += ins.rows[0]?.inserted ? 1 : 0;
     }
     for (const [year, seq] of maxSeq) await c.query('INSERT INTO numbering_series(series, last_value) VALUES ($1, $2) ON CONFLICT (series) DO UPDATE SET last_value = GREATEST(numbering_series.last_value, EXCLUDED.last_value)', [`sr:${year}`, seq]);
     for (const rs of world.ruleSets) {

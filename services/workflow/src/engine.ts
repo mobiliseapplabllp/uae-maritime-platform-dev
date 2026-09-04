@@ -7,7 +7,8 @@ import type { DefinitionContent, Effect, State, Transition } from './schema';
 import type { RulesClient } from './rules/client';
 import { truthy } from './rules/expr';
 
-export interface Applicant { userId: string | null; name: string; email: string; phone: string; organisation: string }
+/** `organisationCode` is the tenancy key; `organisation` is only its label. */
+export interface Applicant { userId: string | null; name: string; email: string; phone: string; organisation: string; organisationCode: string }
 export interface RequestDocument { code: string; documentId: string | null; name: string; uploadedAt: string; verified: boolean; verifiedBy: string | null; verifiedAt: string | null; notes: string }
 export interface FeeLine { code: string; description: string; descriptionAr: string | null; unit?: string | null; qty: number; rate: number; amount: number; taxable: boolean }
 export interface Fees { lines: FeeLine[]; subtotal: number; taxRatePct: number; taxAmount: number; total: number; currency: string; ruleSetKey: string | null; ruleSetVersion: number | null; computedAt: string }

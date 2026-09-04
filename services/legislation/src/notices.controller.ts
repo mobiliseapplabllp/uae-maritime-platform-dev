@@ -7,6 +7,7 @@ import type { Env } from './env';
 import { instrumentApi, type InstrumentRow } from './instruments';
 import { recordAcknowledgement } from './legislation.controller';
 import { acksOf, fullInstrument } from './read';
+import { maySeeAcknowledgements } from './scope';
 
 /* The notice board, as the people the notices are addressed to see it.
  *
@@ -24,7 +25,7 @@ export class NoticesController {
 
   /** What is in force and addressed to the desk: circulars, notices and orders, newest first. */
   @RequirePerm('legislation.view') @Get()
-  async board(@Query() query: PageQuery & { type?: string; ackRequired?: string }) {
+  async board(@Query() query: PageQuery & { type?: string; ackRequired?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-issuedDate', sortable: ['issuedDate', 'refNo', 'title', 'type'], maxLimit: 200 });
     const where = ["status = 'IN_FORCE'", '(expiry_date IS NULL OR expiry_date > now())']; const args: unknown[] = [];
     if (query.type) { args.push(query.type); where.push(`type = $${args.length}`); } else { args.push(BOARD_TYPES); where.push(`type = ANY($${args.length})`); }
@@ -34,7 +35,8 @@ export class NoticesController {
     const sort = p.sortField === 'refNo' ? 'ref_no' : p.sortField === 'issuedDate' ? 'issued_date' : p.sortField;
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM legal_instruments ${w}`, args);
     const rows = await this.pool.query<InstrumentRow>(`SELECT * FROM legal_instruments ${w} ORDER BY ${sort} ${p.sortDir}, ref_no LIMIT ${p.limit} OFFSET ${p.offset}`, args);
-    const acks = await acksOf(this.pool, rows.rows.map((r) => r.id));
+    // the board is published; the roll of who has read each notice is not
+    const acks = maySeeAcknowledgements(user.scope) ? await acksOf(this.pool, rows.rows.map((r) => r.id)) : new Map();
     return paged(rows.rows.map((r) => instrumentApi(r, { acknowledgedBy: acks.get(r.id) ?? [] })), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
   }
 

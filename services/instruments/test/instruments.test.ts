@@ -5,6 +5,8 @@ import { Pool } from 'pg';
 import { EVENTS, makeEvent, subjectFor } from '@maritime/contracts';
 import { createApp, loadEnv, signHS256, withTx, StaticPrincipalResolver, PRINCIPAL_RESOLVER, AuditClient } from '@maritime/service-kit';
 import { buildWorld } from '@maritime/world';
+import { scopeWhere } from '@maritime/service-kit';
+import { LICENCE_SCOPE } from '../src/scope';
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedInstruments } from '../src/seed';
@@ -17,6 +19,8 @@ const DB = 'maritime_instruments_test'; const URL = `postgres://maritime:maritim
 let app: INestApplication; let server: unknown; let pool: Pool; let signing: SigningService;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const officer = tok('officer'); const registry = tok('registry'); const surveyor = tok('surveyor'); const nobody = tok('nobody');
+/* An operator, not an officer: they read what is theirs and nothing else. */
+const agentgss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send(body as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -35,6 +39,7 @@ beforeAll(async () => {
     registry: { ...base, id: 'registry', sub: 'registry', name: 'Registry Clerk', perms: ['vessels.view'] },
     surveyor: { ...base, id: 'surveyor', sub: 'surveyor', name: 'Flag Surveyor', perms: ['vessels.view', 'certificates.view', 'certificates.manage'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['vessels.view', 'facilities.view', 'seafarers.view', 'registry.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); signing = app.get(SigningService);
@@ -181,5 +186,81 @@ describe('instruments', () => {
     await pool.query('UPDATE licences SET signature = $2 WHERE id = $1', [lic.id, JSON.stringify({ ...signFacts(old, facts), keyId: 'deadbeefdeadbeef' })]);
     const v2 = await request(server as never).get(`/public/verify/${lic.license_no}`); expect(v2.body.data.signature.valid).toBe(false); expect(v2.body.data.signature.reason).toMatch(/does not hold/);
     expect(canonical(facts)).toContain('|ISSUED');
+  });
+});
+
+/* ============================================== tenancy on the instrument register === */
+
+describe('instruments — tenancy', () => {
+  it('gives every instrument a holder, distinct from what it is issued against', async () => {
+    /* `entity_name` says what the instrument is about — a ship, a berth, a person. `holder_code` says who
+     * holds it. Until the second existed this register could not be partitioned at all. */
+    const held = await pool.query<{ kind: string; owned: string; n: string }>(
+      `SELECT subject_kind AS kind, count(*) FILTER (WHERE holder_code <> '')::text AS owned, count(*)::text AS n
+         FROM licences WHERE request_no IS NULL GROUP BY 1`);
+    const by = new Map(held.rows.map((r) => [r.kind, r]));
+    // every seeded vessel instrument is held by the ship's appointed agent
+    expect(Number(by.get('VESSEL')?.owned)).toBeGreaterThan(0);
+    // a seafarer's certificate is held by the seafarer and by no company, and empty means nobody
+    expect(Number(by.get('SEAFARER')?.owned ?? 0)).toBe(0);
+    expect(Number(by.get('SEAFARER')?.n ?? 0)).toBeGreaterThan(0);
+    const drift = await pool.query<{ n: string }>("SELECT count(*)::text AS n FROM licences WHERE scope_company <> holder_code");
+    expect(Number(drift.rows[0].n)).toBe(0);
+  });
+
+  it('leaves an instrument held by nobody when the officer raising it names no holder', async () => {
+    /* There is no vessel subject to derive a holder from, and guessing one from whoever keyed the
+     * application in would be worse than leaving it unheld: unheld means nobody reads it but the
+     * administration, which is the safe end of the two. */
+    const r = await post('/licenses', { subjectKind: 'COMPANY', entityType: 'BUNKER_SUPPLIER', entityName: 'Unheld Test Co', contactPerson: 'Tester' }, admin);
+    expect(r.status).toBe(201);
+    const row = (await pool.query<{ holder_code: string; scope_company: string }>('SELECT holder_code, scope_company FROM licences WHERE id = $1', [r.body.data.id])).rows[0];
+    expect(row.holder_code).toBe('');
+    expect(row.scope_company).toBe('');
+    expect((await g(`/licenses/${r.body.data.id}`, agentgss)).status).toBe(404);
+    expect((await g(`/licenses/${r.body.data.id}`, admin)).status).toBe(200);
+    await pool.query('DELETE FROM licences WHERE id = $1', [r.body.data.id]);
+  });
+
+  it('shows a holder their own instruments and answers "not found" for the rest', async () => {
+    const mine = await g('/licenses?limit=500', agentgss);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    const all = await g('/licenses?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+
+    const other = (await pool.query<{ id: string; license_no: string }>(
+      "SELECT id, license_no FROM licences WHERE holder_code <> 'GSS' AND holder_code <> '' LIMIT 1")).rows[0];
+    expect(other).toBeTruthy();
+    expect((await g(`/licenses/${other.id}`, agentgss)).status).toBe(404);
+    expect((await g(`/licenses/${other.license_no}`, agentgss)).status).toBe(404);
+    expect((await g(`/licenses/${other.id}`, admin)).status).toBe(200);
+    // a seafarer certificate belongs to nobody, so it is not theirs either
+    const crew = (await pool.query<{ id: string }>("SELECT id FROM licences WHERE subject_kind = 'SEAFARER' LIMIT 1")).rows[0];
+    expect((await g(`/licenses/${crew.id}`, agentgss)).status).toBe(404);
+  });
+
+  it('leaves public verification open, because a certificate is meant to be checkable by whoever holds it', async () => {
+    /* Verification takes a number and answers from the signature, with no session at all. Narrowing it to
+     * the holder would make a certificate unverifiable by the port state officer it is shown to. */
+    const one = (await pool.query<{ license_no: string }>(
+      "SELECT license_no FROM licences WHERE status = 'ISSUED' AND holder_code <> 'GSS' AND holder_code <> '' LIMIT 1")).rows[0];
+    const r = await request(server as never).get(`/public/verify/${one.license_no}`);
+    expect(r.status).toBe(200);
+    expect(r.body.data.found).toBe(true);
+    expect(r.body.data.licenseNo).toBe(one.license_no);
+  });
+
+  it('adds no clause at all for a national reader, whatever their permissions narrow', () => {
+    /* `registry` reads fewer instruments than `admin`, but that is the subject-kind gate their permissions
+     * impose, not tenancy. Tenancy adds nothing for either, which is what this pins. */
+    for (const scope of [{ level: 'NATIONAL' as const }, { level: 'NATIONAL' as const, companies: ['GSS'] }]) {
+      const where: string[] = []; const args: unknown[] = [];
+      expect(scopeWhere(scope, where, args, LICENCE_SCOPE)).toBe(false);
+      expect(where).toEqual([]);
+    }
+    const where: string[] = []; const args: unknown[] = [];
+    expect(scopeWhere({ level: 'COMPANY', companies: ['GSS'] }, where, args, LICENCE_SCOPE)).toBe(true);
+    expect(where.join('')).toContain('scope_company');
   });
 });

@@ -1,5 +1,6 @@
-import { EVENTS, LICENSE_TRANSITIONS, SUBJECT_PERMS, getJurisdiction, numberPrefixOf, makeEvent, type Actor, type EventEnvelope, type InstrumentClass, type LicenseStatus, type SubjectKind } from '@maritime/contracts';
-import { badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { EVENTS, LICENSE_TRANSITIONS, SUBJECT_PERMS, getJurisdiction, numberPrefixOf, makeEvent, type Actor, type EventEnvelope, type InstrumentClass, type LicenseStatus, type SubjectKind, type TenancyScope } from '@maritime/contracts';
+import { scopeWhere, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { LICENCE_SCOPE } from './scope';
 import { addMonths, certStatus, stableId, type WorldEndorsement } from '@maritime/world';
 import type { Env } from './env';
 import type { Signature, SigningService, Verification } from './signing';
@@ -9,7 +10,7 @@ import { checksFor, blockingFailures, resolveSubject, type Check } from './subje
 /* The register row and everything the engine does to it that both the API and the event consumer need: numbering,
  * issue (checks, term, signature, mirror), transitions and the read-model snapshot every write publishes. */
 export interface Row {
-  id: string; license_no: string; subject_kind: string; subject_id: string | null; subject_model: string | null; instrument_class: string; entity_name: string; entity_type: string; status: string;
+  id: string; license_no: string; holder_code: string; scope_company: string; subject_kind: string; subject_id: string | null; subject_model: string | null; instrument_class: string; entity_name: string; entity_type: string; status: string;
   issue_checks: Check[]; contact_person: string; phone: string; email: string; address: string; tax_id: string; applied_date: Date; issue_date: Date | null; expiry_date: Date | null; conditions: string;
   performance_rating: string; audits: LicenceAudit[]; endorsements: WorldEndorsement[]; signature: Signature | null; history: HistoryEntry[]; issuer: string; request_id: string | null; request_no: string | null; reminded_at: Date | null; created_at: Date; updated_at: Date;
 }
@@ -50,19 +51,26 @@ export function mirrorOf(r: Row, now = new Date()) {
 
 export const permBaseFor = (kind: string) => SUBJECT_PERMS[kind as SubjectKind] ?? 'facilities';
 export async function nextLicenceNumber(c: Queryable, type: string, now = new Date()) { const prefix = `${numberPrefixOf(type)}-${now.getUTCFullYear()}`; return nextNumber(c, prefix, `${prefix}-`); }
-export async function findLicence(c: Queryable, idOrNo: string): Promise<Row | null> {
-  const r = await c.query<Row>('SELECT * FROM licences WHERE id::text = $1 OR license_no = $1', [idOrNo]); return r.rows[0] ?? null;
+/* Every handler that touches one instrument comes through these two, so the tenancy filter lives here: an
+ * instrument held by another party is not found rather than found and refused. The public verification
+ * endpoint does not come through here — it checks a signature rather than a session, by design. */
+export async function findLicence(c: Queryable, idOrNo: string, scope: TenancyScope): Promise<Row | null> {
+  const where = ['(id::text = $1 OR license_no = $1)']; const args: unknown[] = [idOrNo];
+  scopeWhere(scope, where, args, LICENCE_SCOPE);
+  const r = await c.query<Row>(`SELECT * FROM licences WHERE ${where.join(' AND ')}`, args); return r.rows[0] ?? null;
 }
-export async function lockLicence(c: Queryable, idOrNo: string): Promise<Row | null> {
-  const r = await c.query<Row>('SELECT * FROM licences WHERE id::text = $1 OR license_no = $1 FOR UPDATE', [idOrNo]); return r.rows[0] ?? null;
+export async function lockLicence(c: Queryable, idOrNo: string, scope: TenancyScope): Promise<Row | null> {
+  const where = ['(id::text = $1 OR license_no = $1)']; const args: unknown[] = [idOrNo];
+  scopeWhere(scope, where, args, LICENCE_SCOPE);
+  const r = await c.query<Row>(`SELECT * FROM licences WHERE ${where.join(' AND ')} FOR UPDATE`, args); return r.rows[0] ?? null;
 }
 export interface NewLicence {
-  licenseNo: string; subjectKind: SubjectKind; subjectId: string | null; subjectModel: string | null; instrumentClass: InstrumentClass; entityName: string; entityType: string; status: LicenseStatus;
+  licenseNo: string; holderCode?: string; subjectKind: SubjectKind; subjectId: string | null; subjectModel: string | null; instrumentClass: InstrumentClass; entityName: string; entityType: string; status: LicenseStatus;
   contactPerson?: string; phone?: string; email?: string; address?: string; taxId?: string; conditions?: string; appliedDate?: Date | string; issuer: string; requestId?: string | null; requestNo?: string | null; history: HistoryEntry[]; issueChecks?: Check[];
 }
 export async function insertLicence(c: Queryable, n: NewLicence): Promise<Row> {
-  const r = await c.query<Row>('INSERT INTO licences(license_no, subject_kind, subject_id, subject_model, instrument_class, entity_name, entity_type, status, contact_person, phone, email, address, tax_id, conditions, applied_date, issuer, request_id, request_no, history, issue_checks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *',
-    [n.licenseNo, n.subjectKind, n.subjectId, n.subjectModel, n.instrumentClass, n.entityName, n.entityType, n.status, n.contactPerson ?? '', n.phone ?? '', n.email ?? '', n.address ?? '', n.taxId ?? '', n.conditions ?? '', n.appliedDate ? new Date(n.appliedDate) : new Date(), n.issuer, n.requestId ?? null, n.requestNo ?? null, JSON.stringify(n.history), JSON.stringify(n.issueChecks ?? [])]);
+  const r = await c.query<Row>('INSERT INTO licences(license_no, holder_code, subject_kind, subject_id, subject_model, instrument_class, entity_name, entity_type, status, contact_person, phone, email, address, tax_id, conditions, applied_date, issuer, request_id, request_no, history, issue_checks) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *',
+    [n.licenseNo, n.holderCode ?? '', n.subjectKind, n.subjectId, n.subjectModel, n.instrumentClass, n.entityName, n.entityType, n.status, n.contactPerson ?? '', n.phone ?? '', n.email ?? '', n.address ?? '', n.taxId ?? '', n.conditions ?? '', n.appliedDate ? new Date(n.appliedDate) : new Date(), n.issuer, n.requestId ?? null, n.requestNo ?? null, JSON.stringify(n.history), JSON.stringify(n.issueChecks ?? [])]);
   return r.rows[0];
 }
 const COLS: Record<string, string> = { status: 'status', entityName: 'entity_name', entityType: 'entity_type', instrumentClass: 'instrument_class', issueChecks: 'issue_checks', contactPerson: 'contact_person', phone: 'phone', email: 'email', address: 'address', taxId: 'tax_id', issueDate: 'issue_date', expiryDate: 'expiry_date', conditions: 'conditions', performanceRating: 'performance_rating', audits: 'audits', endorsements: 'endorsements', signature: 'signature', history: 'history', remindedAt: 'reminded_at' };

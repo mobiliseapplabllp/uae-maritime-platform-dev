@@ -5,7 +5,8 @@ import { pipeline } from 'node:stream/promises';
 import type { Response } from 'express';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, hasPerm, isKnownPermission, WILDCARD } from '@maritime/contracts';
-import { KIT_ENV, KIT_LOGGER, KIT_POOL, ApiError, AuditClient, badRequest, conflict, forbidden, notFound, unprocessable, withTx, enqueue, eventFromContext, getContext, type AppLogger, type Principal, type Queryable } from '@maritime/service-kit';
+import { scopeOfRecord, scopeWhere, visibleTo, KIT_ENV, KIT_LOGGER, KIT_POOL, ApiError, AuditClient, badRequest, conflict, forbidden, notFound, unprocessable, withTx, enqueue, eventFromContext, getContext, type AppLogger, type Principal, type Queryable } from '@maritime/service-kit';
+import { DOCUMENT_SCOPE } from './scope';
 import type { Env } from './env';
 import { STORAGE, StorageObjectNotFound, newStorageKey, type Storage } from './storage';
 import { SCANNER, type Scanner, type ScanResult } from './scanner';
@@ -14,7 +15,7 @@ import { contentDisposition, contentMatches, resolveMime, safeFileName } from '.
 export interface Uploader { id: string; name: string }
 export interface DocRow {
   id: string; entity_type: string; entity_id: string; name: string; doc_type: string; mime: string; size_bytes: string; sha256: string; storage_key: string; version: number; uploaded_by: Uploader;
-  audience_perm: string; virus_status: string; scan_detail: string | null; retention_until: Date | null; legal_hold: boolean; legal_hold_reason: string | null; note: string; scope: unknown;
+  audience_perm: string; virus_status: string; scan_detail: string | null; retention_until: Date | null; legal_hold: boolean; legal_hold_reason: string | null; note: string; scope: unknown; scope_port: string; scope_company: string;
   created_at: Date; updated_at: Date; deleted_at: Date | null;
 }
 export interface VersionRow { id: string; document_id: string; version: number; name: string; mime: string; size_bytes: string; sha256: string; storage_key: string; uploaded_by: Uploader; note: string; created_at: Date }
@@ -55,13 +56,22 @@ export class DocumentsService {
     @Inject(STORAGE) readonly storage: Storage, @Inject(SCANNER) private readonly scanner: Scanner, private readonly audit: AuditClient,
   ) {}
 
-  /** Rows whose audience permission the caller holds; the wildcard sees everything. */
+  /**
+   * Rows this caller may see: the audience permission they hold, and the tenancy they are scoped to.
+   *
+   * Two different questions — what must you hold to read this kind of document, and whose document is it —
+   * and both are answered here, in the one clause every read path already goes through, so neither can be
+   * applied without the other.
+   */
   audienceClause(user: Principal, args: unknown[], alias = 'd'): string {
-    if (hasPerm(user.perms, WILDCARD)) return 'TRUE';
-    args.push(user.perms);
-    return `${alias}.audience_perm = ANY($${args.length}::text[])`;
+    const where: string[] = [];
+    if (!hasPerm(user.perms, WILDCARD)) { args.push(user.perms); where.push(`${alias}.audience_perm = ANY($${args.length}::text[])`); }
+    scopeWhere(user.scope, where, args, { ...DOCUMENT_SCOPE, alias });
+    return where.length ? where.join(' AND ') : 'TRUE';
   }
-  canRead(user: Principal, row: DocRow): boolean { return hasPerm(user.perms, row.audience_perm); }
+  canRead(user: Principal, row: DocRow): boolean {
+    return hasPerm(user.perms, row.audience_perm) && visibleTo(user.scope, row, DOCUMENT_SCOPE);
+  }
   canModify(user: Principal, row: DocRow): boolean { return hasPerm(user.perms, WILDCARD) || hasPerm(user.perms, 'settings.manage') || row.uploaded_by?.id === user.id; }
   uploader(user: Principal): Uploader { return { id: user.id, name: user.name }; }
 
@@ -70,10 +80,15 @@ export class DocumentsService {
     const r = await this.pool.query<DocRow>(`SELECT * FROM documents WHERE id = $1${opts.includeDeleted ? '' : ' AND deleted_at IS NULL'}`, [id]);
     return r.rows[0] ?? null;
   }
+  /* The two gates answer differently on purpose. Tenancy answers "not found": a document belonging to
+   * another company or another port is not this reader's to know about, and a refusal would confirm it
+   * exists. The audience permission answers "forbidden": the reader is inside the tenancy, they simply do
+   * not hold what this class of document requires, and saying so is how they learn what to ask for. */
   async findFor(user: Principal, id: string, opts: { includeDeleted?: boolean } = {}): Promise<DocRow> {
     const row = await this.find(id, opts);
     if (!row) throw notFound('Document not found');
-    if (!this.canRead(user, row)) throw forbidden('Forbidden: document audience');
+    if (!visibleTo(user.scope, row, DOCUMENT_SCOPE)) throw notFound('Document not found');
+    if (!hasPerm(user.perms, row.audience_perm)) throw forbidden('Forbidden: document audience');
     return row;
   }
   async versions(id: string): Promise<VersionRow[]> { return (await this.pool.query<VersionRow>('SELECT * FROM document_versions WHERE document_id = $1 ORDER BY version', [id])).rows; }
@@ -111,11 +126,14 @@ export class DocumentsService {
     const scan = await this.scan(input.buffer);
     let row: DocRow;
     try {
+      /* The one key the uploader unambiguously has. An uploader scoped to several leaves the document
+       * unpartitioned rather than assigned to whichever of theirs came first. */
+      const owner = scopeOfRecord(getContext()?.scope);
       row = await withTx(this.pool, async (c) => {
         const r = await c.query<DocRow>(
-          `INSERT INTO documents(entity_type, entity_id, name, doc_type, mime, size_bytes, sha256, storage_key, version, uploaded_by, audience_perm, virus_status, scan_detail, retention_until, note, scope)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
-          [input.entityType, input.entityId, meta.name, input.docType, meta.mime, input.buffer.length, meta.sha256, key, JSON.stringify(this.uploader(user)), input.audiencePerm, scan.status, scan.detail ?? null, input.retentionUntil ?? null, input.note ?? '', JSON.stringify(getContext()?.scope ?? { level: 'NATIONAL' })]);
+          `INSERT INTO documents(entity_type, entity_id, name, doc_type, mime, size_bytes, sha256, storage_key, version, uploaded_by, audience_perm, virus_status, scan_detail, retention_until, note, scope, scope_port, scope_company)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,1,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+          [input.entityType, input.entityId, meta.name, input.docType, meta.mime, input.buffer.length, meta.sha256, key, JSON.stringify(this.uploader(user)), input.audiencePerm, scan.status, scan.detail ?? null, input.retentionUntil ?? null, input.note ?? '', JSON.stringify(getContext()?.scope ?? { level: 'NATIONAL' }), owner.port ?? '', owner.company ?? '']);
         const doc = r.rows[0];
         await c.query('INSERT INTO document_versions(document_id, version, name, mime, size_bytes, sha256, storage_key, uploaded_by, note) VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8)', [doc.id, doc.name, doc.mime, doc.size_bytes, doc.sha256, key, JSON.stringify(doc.uploaded_by), doc.note]);
         await this.audit.record(c, { action: 'UPLOAD', entity: 'Document', entityId: doc.id, entityLabel: doc.name, after: toApi(doc) });

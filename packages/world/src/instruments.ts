@@ -15,6 +15,10 @@ export interface WorldEndorsement { kind: EndorsementKind; anniversary: string; 
 export interface WorldLicence {
   id: string; licenseNo: string; subjectKind: SubjectKind; subjectId: string | null; subjectModel: 'Company' | 'Vessel' | 'Seafarer' | 'Berth' | null; instrumentClass: InstrumentClass;
   entityName: string; entityType: string; typeLabel: string; typeLabelAr?: string; status: LicenseStatus; issueChecks: WorldCheck[]; contactPerson: string; phone: string; email: string; address: string; taxId: string;
+  /* Who holds the instrument, as a code rather than a name. `entityName` says what it is issued against —
+   * a ship, a seafarer, a berth — which is not the same question. A seafarer's certificate is held by the
+   * seafarer and by no company, so this is empty there, and empty means nobody rather than everybody. */
+  holderCode: string;
   appliedDate: string; issueDate: string | null; expiryDate: string | null; conditions: string; performanceRating: number; audits: WorldLicenceAudit[]; endorsements: WorldEndorsement[]; signature: null; history: WorldHistoryEntry[];
 }
 
@@ -108,7 +112,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
   const vById = new Map(vessels.map((v) => [v.id, v])); const out: WorldLicence[] = [];
   const base = (p: Partial<WorldLicence> & Pick<WorldLicence, 'subjectKind' | 'entityName' | 'entityType' | 'status' | 'appliedDate'>): WorldLicence => ({
     id: '', licenseNo: '', subjectId: null, subjectModel: null, instrumentClass: instrumentClassOf(p.entityType), typeLabel: INSTRUMENT_TYPE_LABEL[p.entityType]?.[0] ?? p.entityType, typeLabelAr: ae ? INSTRUMENT_TYPE_LABEL[p.entityType]?.[1] : undefined,
-    issueChecks: [], contactPerson: '', phone: '', email: '', address: '', taxId: '', issueDate: null, expiryDate: null, conditions: '', performanceRating: 0, audits: [], endorsements: [], signature: null, history: [], ...p });
+    issueChecks: [], contactPerson: '', phone: '', email: '', address: '', taxId: '', holderCode: '', issueDate: null, expiryDate: null, conditions: '', performanceRating: 0, audits: [], endorsements: [], signature: null, history: [], ...p });
   // roll a term forward from its first issue so nothing is trading on a lapsed instrument
   const roll = (issued: Date, months: number) => { let termStart = issued; const renewals: Date[] = []; while (termStart.getTime() + months * MONTH < now.getTime()) { termStart = new Date(termStart.getTime() + months * MONTH); renewals.push(termStart); } return { termStart, renewals, expiry: new Date(termStart.getTime() + months * MONTH) }; };
   const lifecycle = (status: LicenseStatus, applied: Date, issued: Date | null, by: string, what: string, renewals: Date[] = []): WorldHistoryEntry[] => {
@@ -129,7 +133,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
       const status: LicenseStatus = c.status === 'SUSPENDED' ? 'SUSPENDED' : c.status === 'INACTIVE' || c.status === 'BLACKLISTED' ? 'REVOKED' : k % 11 === 4 ? 'UNDER_REVIEW' : k % 13 === 6 ? 'APPLIED' : k % 17 === 9 ? 'REJECTED' : 'ISSUED';
       const established = ISSUED_LIKE.has(status); const applied = new Date(now.getTime() - (established ? rng.int(380, histDays) : rng.int(20, 180)) * D);
       const issued = established ? new Date(applied.getTime() + 30 * D) : null; const months = termMonthsOf(type); const term = issued ? roll(issued, months) : null; const auditor = surveyors[k % surveyors.length];
-      out.push(base({ subjectKind: type.startsWith('MET_') ? 'MET_INSTITUTION' : 'COMPANY', subjectId: c.id, subjectModel: 'Company', entityName: c.name, entityType: type, status, contactPerson: c.contactName, phone: c.contactPhone, email: c.contactEmail, address: c.address, taxId: c.taxId,
+      out.push(base({ subjectKind: type.startsWith('MET_') ? 'MET_INSTITUTION' : 'COMPANY', subjectId: c.id, subjectModel: 'Company', entityName: c.name, entityType: type, holderCode: c.code, status, contactPerson: c.contactName, phone: c.contactPhone, email: c.contactEmail, address: c.address, taxId: c.taxId,
         appliedDate: iso(applied), issueDate: issued ? iso(issued) : null, expiryDate: term ? iso(term.expiry) : null, conditions: status === 'ISSUED' ? 'Valid within port limits; subject to annual safety audit.' : '', performanceRating: established ? c.rating : 0,
         issueChecks: issued ? [check('Company is on the directory and not blacklisted', true, true, 'In good standing')] : [],
         audits: status === 'REVOKED' ? [{ date: iso(now.getTime() - 140 * D), auditorId: auditor.id, auditor: auditor.name, result: 'OBSERVATIONS', remarks: 'Calibration certificates due for renewal' }, { date: iso(now.getTime() - 80 * D), auditorId: auditor.id, auditor: auditor.name, result: 'NON_CONFORMITY', remarks: 'Deliveries made with uncalibrated meters; suspension recommended' }]
@@ -142,7 +146,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
     const op = companies.find((c) => c.category === 'TERMINAL_OPERATOR' && (/Container/.test(b.terminal) ? c.code === 'CTO' : /Liquid|SPM/.test(b.terminal) ? c.code === 'LTO' : c.code === 'BTO'));
     const status: LicenseStatus = i === 5 ? 'UNDER_REVIEW' : i === 7 ? 'APPLIED' : 'ISSUED'; const applied = new Date(now.getTime() - (status === 'ISSUED' ? rng.int(400, histDays) : rng.int(20, 120)) * D);
     const issued = status === 'ISSUED' ? new Date(applied.getTime() + 45 * D) : null; const term = issued ? roll(issued, 60) : null;
-    out.push(base({ subjectKind: 'PORT_FACILITY', subjectId: b.id, subjectModel: 'Berth', entityName: `${b.name} (${b.code})`, entityType: 'ISPS_STATEMENT_OF_COMPLIANCE', status, contactPerson: op?.contactName ?? '', email: op?.contactEmail ?? '', address: b.terminal,
+    out.push(base({ subjectKind: 'PORT_FACILITY', subjectId: b.id, subjectModel: 'Berth', entityName: `${b.name} (${b.code})`, entityType: 'ISPS_STATEMENT_OF_COMPLIANCE', holderCode: op?.code ?? '', status, contactPerson: op?.contactName ?? '', email: op?.contactEmail ?? '', address: b.terminal,
       appliedDate: iso(applied), issueDate: issued ? iso(issued) : null, expiryDate: term ? iso(term.expiry) : null, conditions: status === 'ISSUED' ? 'Valid for the facility as described in the approved Port Facility Security Plan.' : '',
       issueChecks: issued ? [check('Port facility is operational', true, false, `Facility status is ${b.status}`)] : [], history: lifecycle(status, applied, issued, op?.contactName ?? 'PFSO', 'Statement of compliance', term?.renewals) }));
   });
@@ -151,7 +155,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
     const kinds = [v.flag === j.code ? 'NAVIGATION_LICENCE' : 'FOREIGN_VESSEL_PERMIT', ...(i % 5 === 2 ? ['VESSEL_NOC'] : [])];
     for (const type of kinds) {
       const applied = new Date(now.getTime() - rng.int(40, Math.min(histDays, 900)) * D); const issued = new Date(applied.getTime() + rng.int(6, 20) * D); const term = roll(issued, termMonthsOf(type));
-      out.push(base({ subjectKind: 'VESSEL', subjectId: v.id, subjectModel: 'Vessel', entityName: `${v.name} (IMO ${v.imo})`, entityType: type, status: 'ISSUED', contactPerson: v.agentCode,
+      out.push(base({ subjectKind: 'VESSEL', subjectId: v.id, subjectModel: 'Vessel', entityName: `${v.name} (IMO ${v.imo})`, entityType: type, holderCode: v.agentCode, status: 'ISSUED', contactPerson: v.agentCode,
         appliedDate: iso(applied), issueDate: iso(term.termStart), expiryDate: iso(term.expiry), conditions: type === 'VESSEL_NOC' ? 'Valid for the declared movement only.' : 'Valid within port limits and the approach channel.',
         issueChecks: [check('Vessel is on the active register', true, true, 'Active'), check('Statutory certificates in force', true, true, 'No expired certificate at issue'), check('Class docking survey current', true, false, 'Docking within the class cycle')],
         history: lifecycle('ISSUED', applied, term.termStart, v.agentCode, INSTRUMENT_TYPE_LABEL[type][0], term.renewals) }));
@@ -194,7 +198,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
     [...SHIP_CERTS, ...(vi % 2 === 0 ? ['IAPP_CERTIFICATE', 'BALLAST_WATER_MANAGEMENT'] : [])].forEach((type, ci) => {
       const months = termMonthsOf(type); const first = new Date(now.getTime() - (lapsed ? rng.int(900, 1500) : rng.int(200, 3000)) * D); const term = roll(first, months);
       const applied = new Date(first.getTime() - rng.int(14, 40) * D); const ro = ROs[(vi + ci) % ROs.length];
-      out.push(base({ subjectKind: 'VESSEL', subjectId: v.id, subjectModel: 'Vessel', entityName: `${v.name} (IMO ${v.imo})`, entityType: type, status: 'ISSUED', contactPerson: v.manager,
+      out.push(base({ subjectKind: 'VESSEL', subjectId: v.id, subjectModel: 'Vessel', entityName: `${v.name} (IMO ${v.imo})`, entityType: type, holderCode: v.agentCode, status: 'ISSUED', contactPerson: v.manager,
         appliedDate: iso(applied), issueDate: iso(term.termStart), expiryDate: iso(term.expiry), conditions: `Issued under ${CONVENTION[type]}. Subject to the survey endorsements recorded on this certificate.`,
         issueChecks: [check('Vessel is on the active register', true, true, `Official number ${r.officialNumber}`), check('Statutory certificates in force', true, true, 'No expired certificate at issue'), check('Class docking survey current', true, false, 'Docking within the class cycle')],
         endorsements: surveysFor(type, term, ro, lapsed), history: lifecycle('ISSUED', applied, term.termStart, v.owner, CERT_LABEL[type], term.renewals) }));
@@ -204,6 +208,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
   [...new Set(onRegister.map((r) => vById.get(r.vesselId)!.manager).filter(Boolean))].slice(0, 4).forEach((manager, i) => {
     const first = new Date(now.getTime() - rng.int(300, 3000) * D); const term = roll(first, 60); const applied = new Date(first.getTime() - rng.int(30, 60) * D);
     out.push(base({ subjectKind: 'COMPANY', entityName: manager, entityType: 'DOCUMENT_OF_COMPLIANCE', status: 'ISSUED', contactPerson: 'Designated Person Ashore',
+      holderCode: companies.find((c) => c.name === manager)?.code ?? '',
       appliedDate: iso(applied), issueDate: iso(term.termStart), expiryDate: iso(term.expiry), conditions: 'Issued under the ISM Code for the ship types listed on the certificate.',
       issueChecks: [check('Company is on the directory and not blacklisted', true, true, 'In good standing')], endorsements: surveysFor('DOCUMENT_OF_COMPLIANCE', term, ROs[i % ROs.length], false),
       history: lifecycle('ISSUED', applied, term.termStart, manager, 'Document of Compliance', term.renewals) }));

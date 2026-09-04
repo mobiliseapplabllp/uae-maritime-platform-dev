@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Inject, Param, Post } from '@nestjs/common';
 import type { Pool } from 'pg';
-import { EVENTS, SUBJECT_KINDS, type SubjectKind } from '@maritime/contracts';
+import { NATIONAL_SCOPE, EVENTS, SUBJECT_KINDS, type SubjectKind } from '@maritime/contracts';
 import { KIT_ENV, KIT_POOL, AuditClient, ServiceOnly, badRequest, notFound, withTx } from '@maritime/service-kit';
 import type { Env } from './env';
 import { SigningService } from './signing';
@@ -13,7 +13,7 @@ import { issueFromApplication, type ApplicationIssue } from './consumer';
 export class InternalController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly signing: SigningService) {}
   @Get('instruments/:idOrNo')
-  async get(@Param('idOrNo') idOrNo: string) { const row = await findLicence(this.pool, idOrNo); if (!row) throw notFound('Instrument not found'); return detail(row, this.signing, this.pool); }
+  async get(@Param('idOrNo') idOrNo: string) { const row = await findLicence(this.pool, idOrNo, NATIONAL_SCOPE); if (!row) throw notFound('Instrument not found'); return detail(row, this.signing, this.pool); }
   @Post('instruments/issue')
   async issue(@Body() body: ApplicationIssue) {
     if (!body || typeof body !== 'object' || !body.instrumentType) throw badRequest('instrumentType is required');

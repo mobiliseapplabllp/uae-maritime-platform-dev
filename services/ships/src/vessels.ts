@@ -1,6 +1,7 @@
-import { EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
+import { type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
 import { certStatus } from '@maritime/world';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { scopeWhere, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { VESSEL_SCOPE } from './scope';
 import type { Env } from './env';
 
 /* The fleet record and the certificate list that hangs off it.
@@ -74,9 +75,13 @@ export function vesselApi(v: VesselRow, profile: string, extra: VesselExtras = {
 }
 export type VesselApi = ReturnType<typeof vesselApi>;
 
-export async function findVessel(c: Queryable, ref: string): Promise<VesselRow | null> {
+/* Every handler that touches one ship comes through here, so the tenancy filter lives here rather than in
+ * each of them: a ship another agent acts for is not found rather than found and refused. */
+export async function findVessel(c: Queryable, ref: string, scope: TenancyScope): Promise<VesselRow | null> {
   const byId = /^[0-9a-f-]{36}$/i.test(ref);
-  const r = await c.query<VesselRow>(byId ? 'SELECT * FROM vessels WHERE id = $1' : 'SELECT * FROM vessels WHERE imo = $1', [ref]);
+  const where = [byId ? 'id = $1' : 'imo = $1']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, VESSEL_SCOPE);
+  const r = await c.query<VesselRow>(`SELECT * FROM vessels WHERE ${where.join(' AND ')}`, args);
   return r.rows[0] ?? null;
 }
 export async function certsOf(c: Queryable, vesselId: string, now = new Date(), windowDays?: number): Promise<CertApi[]> {

@@ -1,5 +1,6 @@
-import { EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
+import { scopeWhere, enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { REGISTRATION_SCOPE } from './scope';
 import type { Env } from './env';
 import { iso, type Row, type VesselRow } from './vessels';
 import { portName, shareLedger, requiredEvidence, type Check } from './registry';
@@ -45,12 +46,17 @@ export function registrationDetail(r: RegistrationRow, vessel: Row | null, profi
   return { ...registrationApi(r, profile, now), vessel, requiredEvidence: requiredEvidence(registrationApi(r, profile, now), profile), shareLedger: shareLedger(r.owners ?? [], profile) };
 }
 
-export async function findRegistration(c: Queryable, ref: string): Promise<RegistrationRow | null> {
-  const r = await c.query<RegistrationRow>('SELECT * FROM registrations WHERE id::text = $1 OR application_no = $1', [ref]);
+/* The choke point for one application, so the tenancy filter is here and not in the handlers. */
+export async function findRegistration(c: Queryable, ref: string, scope: TenancyScope): Promise<RegistrationRow | null> {
+  const where = ['(id::text = $1 OR application_no = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, REGISTRATION_SCOPE);
+  const r = await c.query<RegistrationRow>(`SELECT * FROM registrations WHERE ${where.join(' AND ')}`, args);
   return r.rows[0] ?? null;
 }
-export async function lockRegistration(c: Queryable, ref: string): Promise<RegistrationRow | null> {
-  const r = await c.query<RegistrationRow>('SELECT * FROM registrations WHERE id::text = $1 OR application_no = $1 FOR UPDATE', [ref]);
+export async function lockRegistration(c: Queryable, ref: string, scope: TenancyScope): Promise<RegistrationRow | null> {
+  const where = ['(id::text = $1 OR application_no = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, REGISTRATION_SCOPE);
+  const r = await c.query<RegistrationRow>(`SELECT * FROM registrations WHERE ${where.join(' AND ')} FOR UPDATE`, args);
   return r.rows[0] ?? null;
 }
 

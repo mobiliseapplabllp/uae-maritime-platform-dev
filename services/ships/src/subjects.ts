@@ -1,5 +1,5 @@
 import type { PoolClient } from 'pg';
-import { EVENTS, type EventEnvelope } from '@maritime/contracts';
+import { NATIONAL_SCOPE, EVENTS, type EventEnvelope } from '@maritime/contracts';
 import type { Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { findVessel, publishVessel, type Row } from './vessels';
@@ -113,6 +113,6 @@ export async function projectSnapshot(c: PoolClient, env: Env, event: EventEnvel
 
 /** Republishes a ship whose record changed because something arrived for it. */
 export async function republishVessel(c: PoolClient, env: Env, vesselId: string, cause: EventEnvelope) {
-  const v = await findVessel(c, vesselId);
+  const v = await findVessel(c, vesselId, NATIONAL_SCOPE);
   if (v) await publishVessel(c, env, v, { cause });
 }

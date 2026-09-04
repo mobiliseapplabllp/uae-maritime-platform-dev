@@ -14,6 +14,8 @@ const DB = 'maritime_seafarers_test'; const URL = `postgres://maritime:maritime@
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const desk = tok('desk'); const clerk = tok('clerk'); const nobody = tok('nobody');
+/* An operator, not an officer: they read what is theirs and nothing else. */
+const agentgss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -34,6 +36,7 @@ beforeAll(async () => {
     desk: { ...base, id: 'desk', sub: 'desk', name: 'Crewing Desk', perms: ['seafarers.view', 'seafarers.create', 'seafarers.edit', 'seafarers.delete'] },
     clerk: { ...base, id: 'clerk', sub: 'clerk', name: 'Records Clerk', perms: ['seafarers.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['seafarers.view', 'dashboard.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
@@ -365,5 +368,33 @@ describe('seafarers — the consumer', () => {
       await applyEvent(client, deps(), makeEvent({ type: EVENTS.readModel.upserted, source: env.SERVICE_NAME, data: { kind: 'instrument', entity: { id: 'inst-echo-1', subjectKind: 'SEAFARER', subjectId: 'x', typeLabel: 'Echo', expiryDate: iso(Date.now() + D) } } }));
     } finally { client.release(); }
     expect((await pool.query('SELECT count(*) AS n FROM seafarer_certificates')).rows[0].n).toBe(before);
+  });
+});
+
+/* ================================================== tenancy on the crew register === */
+
+describe('seafarers — tenancy', () => {
+  it('closes the register to a company entirely, by list, by id and by count', async () => {
+    const all = await g('/seafarers?limit=1', admin);
+    expect(all.body.meta.total).toBeGreaterThan(0);
+    const closed = await g('/seafarers?limit=500', agentgss);
+    expect(closed.status).toBe(200);
+    expect(closed.body.meta.total).toBe(0);
+    expect(closed.body.data).toHaveLength(0);
+
+    const one = (await g('/seafarers?limit=1', admin)).body.data[0];
+    expect((await g(`/seafarers/${one.id}`, agentgss)).status).toBe(404);
+    expect((await g(`/seafarers/${one.id}/card`, agentgss)).status).toBe(404);
+    expect((await g(`/seafarers/${one.id}`, admin)).status).toBe(200);
+    /* The register holds a person's medical fitness, their discharge record and their certificate history.
+     * A dashboard that counted them would leak how many there are and what state they are in. */
+    const dash = await g('/seafarers/dashboard', agentgss);
+    expect(dash.status).toBe(200);
+    expect(dash.body.data.kpis.roll).toBe(0);
+    expect((await g('/seafarers/dashboard', admin)).body.data.kpis.roll).toBeGreaterThan(0);
+  });
+
+  it('leaves a national desk reading the whole register, with no clause added at all', async () => {
+    expect((await g('/seafarers?limit=1', desk)).body.meta.total).toBe((await g('/seafarers?limit=1', admin)).body.meta.total);
   });
 });

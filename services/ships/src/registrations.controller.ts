@@ -2,8 +2,9 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { AMENDMENT_TYPES, DELETION_REASONS, EVENTS, REGISTRATION_TRANSITIONS, canTransition, getJurisdiction, type PageQuery, type RegistrationStatus } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, nextNumber, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { NATIONAL_SCOPE, AMENDMENT_TYPES, DELETION_REASONS, EVENTS, REGISTRATION_TRANSITIONS, canTransition, getJurisdiction, type PageQuery, type RegistrationStatus } from '@maritime/contracts';
+import { scopeWhere, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, nextNumber, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { REGISTRATION_SCOPE } from './scope';
 import type { Env } from './env';
 import { findVessel, publishVessel, vesselApi, type Row, type VesselRow } from './vessels';
 import {
@@ -65,7 +66,9 @@ export class RegistrationsController {
 
   /** What only the database can answer: whether this ship already sits on the register, and the money owed against her. */
   private async contextFor(c: PoolClient | Pool, doc: RegistrationRow) {
-    const vessel = doc.vessel_id ? await findVessel(c, doc.vessel_id) : null;
+    /* The ship behind an application the caller has already been permitted to read: part of that
+     * record's own context, not a second lookup the reader has to qualify for again. */
+    const vessel = doc.vessel_id ? await findVessel(c, doc.vessel_id, NATIONAL_SCOPE) : null;
     const state = vessel?.registry_state ?? 'UNREGISTERED';
     const other = doc.vessel_id
       ? await c.query<{ n: string }>(`SELECT count(*) AS n FROM registrations WHERE vessel_id = $1 AND kind = ANY($2) AND status = 'GRANTED' AND id <> $3`, [doc.vessel_id, ['PERMANENT', 'PROVISIONAL'], doc.id])
@@ -106,7 +109,7 @@ export class RegistrationsController {
   /* ------------------------------------------------------------------ the register --- */
 
   @RequirePerm('registry.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-createdAt', sortable: Object.keys(SORT), maxLimit: 200 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -114,6 +117,7 @@ export class RegistrationsController {
     if (String(query.open) === 'true') { args.push(OPEN_STATUSES); where.push(`status = ANY($${args.length})`); }
     if (String(query.breached) === 'true') where.push('closed_at IS NULL AND due_at < now()');
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(application_no ILIKE $${args.length} OR vessel_name ILIKE $${args.length} OR imo ILIKE $${args.length} OR official_number ILIKE $${args.length} OR certificate_no ILIKE $${args.length} OR applicant->>'name' ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, REGISTRATION_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM registrations ${w}`, args);
     const rows = await this.pool.query<RegistrationRow>(`SELECT * FROM registrations ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, application_no DESC LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -121,17 +125,17 @@ export class RegistrationsController {
   }
 
   @RequirePerm('registry.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const doc = await findRegistration(this.pool, id);
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const doc = await findRegistration(this.pool, id, user.scope);
     if (!doc) throw notFound('Registration not found');
-    const vessel = doc.vessel_id ? await findVessel(this.pool, doc.vessel_id) : null;
+    const vessel = doc.vessel_id ? await findVessel(this.pool, doc.vessel_id, user.scope) : null;
     return registrationDetail(doc, vessel ? vesselApi(vessel, this.profile) : null, this.profile);
   }
 
   /** Dry-run the statutory checks against the file as it stands right now — an officer sees what will block before deciding. */
   @RequirePerm('registry.view') @Get(':id/checks')
-  async checks(@Param('id') id: string) {
-    const doc = await findRegistration(this.pool, id);
+  async checks(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const doc = await findRegistration(this.pool, id, user.scope);
     if (!doc) throw notFound('Registration not found');
     const { checks, blocked } = await this.runChecks(this.pool, doc);
     return { applicationNo: doc.application_no, kind: doc.kind, checks, blocked };
@@ -140,10 +144,10 @@ export class RegistrationsController {
   /* ----------------------------------------------------------------------- lodging --- */
 
   @RequirePerm('registry.apply', 'registry.assess') @Post()
-  async apply(@Body(zod(applySchema)) body: z.infer<typeof applySchema>, @CurrentUser() user?: Principal) {
+  async apply(@Body(zod(applySchema)) body: z.infer<typeof applySchema>, @CurrentUser() user: Principal) {
     const j = getJurisdiction(this.profile);
     return withTx(this.pool, async (c) => {
-      const vessel = await findVessel(c, body.vesselId);
+      const vessel = await findVessel(c, body.vesselId, user.scope);
       if (!vessel) throw notFound('No vessel found for this application');
       const port = String(body.portOfRegistry ?? j.registry.defaultPort).toUpperCase();
       if (!isKnownPort(port, this.profile)) throw badRequest(`${port} is not a declared port of registry`);
@@ -189,9 +193,9 @@ export class RegistrationsController {
 
   /** Amend a file that has not yet been decided. */
   @RequirePerm('registry.assess') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(updateSchema)) body: z.infer<typeof updateSchema>) {
+  async update(@Param('id') id: string, @Body(zod(updateSchema)) body: z.infer<typeof updateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (CLOSED_STATUSES.includes(doc.status)) throw conflict(`A ${doc.status.toLowerCase()} application cannot be edited`);
       const patch: Record<string, unknown> = {};
@@ -211,9 +215,9 @@ export class RegistrationsController {
 
   /** A file nobody has acted on can be taken off the register list; anything lodged is history and stays. */
   @RequirePerm('registry.grant') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (doc.status !== 'DRAFT') throw conflict('Only a draft application can be deleted — a lodged file is part of the register');
       await this.audit.record(c, { action: 'DELETE', entity: 'VesselRegistration', entityId: doc.id, entityLabel: doc.application_no, before: this.api(doc) });
@@ -226,9 +230,9 @@ export class RegistrationsController {
   /* -------------------------------------------------------------------- evidence --- */
 
   @RequirePerm('registry.apply', 'registry.assess') @Post(':id/evidence')
-  async addEvidence(@Param('id') id: string, @Body(zod(evidenceSchema)) body: z.infer<typeof evidenceSchema>) {
+  async addEvidence(@Param('id') id: string, @Body(zod(evidenceSchema)) body: z.infer<typeof evidenceSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (CLOSED_STATUSES.includes(doc.status)) throw conflict(`A ${doc.status.toLowerCase()} application cannot take further evidence`);
       const item = { id: randomUUID(), ...body, issuedOn: body.issuedOn ?? null, verified: false, verifiedBy: '', verifiedAt: null, createdAt: new Date().toISOString() };
@@ -239,9 +243,9 @@ export class RegistrationsController {
   }
 
   @RequirePerm('registry.assess') @Put(':id/evidence/:evidenceId')
-  async verifyEvidence(@Param('id') id: string, @Param('evidenceId') evidenceId: string, @Body(zod(z.object({ verified: z.boolean().optional() }))) body: { verified?: boolean }, @CurrentUser() user?: Principal) {
+  async verifyEvidence(@Param('id') id: string, @Param('evidenceId') evidenceId: string, @Body(zod(z.object({ verified: z.boolean().optional() }))) body: { verified?: boolean }, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       const list = doc.evidence ?? [];
       const item = list.find((e: Row) => String(e.id) === evidenceId);
@@ -257,9 +261,9 @@ export class RegistrationsController {
   /* ----------------------------------------------------------------- encumbrances --- */
 
   @RequirePerm('registry.assess') @Post(':id/encumbrances')
-  async addEncumbrance(@Param('id') id: string, @Body(zod(encumbranceSchema)) body: z.infer<typeof encumbranceSchema>) {
+  async addEncumbrance(@Param('id') id: string, @Body(zod(encumbranceSchema)) body: z.infer<typeof encumbranceSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       const item = { id: randomUUID(), ...body, currency: body.currency ?? getJurisdiction(this.profile).currency.code, registeredOn: body.registeredOn ?? new Date().toISOString(), dischargedOn: null };
       const next = await updateRegistration(c, doc.id, { encumbrances: [...(doc.encumbrances ?? []), item] });
@@ -269,9 +273,9 @@ export class RegistrationsController {
   }
 
   @RequirePerm('registry.assess') @Put(':id/encumbrances/:encumbranceId')
-  async dischargeEncumbrance(@Param('id') id: string, @Param('encumbranceId') encumbranceId: string, @Body(zod(z.object({ dischargedOn: z.string().nullable().optional() }))) body: { dischargedOn?: string | null }) {
+  async dischargeEncumbrance(@Param('id') id: string, @Param('encumbranceId') encumbranceId: string, @Body(zod(z.object({ dischargedOn: z.string().nullable().optional() }))) body: { dischargedOn?: string | null }, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       const list = doc.encumbrances ?? [];
       const item = list.find((e: Row) => String(e.id) === encumbranceId);
@@ -287,10 +291,10 @@ export class RegistrationsController {
   /* -------------------------------------------------------------------- lifecycle --- */
 
   @RequirePerm('registry.assess') @Post(':id/transition')
-  async transition(@Param('id') id: string, @Body(zod(transitionSchema)) body: z.infer<typeof transitionSchema>, @CurrentUser() user?: Principal) {
+  async transition(@Param('id') id: string, @Body(zod(transitionSchema)) body: z.infer<typeof transitionSchema>, @CurrentUser() user: Principal) {
     const to = body.to as RegistrationStatus;
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (to === 'GRANTED') throw badRequest('Use the grant endpoint — a grant writes the register');
       if (!canTransition(REGISTRATION_TRANSITIONS, doc.status as RegistrationStatus, to)) {
@@ -339,9 +343,9 @@ export class RegistrationsController {
 
   /** The surveyor reports that the official number and tonnage are cut into the ship. */
   @RequirePerm('registry.assess') @Post(':id/carving-compliance')
-  async carvingCompliance(@Param('id') id: string, @Body(zod(carvingSchema)) body: z.infer<typeof carvingSchema>, @CurrentUser() user?: Principal) {
+  async carvingCompliance(@Param('id') id: string, @Body(zod(carvingSchema)) body: z.infer<typeof carvingSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (doc.status !== 'CARVING_NOTE_ISSUED') throw conflict('No carving note is outstanding on this application');
       const now = new Date();
@@ -364,10 +368,10 @@ export class RegistrationsController {
    * the ship comes off the register. Doing it in one place is what keeps the ship record and the register
    * from ever disagreeing. */
   @RequirePerm('registry.grant') @Post(':id/grant')
-  async grant(@Param('id') id: string, @Body(zod(grantSchema)) body: z.infer<typeof grantSchema>, @CurrentUser() user?: Principal) {
+  async grant(@Param('id') id: string, @Body(zod(grantSchema)) body: z.infer<typeof grantSchema>, @CurrentUser() user: Principal) {
     const j = getJurisdiction(this.profile);
     return withTx(this.pool, async (c) => {
-      const doc = await lockRegistration(c, id);
+      const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (doc.status !== 'APPROVED') throw conflict('Only an approved application can be granted');
       const vr = await c.query<VesselRow>('SELECT * FROM vessels WHERE id = $1 FOR UPDATE', [doc.vessel_id]);
@@ -450,7 +454,9 @@ export class RegistrationsController {
    * official number changed halfway through her first year on the flag would be a ship nobody could trace. */
   private async allocateOfficialNumber(c: PoolClient, doc: RegistrationRow, by: string): Promise<string> {
     if (doc.official_number) return doc.official_number;
-    const vessel = doc.vessel_id ? await findVessel(c, doc.vessel_id) : null;
+    /* The ship behind an application the caller has already been permitted to read: part of that
+     * record's own context, not a second lookup the reader has to qualify for again. */
+    const vessel = doc.vessel_id ? await findVessel(c, doc.vessel_id, NATIONAL_SCOPE) : null;
     if (doc.kind === 'PERMANENT' && vessel?.registry_state === 'PROVISIONAL' && vessel.official_number) {
       const prior = await c.query<RegistrationRow>(`SELECT * FROM registrations WHERE vessel_id = $1 AND kind = 'PROVISIONAL' AND status = 'GRANTED' ORDER BY granted_on DESC LIMIT 1`, [doc.vessel_id]);
       if (prior.rows[0]) {

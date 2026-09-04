@@ -2,7 +2,8 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, SEAFARER_RANKS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal } from '@maritime/service-kit';
+import { scopeWhere, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal } from '@maritime/service-kit';
+import { SEAFARER_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
   SEAFARER_STATUS, certApi, certsOf, crewDashboard, documentGate, findSeafarer, iso, publishSeafarer, publishSeafarerDeleted,
@@ -62,7 +63,7 @@ export class SeafarersController {
 
   /** The register: filterable, searchable, paged, with the document summary and the sea-day total computed. */
   @RequirePerm('seafarers.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'name', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -70,6 +71,7 @@ export class SeafarersController {
     if (String(query.onboard) === 'true') where.push('current_vessel_id IS NOT NULL');
     if (String(query.onboard) === 'false') where.push('current_vessel_id IS NULL');
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(name ILIKE $${args.length} OR cdc_no ILIKE $${args.length} OR seafarer_id ILIKE $${args.length} OR national_id ILIKE $${args.length} OR current_vessel_name ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, SEAFARER_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM seafarers ${w}`, args);
     const rows = await this.pool.query<SeafarerRow>(`SELECT * FROM seafarers ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, name LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -84,9 +86,10 @@ export class SeafarersController {
 
   /** The crew module's landing analytics. Declared before `:id` so the word is not read as an id. */
   @RequirePerm('seafarers.view', 'dashboard.view') @Get('dashboard')
-  async dashboard() {
+  async dashboard(@CurrentUser() user: Principal) {
     const now = this.now();
-    const rows = (await this.pool.query<SeafarerRow>('SELECT * FROM seafarers')).rows;
+    const sc = scopedWhere(user.scope, SEAFARER_SCOPE);
+    const rows = (await this.pool.query<SeafarerRow>(`SELECT * FROM seafarers ${sc.sql}`, sc.args)).rows;
     const ids = rows.map((s) => s.id);
     const [certs, service] = await Promise.all([this.certsFor(ids, now), this.serviceFor(ids)]);
     return crewDashboard(rows.map((s) => ({
@@ -97,8 +100,8 @@ export class SeafarersController {
   }
 
   @RequirePerm('seafarers.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const s = await findSeafarer(this.pool, id);
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const s = await findSeafarer(this.pool, id, user.scope);
     if (!s) throw notFound('Seafarer not found');
     const now = this.now();
     return seafarerApi(s, { certificates: await certsOf(this.pool, s.id, now, this.env.CERT_EXPIRING_DAYS), seaService: await serviceOf(this.pool, s.id) });
@@ -106,8 +109,8 @@ export class SeafarersController {
 
   /** What the hover card shows: rank, where they are, and whether their papers are current. */
   @RequirePerm('seafarers.view') @Get(':id/card')
-  async card(@Param('id') id: string) {
-    const s = await findSeafarer(this.pool, id);
+  async card(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const s = await findSeafarer(this.pool, id, user.scope);
     if (!s) throw notFound('Seafarer not found');
     const service = await serviceOf(this.pool, s.id);
     return seafarerCard(s, await certsOf(this.pool, s.id, this.now(), this.env.CERT_EXPIRING_DAYS), service.reduce((t, x) => t + x.days, 0));
@@ -165,9 +168,9 @@ export class SeafarersController {
   /* ------------------------------------------------------------------ certificates --- */
 
   @RequirePerm('seafarers.edit', 'certificates.manage') @Post(':id/certificates')
-  async addCert(@Param('id') id: string, @Body(zod(certBody)) body: z.infer<typeof certBody>) {
+  async addCert(@Param('id') id: string, @Body(zod(certBody)) body: z.infer<typeof certBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const clash = await c.query('SELECT id FROM seafarer_certificates WHERE seafarer_id = $1 AND cert_type = $2 AND instrument_id IS NOT NULL', [s.id, body.certType]);
       if (clash.rowCount) throw conflict(`${body.certType} for ${s.name} is issued on the instrument register — amend it there, not on the record`);
@@ -180,9 +183,9 @@ export class SeafarersController {
   }
 
   @RequirePerm('seafarers.edit', 'certificates.manage') @Put(':id/certificates/:certId')
-  async updateCert(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(certPatch)) body: z.infer<typeof certPatch>) {
+  async updateCert(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(certPatch)) body: z.infer<typeof certPatch>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const found = await c.query<CertRow>('SELECT * FROM seafarer_certificates WHERE id::text = $1 AND seafarer_id = $2 FOR UPDATE', [certId, s.id]);
       const before = found.rows[0];
@@ -198,9 +201,9 @@ export class SeafarersController {
   }
 
   @RequirePerm('seafarers.edit', 'certificates.manage') @Delete(':id/certificates/:certId')
-  async removeCert(@Param('id') id: string, @Param('certId') certId: string) {
+  async removeCert(@Param('id') id: string, @Param('certId') certId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const found = await c.query<CertRow>('SELECT * FROM seafarer_certificates WHERE id::text = $1 AND seafarer_id = $2 FOR UPDATE', [certId, s.id]);
       const cert = found.rows[0];
@@ -214,10 +217,10 @@ export class SeafarersController {
 
   /** This administration's endorsement of a certificate issued by another — the flag's recognition, recorded against the document. */
   @RequirePerm('seafarers.edit', 'certificates.manage') @Post(':id/certificates/:certId/endorse')
-  async endorse(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(endorseBody)) body: z.infer<typeof endorseBody>, @CurrentUser() user?: Principal) {
+  async endorse(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(endorseBody)) body: z.infer<typeof endorseBody>, @CurrentUser() user: Principal) {
     const j = getJurisdiction(this.env.JURISDICTION);
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const found = await c.query<CertRow>('SELECT * FROM seafarer_certificates WHERE id::text = $1 AND seafarer_id = $2 FOR UPDATE', [certId, s.id]);
       const cert = found.rows[0];
@@ -233,9 +236,9 @@ export class SeafarersController {
   /* -------------------------------------------------------------------- sea service --- */
 
   @RequirePerm('seafarers.edit') @Post(':id/service')
-  async addService(@Param('id') id: string, @Body(zod(serviceBody)) body: z.infer<typeof serviceBody>, @CurrentUser() user?: Principal) {
+  async addService(@Param('id') id: string, @Body(zod(serviceBody)) body: z.infer<typeof serviceBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       if (new Date(body.to) <= new Date(body.from)) throw badRequest('Sign-off date must be after sign-on date');
       const vessel = body.vesselId ? (await c.query<{ id: string; name: string; imo: string }>('SELECT id, name, imo FROM vessels WHERE id = $1', [body.vesselId])).rows[0] : undefined;
@@ -250,9 +253,9 @@ export class SeafarersController {
 
   /** Verifying a tour is a statement of fact by the desk — checked against the crew list and the movement record. */
   @RequirePerm('seafarers.edit') @Put(':id/service/:serviceId')
-  async verifyService(@Param('id') id: string, @Param('serviceId') serviceId: string, @Body(zod(z.object({ verified: z.boolean().optional(), remarks: text(1000).optional() }))) body: { verified?: boolean; remarks?: string }, @CurrentUser() user?: Principal) {
+  async verifyService(@Param('id') id: string, @Param('serviceId') serviceId: string, @Body(zod(z.object({ verified: z.boolean().optional(), remarks: text(1000).optional() }))) body: { verified?: boolean; remarks?: string }, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const found = await c.query<ServiceRow>('SELECT * FROM sea_service WHERE id::text = $1 AND seafarer_id = $2 FOR UPDATE', [serviceId, s.id]);
       const before = found.rows[0];
@@ -269,14 +272,14 @@ export class SeafarersController {
   }
 
   @RequirePerm('seafarers.edit') @Post(':id/service/:serviceId/verify')
-  verifyServicePost(@Param('id') id: string, @Param('serviceId') serviceId: string, @Body(zod(z.object({ remarks: text(1000).optional() }))) body: { remarks?: string }, @CurrentUser() user?: Principal) {
+  verifyServicePost(@Param('id') id: string, @Param('serviceId') serviceId: string, @Body(zod(z.object({ remarks: text(1000).optional() }))) body: { remarks?: string }, @CurrentUser() user: Principal) {
     return this.verifyService(id, serviceId, { verified: true, remarks: body.remarks }, user);
   }
 
   @RequirePerm('seafarers.edit') @Delete(':id/service/:serviceId')
-  async removeService(@Param('id') id: string, @Param('serviceId') serviceId: string) {
+  async removeService(@Param('id') id: string, @Param('serviceId') serviceId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const s = await findSeafarer(c, id);
+      const s = await findSeafarer(c, id, user.scope);
       if (!s) throw notFound('Seafarer not found');
       const found = await c.query<ServiceRow>('SELECT * FROM sea_service WHERE id::text = $1 AND seafarer_id = $2 FOR UPDATE', [serviceId, s.id]);
       const svc = found.rows[0];
@@ -324,7 +327,7 @@ export class SeafarersController {
   /* Signing off closes the tour and writes the sea-service record for it — already verified, because the
    * desk is the one that knows when the seafarer went aboard and when they came off. */
   @RequirePerm('seafarers.edit') @Post(':id/sign-off')
-  async signOff(@Param('id') id: string, @Body(zod(signOffBody)) body: z.infer<typeof signOffBody>, @CurrentUser() user?: Principal) {
+  async signOff(@Param('id') id: string, @Body(zod(signOffBody)) body: z.infer<typeof signOffBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const found = await c.query<SeafarerRow>('SELECT * FROM seafarers WHERE id::text = $1 FOR UPDATE', [id]);
       const s = found.rows[0];

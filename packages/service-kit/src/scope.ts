@@ -100,8 +100,15 @@ export function scopeWhere(scope: TenancyScope | undefined, where: string[], arg
   return true;
 }
 
-/** A record's partition keys, in either column style, for a row already in hand. */
-export type ScopeRef = Partial<Record<ScopePartition, string>> | Record<string, unknown>;
+/**
+ * A record's partition keys, for a row already in hand.
+ *
+ * Both column styles are accepted and every key is optional, so a typed row interface carrying
+ * `scope_company` satisfies it without needing an index signature bolted on to be passed here.
+ */
+export type ScopeRef =
+  & Partial<Record<ScopePartition, string | null>>
+  & Partial<Record<`scope_${ScopePartition}`, string | null>>;
 
 const keyOn = (record: ScopeRef, partition: ScopePartition): string => {
   const r = record as Record<string, unknown>;

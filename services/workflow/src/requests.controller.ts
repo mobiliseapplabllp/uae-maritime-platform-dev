@@ -2,17 +2,18 @@ import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, REQUEST_OPEN_STATUS, hasPerm, type PageQuery } from '@maritime/contracts';
-import { KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, withTx, enqueue, eventFromContext, nextNumber, type Principal } from '@maritime/service-kit';
+import { scopeOfRecord, scopeWhere, visibleTo, KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, withTx, enqueue, eventFromContext, nextNumber, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import type { DefinitionContent, FormField } from './schema';
 import { WORKFLOW_ENGINE, WorkflowEngine, type EngineActor, type RequestDocument, type RequestState, type TransitionResult } from './engine';
 import { contentOf, loadDefinition, loadPublished, loadRequest, loadVersion, noteToApi, requestToApi, saveRequest, type NoteRow, type RequestRow, type VersionRow } from './repo';
+import { REQUEST_SCOPE } from './scope';
 
 const createSchema = z.object({
   definitionKey: z.string().max(120).optional(), definitionId: z.string().max(80).optional(),
   subjectId: z.string().max(80).optional().nullable(), subjectName: z.string().max(200).optional().nullable(), subject: z.record(z.unknown()).default({}),
   formData: z.record(z.unknown()).default({}), documents: z.array(z.object({ code: z.string().max(60), documentId: z.string().max(80).optional().nullable(), name: z.string().max(200).default('') })).default([]),
-  applicant: z.object({ name: z.string().max(160).optional(), email: z.string().max(200).optional(), phone: z.string().max(40).optional(), organisation: z.string().max(200).optional() }).default({}),
+  applicant: z.object({ name: z.string().max(160).optional(), email: z.string().max(200).optional(), phone: z.string().max(40).optional(), organisation: z.string().max(200).optional(), organisationCode: z.string().max(40).optional() }).default({}),
   draft: z.boolean().default(false), note: z.string().max(1000).default(''),
 }).refine((b) => !!(b.definitionKey || b.definitionId), { message: 'definitionKey is required' });
 const transitionSchema = z.object({ action: z.string().regex(/^[a-z][a-z0-9_]*$/), note: z.string().max(2000).default(''), payload: z.record(z.unknown()).default({}) });
@@ -50,10 +51,24 @@ export async function validateFormData(content: DefinitionContent, data: Record<
 @Controller('services/requests')
 export class RequestsController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, @Inject(WORKFLOW_ENGINE) private readonly engine: WorkflowEngine, private readonly audit: AuditClient) {}
+  /* Whose applications a reader may see, in one place.
+   *
+   * A company-scoped reader sees their company's — their colleagues' included, which is the point: an
+   * agency with two desks is one applicant, and each of them seeing only what they personally keyed in was
+   * the gap this closes. Anyone else who is not staff still sees only what they lodged themselves, because
+   * with no company behind them there is nothing else to narrow by. Staff, scoped nationally, see all of
+   * it. In every case the answer for an application outside the set is "not found" rather than a refusal
+   * that would confirm it exists.
+   */
   private async own(q: Pool | PoolClient, id: string, user: Principal, lock = false): Promise<RequestRow> {
     const row = await loadRequest(q, id, lock);
-    if (!isStaff(user) && row.applicant?.userId !== user.id) throw notFound('Request not found');
+    if (!visibleTo(user.scope, { company: row.scope_company }, REQUEST_SCOPE)) throw notFound('Request not found');
+    if (!isStaff(user) && !this.partitioned(user) && row.applicant?.userId !== user.id) throw notFound('Request not found');
     return row;
+  }
+  /** Whether this reader's own scope narrows the register for them. */
+  private partitioned(user: Principal): boolean {
+    const where: string[] = []; return scopeWhere(user.scope, where, [], REQUEST_SCOPE);
   }
   private version(q: Pool | PoolClient, row: RequestRow): Promise<VersionRow> { return loadVersion(q, row.definition_id, row.definition_version, row.environment as VersionRow['environment']); }
   private async persist(c: PoolClient, before: RequestRow, r: TransitionResult, note: string): Promise<RequestRow> {
@@ -79,7 +94,11 @@ export class RequestsController {
     const p = parsePage(query, { defaultSort: '-createdAt', sortable: Object.keys(SORT) });
     const where: string[] = []; const args: unknown[] = [];
     const staff = isStaff(user);
-    if (!staff || query.mine === 'true') { args.push(user.id); where.push(`applicant->>'userId' = $${args.length}`); }
+    /* The company partition first: it is the reader's standing. The personal filter then applies to anyone
+     * who asked for it, and to a non-staff reader with no company behind them — for whom it is the only
+     * thing there is to narrow by. */
+    const partitioned = scopeWhere(user.scope, where, args, REQUEST_SCOPE);
+    if (query.mine === 'true' || (!staff && !partitioned)) { args.push(user.id); where.push(`applicant->>'userId' = $${args.length}`); }
     if (query.status) { args.push(String(query.status).toUpperCase().split(',')); where.push(`status = ANY($${args.length}::text[])`); }
     if (query.definition) { args.push(query.definition); where.push(`(definition_key = $${args.length} OR definition_id::text = $${args.length})`); }
     if (query.category) { args.push(query.category); where.push(`category = $${args.length}`); }
@@ -111,7 +130,10 @@ export class RequestsController {
       const now = this.engine.now(); const year = now.getUTCFullYear();
       const number = await nextNumber(c, `sr:${year}`, `SR-${year}-`, 5);
       const start = this.engine.startState(content);
-      const applicant = { userId: user.id, name: b.applicant.name ?? user.name, email: b.applicant.email ?? user.email ?? '', phone: b.applicant.phone ?? '', organisation: b.applicant.organisation ?? '' };
+      /* The author's own scope decides who the application belongs to, not what the body claims: a
+       * company-scoped applicant cannot lodge one into another company's register by naming it. */
+      const organisationCode = scopeOfRecord(user.scope).company ?? b.applicant.organisationCode ?? '';
+      const applicant = { userId: user.id, name: b.applicant.name ?? user.name, email: b.applicant.email ?? user.email ?? '', phone: b.applicant.phone ?? '', organisation: b.applicant.organisation ?? '', organisationCode };
       const documents: RequestDocument[] = b.documents.map((d) => ({ code: d.code, documentId: d.documentId ?? null, name: d.name || `${d.code}.pdf`, uploadedAt: now.toISOString(), verified: false, verifiedBy: null, verifiedAt: null, notes: '' }));
       const timeline = [{ from: '', to: start.key, action: 'create', at: now.toISOString(), by: { id: user.id, name: user.name }, note: b.note || 'Application started' }];
       const ins = await c.query<RequestRow>(

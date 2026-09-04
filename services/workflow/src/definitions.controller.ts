@@ -24,7 +24,7 @@ const draftSchema = z.object({ changeNote: z.string().max(500).optional(), fromV
 const simulateSchema = z.object({
   environment: ENV.optional(), formData: z.record(z.unknown()).default({}), documents: z.array(z.object({ code: z.string().max(60), verified: z.boolean().default(true), name: z.string().max(200).default('') })).default([]),
   subject: z.record(z.unknown()).default({}), subjectId: z.string().max(80).optional().nullable(), subjectName: z.string().max(200).default('Simulated subject'),
-  applicant: z.object({ userId: z.string().optional().nullable(), name: z.string().default('Simulated applicant'), email: z.string().default(''), phone: z.string().default(''), organisation: z.string().default('') }).default({}),
+  applicant: z.object({ userId: z.string().optional().nullable(), name: z.string().default('Simulated applicant'), email: z.string().default(''), phone: z.string().default(''), organisation: z.string().default(''), organisationCode: z.string().default('') }).default({}),
   actions: z.array(z.object({ action: z.string().max(60), note: z.string().max(1000).default(''), payload: z.record(z.unknown()).default({}) }).or(z.string().max(60))).min(1),
   actor: z.object({ id: z.string().default('simulator'), name: z.string().default('Simulator'), perms: z.array(z.string()).default(['*']) }).default({}), now: z.string().datetime().optional(),
 });
@@ -234,7 +234,7 @@ export class DefinitionsController {
     const start = engine.startState(content); const t0 = engine.now().toISOString();
     let req: RequestState = {
       id: '00000000-0000-4000-a000-000000000000', number: 'SR-SIM-00001', definitionId: def.id, definitionKey: def.key, definitionName: def.name, definitionNameAr: def.name_ar, definitionVersion: ver.version, environment: ver.environment, category: def.category, domain: def.domain,
-      subjectKind: def.subject_kind, subjectId: b.subjectId ?? null, subjectName: b.subjectName, subject: b.subject, applicant: { userId: b.applicant.userId ?? null, name: b.applicant.name, email: b.applicant.email, phone: b.applicant.phone, organisation: b.applicant.organisation }, status: 'DRAFT', currentState: start.key,
+      subjectKind: def.subject_kind, subjectId: b.subjectId ?? null, subjectName: b.subjectName, subject: b.subject, applicant: { userId: b.applicant.userId ?? null, name: b.applicant.name, email: b.applicant.email, phone: b.applicant.phone, organisation: b.applicant.organisation, organisationCode: b.applicant.organisationCode ?? '' }, status: 'DRAFT', currentState: start.key,
       formData: b.formData, documents: b.documents.map((d) => ({ code: d.code, documentId: null, name: d.name || `${d.code}.pdf`, uploadedAt: t0, verified: d.verified, verifiedBy: d.verified ? 'Simulator' : null, verifiedAt: d.verified ? t0 : null, notes: '' })),
       fees: null, payment: null, assignee: null, checks: [], slaDueAt: null, slaBreached: false, slaBreachedAt: null, submittedAt: null, decidedAt: null, closedAt: null, issuedInstrument: null, timeline: [], createdBy: b.actor.id, createdAt: t0, updatedAt: t0,
     };

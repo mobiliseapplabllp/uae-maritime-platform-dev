@@ -1,3 +1,4 @@
+import { NATIONAL_SCOPE } from '@maritime/contracts';
 import { Controller, Get, Inject, Param } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { KIT_POOL, Public, badRequest } from '@maritime/service-kit';
@@ -12,7 +13,11 @@ export class PublicController {
   @Public() @Get('verify/:licenseNo')
   async verify(@Param('licenseNo') licenseNo: string) {
     const no = String(licenseNo ?? '').trim().toUpperCase(); if (!no || no.length > 40 || !/^[A-Z0-9-]+$/.test(no)) throw badRequest('Enter the number printed on the instrument');
-    const row = await findLicence(this.pool, no);
+    /* Verification is deliberately outside the tenancy model. A certificate is meant to be checkable by
+     * whoever is handed it — a port state officer abroad, a charterer, an insurer — so this takes a number
+     * and answers from the signature, with no session at all, and returns only what the certificate already
+     * prints on its face. Narrowing it to the holder would make it unverifiable by the people it is for. */
+    const row = await findLicence(this.pool, no, NATIONAL_SCOPE);
     if (!row) return { found: false, licenseNo: no, message: 'No instrument with this number is on the register' };
     const now = new Date(); const force = forceOf(row, now);
     const verification = await this.signing.verify({ licenseNo: row.license_no, entityType: row.entity_type, subjectKind: row.subject_kind, subjectId: row.subject_id, entityName: row.entity_name, issueDate: row.issue_date, expiryDate: row.expiry_date, signature: row.signature });

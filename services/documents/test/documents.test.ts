@@ -19,6 +19,8 @@ const DB = 'maritime_documents_test'; const DB_URL = `postgres://maritime:mariti
 let app: INestApplication; let server: unknown; let bus: MemoryBus; let relay: OutboxRelay; let pool: Pool; let clam: Awaited<ReturnType<typeof startFakeClamAv>>; let storageDir: string; let storage: LocalStorage;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const officer = tok('officer'); const viewer = tok('viewer'); const compliance = tok('compliance');
+/* A port officer with a port, and an operator: what the store must tell apart. */
+const khalifa = tok('khalifa'); const agentgss = tok('agent-gss');
 const sha = (b: Buffer) => createHash('sha256').update(b).digest('hex');
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
 const pdf = minimalPdf('Survey report (sample)');
@@ -52,6 +54,8 @@ beforeAll(async () => {
     admin: { id: 'admin', sub: 'admin', name: 'Admin', email: 'admin@maritime.example', perms: ['*'], scope: { level: 'NATIONAL' }, kind: 'user', active: true },
     officer: { id: 'officer', sub: 'officer', name: 'Duty Officer', email: 'officer@maritime.example', perms: ['incidents.view', 'incidents.manage', 'certificates.view'], scope: { level: 'PORT' }, kind: 'user', active: true },
     viewer: { id: 'viewer', sub: 'viewer', name: 'Viewer', email: 'viewer@maritime.example', perms: ['dashboard.view'], scope: { level: 'NATIONAL' }, kind: 'user', active: true },
+    khalifa: { id: 'khalifa', sub: 'khalifa', name: 'Khalifa Officer', email: 'k@maritime.example', perms: ['incidents.view', 'incidents.manage', 'certificates.view'], scope: { level: 'PORT', ports: ['AEAUH'] }, kind: 'user', active: true },
+    'agent-gss': { id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', email: 'g@maritime.example', perms: ['incidents.view', 'certificates.view'], scope: { level: 'COMPANY', companies: ['GSS'] }, kind: 'agent', active: true },
     compliance: { id: 'compliance', sub: 'compliance', name: 'Compliance', email: 'compliance@maritime.example', perms: ['settings.manage', 'incidents.view'], scope: { level: 'NATIONAL' }, kind: 'user', active: true },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
@@ -217,5 +221,57 @@ describe('documents', () => {
     const stats = await srv().get('/documents/stats').set('authorization', officer); expect(stats.body.data.infected).toBeGreaterThanOrEqual(2);
     const events = await published();
     expect(events.filter((e) => e.event.type === EVENTS.documents.scanned && (e.event.data as { status: string }).status === 'INFECTED').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/* ================================================== tenancy on the document store === */
+
+describe('documents — tenancy', () => {
+  const rows = async (t: string) => (await srv().get('/documents?limit=500').set('authorization', t)).body;
+
+  it('records the one key an uploader unambiguously has, not their whole scope', async () => {
+    /* The store used to copy the uploader's scope onto the row. An officer posted to two ports has a scope
+     * naming both, and a document does not belong to two ports — that was a statement about the uploader. */
+    const seeded = await pool.query<{ n: string; partitioned: string }>(
+      "SELECT count(*)::text AS n, count(*) FILTER (WHERE scope_port <> '' OR scope_company <> '')::text AS partitioned FROM documents");
+    expect(Number(seeded.rows[0].n)).toBeGreaterThan(0);
+    // the seeded store is the administration's: shared across ports, owned by no company
+    expect(Number(seeded.rows[0].partitioned)).toBe(0);
+    expect((await rows(agentgss)).meta.total).toBe(0);
+  });
+
+  it('narrows a company reader to their own documents, on top of the audience permission', async () => {
+    const one = (await pool.query<{ id: string }>('SELECT id FROM documents WHERE deleted_at IS NULL LIMIT 1')).rows[0];
+    try {
+      await pool.query("UPDATE documents SET scope_company = 'GSS' WHERE id = $1", [one.id]);
+      const mine = await rows(agentgss);
+      expect(mine.meta.total).toBe(1);
+      expect(mine.data[0].id).toBe(one.id);
+      expect((await srv().get(`/documents/${one.id}`).set('authorization', agentgss)).status).toBe(200);
+      // another company's reader is not admitted to the same row
+      await pool.query("UPDATE documents SET scope_company = 'OAP' WHERE id = $1", [one.id]);
+      expect((await rows(agentgss)).meta.total).toBe(0);
+      expect((await srv().get(`/documents/${one.id}`).set('authorization', agentgss)).status).toBe(404);
+      // and the administration still reads it
+      expect((await srv().get(`/documents/${one.id}`).set('authorization', admin)).status).toBe(200);
+    } finally { await pool.query("UPDATE documents SET scope_company = '' WHERE id = $1", [one.id]); }
+  });
+
+  it('treats a port as containment: a document naming no port is above every port', async () => {
+    const before = (await rows(khalifa)).meta.total;
+    expect(before).toBeGreaterThan(0);
+    const one = (await pool.query<{ id: string }>('SELECT id FROM documents WHERE deleted_at IS NULL LIMIT 1')).rows[0];
+    try {
+      await pool.query("UPDATE documents SET scope_port = 'AEFJR' WHERE id = $1", [one.id]);
+      expect((await rows(khalifa)).meta.total).toBe(before - 1);
+      expect((await srv().get(`/documents/${one.id}`).set('authorization', khalifa)).status).toBe(404);
+      await pool.query("UPDATE documents SET scope_port = 'AEAUH' WHERE id = $1", [one.id]);
+      expect((await rows(khalifa)).meta.total).toBe(before);
+    } finally { await pool.query("UPDATE documents SET scope_port = '' WHERE id = $1", [one.id]); }
+  });
+
+  it('leaves a national reader seeing everything their audience permission allows', async () => {
+    expect((await rows(admin)).meta.total).toBeGreaterThan(0);
+    expect((await rows(admin)).meta.total).toBeGreaterThanOrEqual((await rows(compliance)).meta.total);
   });
 });

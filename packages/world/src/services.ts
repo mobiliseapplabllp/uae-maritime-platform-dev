@@ -19,7 +19,10 @@ export interface WorldServiceDefinition {
 }
 export interface WorldRequestDoc { key: string; label: string; fileName: string; uploadedAt: string; verified: boolean; verifiedBy: string; verifiedAt: string | null; notes: string }
 export interface WorldServiceRequest {
-  id: string; requestNo: string; serviceId: string; serviceCode: string; serviceName: string; domain: number; applicant: { userId: string | null; name: string; email: string; phone: string; organisation: string };
+  id: string; requestNo: string; serviceId: string; serviceCode: string; serviceName: string; domain: number; /* `organisationCode` is the tenancy key and `organisation` is the label for it. A name identifies a
+   * company to a reader; only the code identifies it to the platform, and a request that carries the name
+   * alone cannot be told apart from another company's by anything but string matching. */
+  applicant: { userId: string | null; name: string; email: string; phone: string; organisation: string; organisationCode: string };
   subjectKind: SubjectKind; subjectId: string | null; subjectModel: 'Company' | 'Vessel' | 'Seafarer' | 'Berth' | null; subjectLabel: string; formData: Record<string, unknown>; documents: WorldRequestDoc[];
   status: RequestStatus; currentStage: string; assignedToId: string | null; assignedTo: string; checks: WorldCheck[]; decision: { outcome: 'APPROVED' | 'REJECTED'; by: string; at: string; reason: string; automated: boolean } | null;
   issuedInstrumentId: string | null; issuedInstrumentNo: string; fee: { amount: number; currency: string; paid: boolean; paidAt: string | null; reference: string }; createdAt: string; submittedAt: string | null; dueAt: string | null; closedAt: string | null; timeline: WorldHistoryEntry[];
@@ -117,10 +120,11 @@ export function buildServiceRequests(rng: Prng, profile: string, defs: WorldServ
   const byCode = new Map(companies.map((c) => [c.code, c])); const vById = new Map(vessels.map((v) => [v.id, v])); const sById = new Map(seafarers.map((s) => [s.id, s])); const cById = new Map(companies.map((c) => [c.id, c])); const bById = new Map(berths.map((b) => [b.id, b]));
   const assignee = (kind: SubjectKind) => (kind === 'VESSEL' ? registrar : kind === 'SEAFARER' ? surveyor : kind === 'PORT_FACILITY' ? pfso : approver ?? registrar);
   const applicantFor = (kind: SubjectKind, id: string | null): WorldServiceRequest['applicant'] => {
-    if (kind === 'VESSEL') { const v = id ? vById.get(id) : undefined; const agent = v ? byCode.get(v.agentCode) : undefined; return { userId: agentUser?.id ?? null, name: agentUser?.name ?? 'Agent', email: agentUser?.email ?? '', phone: agentUser?.phone ?? '', organisation: agent?.name ?? '' }; }
-    if (kind === 'SEAFARER') { const s = id ? sById.get(id) : undefined; return { userId: null, name: s?.name ?? '', email: s?.email ?? '', phone: s?.phone ?? '', organisation: 'Self' }; }
-    if (kind === 'PORT_FACILITY') { const b = id ? bById.get(id) : undefined; const op = companies.find((c) => c.category === 'TERMINAL_OPERATOR' && (/Container/.test(b?.terminal ?? '') ? c.code === 'CTO' : /Liquid|SPM/.test(b?.terminal ?? '') ? c.code === 'LTO' : c.code === 'BTO')); return { userId: null, name: op?.contactName ?? 'PFSO', email: op?.contactEmail ?? '', phone: op?.contactPhone ?? '', organisation: op?.name ?? '' }; }
-    const c = id ? cById.get(id) : undefined; return { userId: null, name: c?.contactName ?? 'Designated Person Ashore', email: c?.contactEmail ?? '', phone: c?.contactPhone ?? '', organisation: c?.name ?? '' };
+    if (kind === 'VESSEL') { const v = id ? vById.get(id) : undefined; const agent = v ? byCode.get(v.agentCode) : undefined; return { userId: agentUser?.id ?? null, name: agentUser?.name ?? 'Agent', email: agentUser?.email ?? '', phone: agentUser?.phone ?? '', organisation: agent?.name ?? '', organisationCode: agent?.code ?? '' }; }
+    if (kind === 'SEAFARER') { const s = id ? sById.get(id) : undefined; // a seafarer applies for themselves: there is no company behind them, and so no company may read it
+    return { userId: null, name: s?.name ?? '', email: s?.email ?? '', phone: s?.phone ?? '', organisation: 'Self', organisationCode: '' }; }
+    if (kind === 'PORT_FACILITY') { const b = id ? bById.get(id) : undefined; const op = companies.find((c) => c.category === 'TERMINAL_OPERATOR' && (/Container/.test(b?.terminal ?? '') ? c.code === 'CTO' : /Liquid|SPM/.test(b?.terminal ?? '') ? c.code === 'LTO' : c.code === 'BTO')); return { userId: null, name: op?.contactName ?? 'PFSO', email: op?.contactEmail ?? '', phone: op?.contactPhone ?? '', organisation: op?.name ?? '', organisationCode: op?.code ?? '' }; }
+    const c = id ? cById.get(id) : undefined; return { userId: null, name: c?.contactName ?? 'Designated Person Ashore', email: c?.contactEmail ?? '', phone: c?.contactPhone ?? '', organisation: c?.name ?? '', organisationCode: c?.code ?? '' };
   };
   const docsFor = (def: WorldServiceDefinition, at: Date, verified: boolean): WorldRequestDoc[] => def.requiredDocuments.map((d) => ({ key: d.key, label: d.label, fileName: `${d.key}.pdf`, uploadedAt: iso(at), verified, verifiedBy: verified ? 'Registry' : '', verifiedAt: verified ? iso(at.getTime() + 2 * D) : null, notes: '' }));
   const out: WorldServiceRequest[] = [];

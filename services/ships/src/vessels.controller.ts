@@ -2,7 +2,8 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod } from '@maritime/service-kit';
+import { CurrentUser, scopeWhere, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod } from '@maritime/service-kit';
+import { VESSEL_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
   VESSEL_STATUS, agentNameOf, certApi, certsOf, fleetDashboard, findVessel, iso, movementEventsOf, publishCertificate, publishCertificateDeleted,
@@ -70,7 +71,7 @@ export class VesselsController {
 
   /** The register: filterable, searchable, paged, and carrying each ship's certificate list. */
   @RequirePerm('vessels.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'name', sortable: Object.keys(SORT), maxLimit: 500 });
     const now = this.now();
     const where: string[] = []; const args: unknown[] = [];
@@ -87,6 +88,7 @@ export class VesselsController {
       args.push(scored.rows.filter((r) => r.band === query.riskBand).map((r) => r.vesselId));
       where.push(`id = ANY($${args.length})`);
     }
+    scopeWhere(user.scope, where, args, VESSEL_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM vessels ${w}`, args);
     const rows = await this.pool.query<VesselRow>(`SELECT * FROM vessels ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, name LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -98,9 +100,12 @@ export class VesselsController {
 
   /** The vessel module's landing analytics. Declared before `:id` so the word is not read as an id. */
   @RequirePerm('vessels.view', 'dashboard.view') @Get('fleet-dashboard')
-  async fleetDashboard() {
+  async fleetDashboard(@CurrentUser() user: Principal) {
     const now = this.now();
-    const rows = (await this.pool.query<VesselRow>('SELECT * FROM vessels')).rows;
+    /* The analytics are a read of every ship they count, so an agent's fleet dashboard is of their own
+     * fleet — a total that swept in ships they do not act for would leak the register through a number. */
+    const sc = scopedWhere(user.scope, VESSEL_SCOPE);
+    const rows = (await this.pool.query<VesselRow>(`SELECT * FROM vessels ${sc.sql}`, sc.args)).rows;
     const certs = await this.certsByVessel(rows.map((v) => v.id), now);
     const calls = (await this.pool.query<{ vessel_id: string; status: string }>(`SELECT vessel_id, status FROM port_calls WHERE status = ANY($1)`, [['ANNOUNCED', 'CONFIRMED', 'AT_ANCHORAGE', 'BERTHED']])).rows;
     return fleetDashboard(rows.map((v) => ({ ...v, certs: certs.get(v.id) ?? [] })), calls, now);
@@ -155,8 +160,8 @@ export class VesselsController {
 
   /** The full ship record the eight-tab screen renders from: particulars, certificates, calls, inspections, incidents, crew and her last fix. */
   @RequirePerm('vessels.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     const now = this.now();
     const [certs, calls, inspections, incidents, crew, position, agentName] = await Promise.all([
@@ -181,8 +186,8 @@ export class VesselsController {
 
   /** The voyage ledger and the trade lanes it adds up to. */
   @RequirePerm('vessels.view') @Get(':id/voyages')
-  async voyages(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async voyages(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     const calls = await this.pool.query<CallRow>(`SELECT * FROM port_calls WHERE vessel_id = $1 AND status = 'SAILED' ORDER BY atd DESC NULLS LAST LIMIT 40`, [v.id]);
     return voyagesOf(calls.rows);
@@ -190,8 +195,8 @@ export class VesselsController {
 
   /** The movement picture: her last AIS fix and the port's own event trail. */
   @RequirePerm('vessels.view') @Get(':id/movements')
-  async movements(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async movements(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     const [pos, calls] = await Promise.all([
       this.pool.query<Row>('SELECT * FROM positions WHERE vessel_id = $1', [v.id]),
@@ -203,8 +208,8 @@ export class VesselsController {
 
   /** The transcript of registry, assembled from the granted applications so it cannot drift from the register. */
   @RequirePerm('registry.view', 'vessels.view') @Get(':id/transcript')
-  async transcript(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async transcript(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     const rows = await this.pool.query<RegistrationRow>('SELECT * FROM registrations WHERE vessel_id = $1', [v.id]);
     return transcriptOf(v, rows.rows, this.env.JURISDICTION);
@@ -212,8 +217,8 @@ export class VesselsController {
 
   /** Every registry transaction against one ship, newest first. */
   @RequirePerm('registry.view', 'vessels.view') @Get(':id/registrations')
-  async registrations(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async registrations(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     const rows = await this.pool.query<RegistrationRow>('SELECT * FROM registrations WHERE vessel_id = $1 ORDER BY created_at DESC', [v.id]);
     return paged(rows.rows.map((r) => registrationApi(r, this.env.JURISDICTION)), { total: rows.rowCount ?? 0, page: 1, limit: rows.rowCount ?? 0 });
@@ -221,8 +226,8 @@ export class VesselsController {
 
   /** The four facts that answer "which ship is this?" for a hover card. */
   @RequirePerm('vessels.view') @Get(':id/card')
-  async card(@Param('id') id: string) {
-    const v = await findVessel(this.pool, id);
+  async card(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
     return vesselCard(v, await certsOf(this.pool, v.id, this.now(), this.env.CERT_EXPIRING_DAYS), this.env.JURISDICTION);
   }
@@ -281,9 +286,9 @@ export class VesselsController {
   /* ------------------------------------------------------------------- certificates --- */
 
   @RequirePerm('certificates.manage') @Post(':id/certificates')
-  async addCert(@Param('id') id: string, @Body(zod(certBody)) body: z.infer<typeof certBody>) {
+  async addCert(@Param('id') id: string, @Body(zod(certBody)) body: z.infer<typeof certBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const v = await findVessel(c, id);
+      const v = await findVessel(c, id, user.scope);
       if (!v) throw notFound('Vessel not found');
       const clash = await c.query<{ id: string }>('SELECT id FROM vessel_certificates WHERE vessel_id = $1 AND cert_type = $2 AND instrument_id IS NOT NULL', [v.id, body.certType]);
       if (clash.rowCount) throw conflict(`${body.certType} for ${v.name} is issued on the instrument register — amend it there, not on the ship`);
@@ -297,9 +302,9 @@ export class VesselsController {
   }
 
   @RequirePerm('certificates.manage') @Put(':id/certificates/:certId')
-  async updateCert(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(certPatch)) body: z.infer<typeof certPatch>) {
+  async updateCert(@Param('id') id: string, @Param('certId') certId: string, @Body(zod(certPatch)) body: z.infer<typeof certPatch>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const v = await findVessel(c, id);
+      const v = await findVessel(c, id, user.scope);
       if (!v) throw notFound('Vessel not found');
       const found = await c.query<CertRow>('SELECT * FROM vessel_certificates WHERE id::text = $1 AND vessel_id = $2 FOR UPDATE', [certId, v.id]);
       const before = found.rows[0];
@@ -317,9 +322,9 @@ export class VesselsController {
   }
 
   @RequirePerm('certificates.manage') @Delete(':id/certificates/:certId')
-  async removeCert(@Param('id') id: string, @Param('certId') certId: string) {
+  async removeCert(@Param('id') id: string, @Param('certId') certId: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const v = await findVessel(c, id);
+      const v = await findVessel(c, id, user.scope);
       if (!v) throw notFound('Vessel not found');
       const found = await c.query<CertRow>('SELECT * FROM vessel_certificates WHERE id::text = $1 AND vessel_id = $2 FOR UPDATE', [certId, v.id]);
       const cert = found.rows[0];

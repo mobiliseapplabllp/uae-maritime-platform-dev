@@ -1,6 +1,7 @@
-import { EVENTS, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
+import { EVENTS, makeEvent, type Actor, type EventEnvelope, type TenancyScope } from '@maritime/contracts';
 import { certStatus } from '@maritime/world';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { visibleTo, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { SEAFARER_SCOPE } from './scope';
 import type { Env } from './env';
 
 /* The seafarer register: the record, the documents that gate a sign-on, and the service book those tours
@@ -67,7 +68,11 @@ export function seafarerApi(s: SeafarerRow, extra: SeafarerExtras = {}) {
 }
 export type SeafarerApi = ReturnType<typeof seafarerApi>;
 
-export async function findSeafarer(c: Queryable, ref: string): Promise<SeafarerRow | null> {
+/* Every handler that touches one seafarer comes through here, so the tenancy filter lives here rather than
+ * in the fourteen that call it: a reader the register is closed to is answered "not found", the same answer
+ * a seafarer who was never on it would get. */
+export async function findSeafarer(c: Queryable, ref: string, scope: TenancyScope): Promise<SeafarerRow | null> {
+  if (!visibleTo(scope, {}, SEAFARER_SCOPE)) return null;
   const byId = /^[0-9a-f-]{36}$/i.test(ref);
   const r = await c.query<SeafarerRow>(byId ? 'SELECT * FROM seafarers WHERE id = $1' : 'SELECT * FROM seafarers WHERE cdc_no = $1', [ref]);
   return r.rows[0] ?? null;

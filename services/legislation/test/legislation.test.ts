@@ -17,6 +17,9 @@ let admin: string; let clerk: string; let approver: string; let reader: string; 
 /** A seeded draft, the person who drafted it, and a member of staff who owes receipts. */
 let draft: { id: string; ref_no: string; drafted_by_id: string; drafted_by: string };
 let staff: { id: string; name: string; role_name: string };
+/* An operator reading the published register: the rules are theirs to read, the roll of who has read
+ * them inside the administration is not. */
+const agentgss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -40,6 +43,7 @@ beforeAll(async () => {
     clerk: { ...base, id: 'clerk', sub: 'clerk', name: 'Legal Clerk', roleName: 'Legal Officer', perms: ['legislation.view', 'legislation.manage'] },
     approver: { ...base, id: 'approver', sub: 'approver', name: 'Approving Officer', roleName: 'Approver', perms: ['legislation.view', 'legislation.approve'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['reports.view'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['legislation.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
     [staff.id]: { ...base, id: staff.id, sub: staff.id, name: staff.name, roleName: staff.role_name, perms: ['legislation.view'] },
     [draft.drafted_by_id]: { ...base, id: draft.drafted_by_id, sub: draft.drafted_by_id, name: draft.drafted_by, roleName: 'Legal Officer', perms: ['legislation.view', 'legislation.manage', 'legislation.approve'] },
   };
@@ -460,5 +464,35 @@ describe('legislation — who may do what', () => {
     const entries = (await outbox(EVENTS.audit.recorded)).map((e) => e.data.action);
     expect(entries).toEqual(expect.arrayContaining(['CREATE', 'REVIEW', 'APPROVE', 'WITHDRAW']));
     expect((await outbox(EVENTS.audit.recorded)).every((e) => e.data.entity === 'LegalInstrument' && e.data.entityLabel)).toBe(true);
+  });
+});
+
+/* ================================================ tenancy on the published register === */
+
+describe('legislation — tenancy', () => {
+  it('publishes the rules to an operator: the whole register, unnarrowed', async () => {
+    const mine = await g('/legislation/instruments?limit=1', agentgss);
+    const all = await g('/legislation/instruments?limit=1', admin);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBe(all.body.meta.total);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    expect((await g('/notices?limit=1', agentgss)).body.meta.total).toBe((await g('/notices?limit=1', admin)).body.meta.total);
+  });
+
+  it('withholds the acknowledgement roll, which names officers rather than stating a rule', async () => {
+    /* The roll travels on the instrument rather than in a register of its own, so it cannot be filtered out
+     * in a WHERE clause — it is withheld in the response, on the policy the endpoint is guarded by. */
+    const asOfficer = await g('/legislation/instruments?limit=20&ackRequired=true', admin);
+    const withRoll = asOfficer.body.data.filter((i: { acknowledgedBy: unknown[] }) => i.acknowledgedBy.length > 0);
+    expect(withRoll.length).toBeGreaterThan(0);
+
+    const asAgent = await g('/legislation/instruments?limit=20&ackRequired=true', agentgss);
+    expect(asAgent.body.data.every((i: { acknowledgedBy: unknown[]; acknowledgements: number }) => i.acknowledgedBy.length === 0 && i.acknowledgements === 0)).toBe(true);
+    // the same passage, on the notice board that draws from the same table
+    expect((await g('/notices?limit=20', agentgss)).body.data.every((i: { acknowledgedBy: unknown[] }) => i.acknowledgedBy.length === 0)).toBe(true);
+    // and the endpoint that serves the roll in full is closed to them outright
+    const one = withRoll[0];
+    expect((await g(`/legislation/instruments/${one.id}/acknowledgements`, agentgss)).status).toBe(404);
+    expect((await g(`/legislation/instruments/${one.id}/acknowledgements`, admin)).status).toBe(200);
   });
 });

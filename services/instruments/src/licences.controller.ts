@@ -2,7 +2,8 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, ENDORSEMENT_KINDS, ENDORSEMENT_RESULTS, INSTRUMENT_CLASSES, LICENSE_STATUS, LICENSE_TRANSITIONS, LICENSE_TYPES, LICENSE_TYPES_BY_SUBJECT, SUBJECT_KINDS, hasPerm, instrumentClassOf, typeAllowedFor, type LicenseStatus, type PageQuery, type SubjectKind } from '@maritime/contracts';
-import { KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, forbidden, withTx, enqueue, eventFromContext, type Principal } from '@maritime/service-kit';
+import { scopeOfRecord, scopeWhere, KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, forbidden, withTx, enqueue, eventFromContext, type Principal } from '@maritime/service-kit';
+import { LICENCE_SCOPE } from './scope';
 import { STATUTORY_TYPES, INSTRUMENT_TYPE_LABEL, type WorldEndorsement } from '@maritime/world';
 import type { Env } from './env';
 import { SigningService } from './signing';
@@ -24,6 +25,7 @@ const subjectKind = z.enum(SUBJECT_KINDS); const status = z.enum(LICENSE_STATUS)
 const text = (max: number) => z.string().trim().max(max);
 const createSchema = z.object({
   subjectKind: subjectKind.default('COMPANY'), subjectRef: z.string().trim().max(80).optional().nullable(), subjectId: z.string().trim().max(80).optional().nullable(),
+  holderCode: z.string().trim().max(40).optional(),
   entityType: z.string().trim().min(1).max(60), entityName: text(200).optional(), contactPerson: text(120).optional(), phone: text(40).optional(), email: z.string().trim().max(160).optional(), address: text(400).optional(), taxId: text(40).optional(), conditions: text(2000).optional(), performanceRating: z.number().min(0).max(5).optional(),
 });
 const updateSchema = z.object({ entityName: text(200).optional(), entityType: z.string().trim().min(1).max(60).optional(), contactPerson: text(120).optional(), phone: text(40).optional(), email: z.string().trim().max(160).optional(), address: text(400).optional(), taxId: text(40).optional(), conditions: text(2000).optional(), expiryDate: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional().nullable(), performanceRating: z.number().min(0).max(5).optional() });
@@ -55,6 +57,9 @@ export class LicencesController {
     if (query.statutory === 'true' || query.statutory === 'false') { args.push(STATUTORY_TYPES); where.push(`${query.statutory === 'true' ? '' : 'NOT '}(entity_type = ANY($${args.length}))`); }
     const days = Number(query.expiringDays); if (Number.isFinite(days) && days > 0) { args.push(Math.min(days, 3650)); where.push(`status = 'ISSUED' AND expiry_date IS NOT NULL AND expiry_date <= now() + ($${args.length} || ' days')::interval`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(license_no ILIKE $${args.length} OR entity_name ILIKE $${args.length} OR contact_person ILIKE $${args.length})`); }
+    /* The subject-kind gate above answers which kinds of instrument this reader's permissions cover; this
+     * answers whose instruments they are. Both apply, and neither may widen the other. */
+    scopeWhere(user.scope, where, args, LICENCE_SCOPE);
     const w = `WHERE ${where.join(' AND ')}`;
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM licences ${w}`, args);
     const rows = await this.pool.query<Row>(`SELECT * FROM licences ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, id LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -72,10 +77,14 @@ export class LicencesController {
       const entityName = labelFor(kind, subject) || (b.entityName ?? '').trim();
       if (!entityName) throw badRequest('Either a linked subject or an entity name is required');
       const now = new Date();
-      const row = await insertLicence(c, { licenseNo: await nextLicenceNumber(c, type, now), subjectKind: kind, subjectId, subjectModel: subjectId ? MODEL_BY_KIND[kind] : null, instrumentClass: instrumentClassOf(type), entityName, entityType: type, status: 'APPLIED',
+      /* Who holds it, as distinct from what it is issued against. An applicant scoped to a company holds
+       * their own instrument; an officer raising one on someone's behalf names the holder, and if neither
+       * says, it is held by nobody rather than by whoever happened to key it in. */
+      const holderCode = scopeOfRecord(user.scope).company ?? b.holderCode ?? '';
+      const row = await insertLicence(c, { licenseNo: await nextLicenceNumber(c, type, now), holderCode, subjectKind: kind, subjectId, subjectModel: subjectId ? MODEL_BY_KIND[kind] : null, instrumentClass: instrumentClassOf(type), entityName, entityType: type, status: 'APPLIED',
         contactPerson: b.contactPerson, phone: b.phone, email: b.email, address: b.address, taxId: b.taxId, conditions: b.conditions, appliedDate: now, issuer: issuerFor(this.env.JURISDICTION), history: [{ from: '', to: 'APPLIED', at: now.toISOString(), by: user.name, note: 'Application received' }] });
       if (b.performanceRating != null) await updateLicence(c, row.id, { performanceRating: b.performanceRating });
-      const fresh = (await findLicence(c, row.id))!;
+      const fresh = (await findLicence(c, row.id, user.scope))!;
       await this.audit.record(c, { action: 'CREATE', entity: 'License', entityId: fresh.id, entityLabel: fresh.license_no, after: toApi(fresh) });
       await publishState(c, this.env, fresh, { event: EVENTS.instruments.applied });
       return toApi(fresh);
@@ -83,14 +92,14 @@ export class LicencesController {
   }
   @RequirePerm(...VIEW_ANY) @Get('licenses/:id')
   async get(@Param('id') id: string, @CurrentUser() user: Principal) {
-    const row = await findLicence(this.pool, id); if (!row) throw notFound('Instrument not found');
+    const row = await findLicence(this.pool, id, user.scope); if (!row) throw notFound('Instrument not found');
     assertAny(user, viewPerms(row.subject_kind), 'view this register');
     return detail(row, this.signing, this.pool);
   }
   @RequirePerm(...MANAGE_ANY) @Put('licenses/:id')
   async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockLicence(c, id); if (!row) throw notFound('Instrument not found');
+      const row = await lockLicence(c, id, user.scope); if (!row) throw notFound('Instrument not found');
       assertAny(user, managePerms(row.subject_kind), 'edit this register');
       const patch: Patch = {};
       const signedTouched = (b.entityName !== undefined && b.entityName !== row.entity_name) || (b.entityType !== undefined && b.entityType.toUpperCase() !== row.entity_type) || (b.expiryDate !== undefined && (b.expiryDate ? new Date(b.expiryDate).getTime() : null) !== (row.expiry_date ? row.expiry_date.getTime() : null));
@@ -108,7 +117,7 @@ export class LicencesController {
   @RequirePerm(...MANAGE_ANY) @Delete('licenses/:id')
   async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockLicence(c, id); if (!row) throw notFound('Instrument not found');
+      const row = await lockLicence(c, id, user.scope); if (!row) throw notFound('Instrument not found');
       assertAny(user, managePerms(row.subject_kind), 'edit this register');
       if (!['APPLIED', 'UNDER_REVIEW', 'REJECTED'].includes(row.status)) throw conflict('An issued instrument is a register entry and cannot be deleted; suspend or revoke it instead');
       await c.query('DELETE FROM licences WHERE id = $1', [row.id]);
@@ -121,7 +130,7 @@ export class LicencesController {
   /** Dry run of the issue checks — what would block issue today, without changing anything. */
   @RequirePerm(...VIEW_ANY) @Get('licenses/:id/checks')
   async checks(@Param('id') id: string, @CurrentUser() user: Principal) {
-    const row = await findLicence(this.pool, id); if (!row) throw notFound('Instrument not found');
+    const row = await findLicence(this.pool, id, user.scope); if (!row) throw notFound('Instrument not found');
     assertAny(user, viewPerms(row.subject_kind), 'view this register');
     const subject = await resolveSubject(this.pool, row.subject_kind as SubjectKind, row.subject_id);
     const checks = checksFor(row.subject_kind as SubjectKind, subject, new Date());
@@ -130,7 +139,7 @@ export class LicencesController {
   @RequirePerm(...APPROVE_ANY) @Post('licenses/:id/transition')
   async transition(@Param('id') id: string, @Body(zod(transitionSchema)) b: z.infer<typeof transitionSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockLicence(c, id); if (!row) throw notFound('Instrument not found');
+      const row = await lockLicence(c, id, user.scope); if (!row) throw notFound('Instrument not found');
       assertAny(user, approvePerms(row.subject_kind, row.entity_type), 'decide on this register');
       const allowed = LICENSE_TRANSITIONS[row.status as LicenseStatus] ?? [];
       if (!allowed.includes(b.to)) throw conflict(`Cannot move from ${row.status} to ${b.to}; allowed: ${allowed.join(', ') || 'none'}`);
@@ -148,7 +157,7 @@ export class LicencesController {
   @RequirePerm(...MANAGE_ANY) @Post('licenses/:id/audits')
   async addAudit(@Param('id') id: string, @Body(zod(auditSchema)) b: z.infer<typeof auditSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockLicence(c, id); if (!row) throw notFound('Instrument not found');
+      const row = await lockLicence(c, id, user.scope); if (!row) throw notFound('Instrument not found');
       assertAny(user, managePerms(row.subject_kind), 'audit this register');
       const entry: LicenceAudit = { date: (b.date ? new Date(b.date) : new Date()).toISOString(), auditorId: b.auditorId ?? user.id, auditor: b.auditor || user.name, result: b.result, remarks: b.remarks ?? '' };
       const rating = Math.max(0, Math.min(5, Number(row.performance_rating) + RATING_DELTA[b.result]));
@@ -161,7 +170,7 @@ export class LicencesController {
   /** The survey schedule a statutory certificate runs on, with what has been endorsed against it. */
   @RequirePerm(...VIEW_ANY) @Get('licenses/:id/endorsements')
   async endorsements(@Param('id') id: string, @CurrentUser() user: Principal) {
-    const row = await findLicence(this.pool, id); if (!row) throw notFound('Instrument not found');
+    const row = await findLicence(this.pool, id, user.scope); if (!row) throw notFound('Instrument not found');
     assertAny(user, viewPerms(row.subject_kind), 'view this register');
     if (!isStatutory(row.entity_type)) return { statutory: false, schedule: [], recorded: row.endorsements ?? [], inForce: row.status === 'ISSUED', reason: 'Not a statutory certificate' };
     const now = new Date(); const d = await detail(row, this.signing, this.pool, now);
@@ -171,7 +180,7 @@ export class LicencesController {
   @RequirePerm(...MANAGE_ANY) @Post('licenses/:id/endorsements')
   async endorse(@Param('id') id: string, @Body(zod(endorseSchema)) b: z.infer<typeof endorseSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockLicence(c, id); if (!row) throw notFound('Instrument not found');
+      const row = await lockLicence(c, id, user.scope); if (!row) throw notFound('Instrument not found');
       assertAny(user, [...managePerms(row.subject_kind), 'certificates.manage'], 'endorse this certificate');
       if (!isStatutory(row.entity_type)) throw badRequest('Only statutory certificates carry survey endorsements');
       if (row.status !== 'ISSUED') throw conflict('Only an issued certificate can be endorsed');

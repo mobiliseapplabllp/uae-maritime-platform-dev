@@ -134,6 +134,8 @@ const agentUser = world.users.find((u) => u.roleName === 'Shipping Agent')!; con
 let app: INestApplication; let server: unknown; let seeded: Awaited<ReturnType<typeof seedWorkflow>>; let pool: Pool; let bus: MemoryBus;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const registrar = tok('registrar'); const assessorTok = tok('assessor'); const agent = tok('agent'); const other = tok('other'); const viewer = tok('viewer');
+/* Two people at one company, and one at another: what the register must tell apart. */
+const gssOne = tok('gss-one'); const gssTwo = tok('gss-two'); const oapOne = tok('oap-one');
 const api = () => request(server as never);
 const get = (p: string, t = admin) => api().get(p).set('authorization', t);
 const post = (p: string, body: unknown, t = admin) => api().post(p).set('authorization', t).send(body as object);
@@ -149,6 +151,9 @@ beforeAll(async () => {
     admin: principal('admin', ['*'], 'Admin'), registrar: principal('registrar', ['services.view', 'services.assess', 'services.approve', 'services.manage'], 'Registrar of Ships'),
     assessor: principal('assessor', ['services.view', 'services.assess'], 'Marine Surveyor'), agent: { ...principal(agentUser.id, ['services.view', 'services.apply'], agentUser.name), sub: 'agent' },
     other: principal('other', ['services.view', 'services.apply'], 'Other Applicant'), viewer: principal('viewer', ['services.view'], 'Viewer'),
+    'gss-one': { ...principal('gss-one', ['services.view', 'services.apply'], 'Gulf Star — desk one'), kind: 'agent' as const, scope: { level: 'COMPANY', companies: ['GSS'] } },
+    'gss-two': { ...principal('gss-two', ['services.view', 'services.apply'], 'Gulf Star — desk two'), kind: 'agent' as const, scope: { level: 'COMPANY', companies: ['GSS'] } },
+    'oap-one': { ...principal('oap-one', ['services.view', 'services.apply'], 'Oceanic Agencies'), kind: 'agent' as const, scope: { level: 'COMPANY', companies: ['OAP'] } },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); bus = app.get(KIT_BUS); pool = new Pool({ connectionString: URL });
@@ -298,5 +303,74 @@ describe('workflow API', () => {
     expect(await withTx(pool, (c) => cacheRuleSet(c, { key: 'x' }))).toBe(false);
     const again = await post('/services/requests', { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: vessel.name, formData: { voyageArea: 'Coastal', startDate: '2026-10-01T00:00:00Z' } }, agent);
     expect(again.body.data.fees).toMatchObject({ subtotal: 3000, total: 3150, ruleSetVersion: 2 });
+  });
+});
+
+/* ================================================ tenancy on the request register === */
+
+describe('workflow — tenancy', () => {
+  it('carries the applicant\'s company as a code, not only as a name', async () => {
+    /* A name identifies a company to a reader; only a code identifies it to the platform. The register used
+     * to hold the name alone, which is why it could not be partitioned. */
+    const r = await pool.query<{ owned: string; named: string }>(
+      `SELECT count(*) FILTER (WHERE scope_company <> '')::text AS owned,
+              count(*) FILTER (WHERE COALESCE(applicant->>'organisation', '') <> '')::text AS named FROM service_requests`);
+    expect(Number(r.rows[0].named)).toBeGreaterThan(0);
+    expect(Number(r.rows[0].owned)).toBeGreaterThan(0);
+    const drift = await pool.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM service_requests WHERE scope_company <> COALESCE(applicant->>'organisationCode', '')");
+    expect(Number(drift.rows[0].n)).toBe(0);
+  });
+
+  it('shows a company its own applications, whichever of its people lodged them', async () => {
+    const mine = await get('/services/requests?limit=500', gssOne);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    /* The point of the change: a second desk at the same agency sees the same register. Neither of them
+     * lodged these applications personally — the seeded applicant is a third user — and under the old rule
+     * that meant both saw nothing. */
+    const colleague = await get('/services/requests?limit=500', gssTwo);
+    expect(colleague.body.meta.total).toBe(mine.body.meta.total);
+    expect(colleague.body.data.map((r: { id: string }) => r.id).sort())
+      .toEqual(mine.body.data.map((r: { id: string }) => r.id).sort());
+    // and `mine=true` still narrows either of them to what they lodged themselves
+    expect((await get('/services/requests?limit=500&mine=true', gssTwo)).body.meta.total).toBe(0);
+
+    const theirs = await get('/services/requests?limit=500', oapOne);
+    const mineIds = new Set(mine.body.data.map((r: { id: string }) => r.id));
+    expect(theirs.body.data.some((r: { id: string }) => mineIds.has(r.id))).toBe(false);
+
+    const all = await get('/services/requests?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+  });
+
+  it('answers "not found" for another company\'s application, by id and by number', async () => {
+    const other = (await pool.query<{ id: string; number: string }>(
+      "SELECT id, number FROM service_requests WHERE scope_company = 'OAP' LIMIT 1")).rows[0];
+    expect(other).toBeTruthy();
+    expect((await get(`/services/requests/${other.id}`, gssOne)).status).toBe(404);
+    expect((await get(`/services/requests/${other.number}`, gssOne)).status).toBe(404);
+    expect((await get(`/services/requests/${other.id}`, admin)).status).toBe(200);
+  });
+
+  it('stamps a new application with the author\'s own company, not with what the body claims', async () => {
+    const r = await post('/services/requests', {
+      definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: `${vessel.name} (IMO ${vessel.imo})`,
+      subject: { imo: vessel.imo, grt: vessel.grt }, draft: true,
+      formData: { voyageArea: 'Coastal', startDate: '2026-10-01T00:00:00Z' },
+      documents: [{ code: 'doc1', name: 'registry.pdf' }, { code: 'doc2' }, { code: 'doc3' }],
+      applicant: { name: 'Impersonator', organisation: 'Oceanic Agencies FZE', organisationCode: 'OAP' },
+    }, gssOne);
+    expect(r.status).toBe(201);
+    const row = (await pool.query<{ scope_company: string }>('SELECT scope_company FROM service_requests WHERE id = $1', [r.body.data.id])).rows[0];
+    // the body named another company; the author's own scope decides
+    expect(row.scope_company).toBe('GSS');
+    expect((await get(`/services/requests/${r.body.data.id}`, oapOne)).status).toBe(404);
+    await pool.query('DELETE FROM service_requests WHERE id = $1', [r.body.data.id]);
+  });
+
+  it('leaves a national assessor reading everything, with no clause added at all', async () => {
+    expect((await get('/services/requests?limit=1', registrar)).body.meta.total)
+      .toBe((await get('/services/requests?limit=1', admin)).body.meta.total);
   });
 });
