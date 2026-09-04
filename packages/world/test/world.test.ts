@@ -14,11 +14,13 @@ describe('world', () => {
     for (const s of SECTIONS) { const rows = w[s] as { id: string }[]; expect(rows.length, s).toBeGreaterThan(0); for (const r of rows) expect(r.id, s).toMatch(UUID); expect(ids(rows).size, s).toBe(rows.length); }
   });
   it('is deterministic — two builds are deep-equal', () => { expect(buildWorld({ profile: 'AE', now })).toEqual(w); });
-  it('seeds the eight login accounts, staff and a directory of about 130 users with unique emails', () => {
-    expect(w.users.filter((u) => u.login)).toHaveLength(8);
+  it('seeds the nine login accounts, staff and a directory of about 130 users with unique emails', () => {
+    expect(w.users.filter((u) => u.login)).toHaveLength(9);
     expect(w.users.length).toBeGreaterThanOrEqual(125);
     expect(new Set(w.users.map((u) => u.email)).size).toBe(w.users.length);
     expect(w.users.find((u) => u.email === 'admin@maritime.example')?.roleName).toBe('Super Admin');
+    // the second pair of eyes on a model, without which no version can be approved and none can be deployed
+    expect(w.users.find((u) => u.email === 'aigov@maritime.example')?.roleName).toBe('AI Governance');
   });
   it('covers all nineteen lookup categories, 24 berths, 20 companies and 31 vessels', () => {
     expect(new Set(w.lookups.map((l) => l.category)).size).toBe(19);

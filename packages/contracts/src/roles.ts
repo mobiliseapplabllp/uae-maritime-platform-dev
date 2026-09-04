@@ -1,4 +1,4 @@
-/** The sixteen roles delivered with the platform. Ten are system roles guaranteed by the seeder. */
+/** The seventeen roles delivered with the platform. Eleven are system roles guaranteed by the seeder. */
 export interface RoleDefinition { code: string; name: string; description: string; system: boolean; permissions: string[] }
 
 const P = (...ps: string[]) => ps;
@@ -60,6 +60,17 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
       'services.view','services.assess','services.approve','services.manage',
       'facilities.view','facilities.manage','facilities.approve','seafarers.view',
       'masters.view','legislation.view','reports.view','audit.view','ai.use') },
+  /* The second pair of eyes on a model.
+   *
+   * A model version may not be approved by whoever created it, and until this role existed the only
+   * permission that could approve one was the wildcard — so on a platform with a single administrator the
+   * gate could never be satisfied and no new model version could ever reach production. A control nobody
+   * can satisfy is a blocked pipeline wearing a control's clothes.
+   *
+   * It is deliberately narrow: it governs models and reads what it needs to judge them. It cannot touch a
+   * register, issue an instrument or raise an invoice. */
+  { code: 'AIG', name: 'AI Governance', description: 'Approves, deploys and retires model versions; reads the assurance record', system: true,
+    permissions: P('dashboard.view','models.view','models.manage','models.deploy','agents.view','ai.use','reports.view','audit.view') },
   { code: 'MV', name: 'Management Viewer', description: 'Read-only management view across modules', system: false,
     permissions: P('dashboard.view','portcalls.view','vessels.view','incidents.view','inspections.view','invoices.view','legislation.view','facilities.view','reports.view','nmc.view','risk.view','seafarers.view','ai.use',
       'registry.view','services.view','agents.view','models.view') },

@@ -13,12 +13,24 @@ describe('permission catalogue', () => {
     expect(ALL_PERMISSIONS).toHaveLength(66);
     expect(new Set(ALL_PERMISSIONS).size).toBe(66);
   });
-  it('seeds sixteen roles whose permissions are all known, ten of them system roles', () => {
-    expect(ROLE_CATALOGUE).toHaveLength(16);
-    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(10);
+  it('seeds seventeen roles whose permissions are all known, eleven of them system roles', () => {
+    expect(ROLE_CATALOGUE).toHaveLength(17);
+    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(11);
     for (const r of ROLE_CATALOGUE) for (const p of r.permissions) expect(isKnownPermission(p), `${r.name}: ${p}`).toBe(true);
     const counts = Object.fromEntries(ROLE_CATALOGUE.map((r) => [r.code, r.permissions.length]));
-    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 17 });
+    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 17, AIG: 8 });
+  });
+
+  it('lets somebody other than the administrator approve a model version', () => {
+    // A model version may not be approved by whoever created it. If the wildcard were the only permission
+    // that could approve one, the gate would be unsatisfiable wherever a single administrator is seeded —
+    // a blocked pipeline rather than a control. At least one role that is not the wildcard must be able to.
+    const approvers = ROLE_CATALOGUE.filter((r) => !r.permissions.includes('*') && r.permissions.includes('models.manage'));
+    expect(approvers.map((r) => r.code)).toContain('AIG');
+    const aig = ROLE_CATALOGUE.find((r) => r.code === 'AIG')!;
+    expect(aig.permissions).toContain('models.deploy');
+    // and it governs models only — it reaches no register, instrument or ledger of its own
+    for (const p of aig.permissions) expect(p, p).not.toMatch(/^(vessels|portcalls|invoices|seafarers|registry|services|incidents|inspections|certificates|tariffs)\./);
   });
 
   it('gives the two external roles disjoint reach', () => {

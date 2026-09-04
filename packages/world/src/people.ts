@@ -29,6 +29,10 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     ['Sameera Haddad (Maritime Crewing Associates)', 'crewing@maritime.example', 'Manning Agent', 'Crewing Manager'],
     ['Vinod Menon', 'ops2@maritime.example', 'Harbour Master', 'Dy. Harbour Master'],
     ['Lt. Noura Al Zaabi', 'nmc@maritime.example', 'NMC Duty Officer', 'Duty Officer — Maritime Centre'],
+    // A model version may not be approved by whoever created it, so somebody other than the administrator
+    // has to be able to approve one. Without this account the gate is unsatisfiable and no new model
+    // version can ever reach production.
+    ['Dr. Hessa Al Suwaidi', 'aigov@maritime.example', 'AI Governance', 'Chair — AI Governance Committee'],
   ],
   IN: [
     ['Ashish Sharma', 'admin@maritime.example', 'Super Admin', 'Port Administrator'],
@@ -39,6 +43,7 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     ['Sunita Deshpande (Maritime Crewing Associates)', 'crewing@maritime.example', 'Manning Agent', 'Crewing Manager'],
     ['Vinod Menon', 'ops2@maritime.example', 'Harbour Master', 'Dy. Harbour Master'],
     ['Lt. Aditi Rathore', 'nmc@maritime.example', 'NMC Duty Officer', 'Duty Officer — Surveillance Centre'],
+    ['Dr. Anjali Deshmukh', 'aigov@maritime.example', 'AI Governance', 'Chair — AI Governance Committee'],
   ],
 };
 const STAFF: Record<string, [string, string, string][]> = {
