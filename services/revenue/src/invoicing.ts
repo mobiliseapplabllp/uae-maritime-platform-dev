@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { NATIONAL_SCOPE, type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
+import { enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { INVOICE_SCOPE } from './scope';
 import type { Env } from './env';
 
 /* The invoice row, the maths that raises one from a vessel call, and the snapshot every write publishes.
@@ -85,13 +86,19 @@ export function toApi(r: Row) {
 }
 export type InvoiceApi = ReturnType<typeof toApi>;
 
-export async function findInvoice(c: Queryable, ref: string): Promise<Row | null> {
-  const r = await c.query<Row>('SELECT * FROM invoices WHERE id::text = $1 OR number = $1', [ref]);
+/* Every handler that touches one invoice comes through here, so the tenancy filter is here and not in each
+ * of them: another party's invoice is not found rather than found and refused. */
+export async function findInvoice(c: Queryable, ref: string, scope: TenancyScope): Promise<Row | null> {
+  const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, INVOICE_SCOPE);
+  const r = await c.query<Row>(`SELECT * FROM invoices WHERE ${where.join(' AND ')}`, args);
   return r.rows[0] ?? null;
 }
-export async function lockInvoice(c: Queryable, ref: string): Promise<Row | null> {
-  const l = await c.query<{ id: string }>('SELECT id FROM invoices WHERE id::text = $1 OR number = $1 FOR UPDATE', [ref]);
-  return l.rows[0] ? findInvoice(c, l.rows[0].id) : null;
+export async function lockInvoice(c: Queryable, ref: string, scope: TenancyScope): Promise<Row | null> {
+  const where = ['(id::text = $1 OR number = $1)']; const args: unknown[] = [ref];
+  scopeWhere(scope, where, args, INVOICE_SCOPE);
+  const l = await c.query<{ id: string }>(`SELECT id FROM invoices WHERE ${where.join(' AND ')} FOR UPDATE`, args);
+  return l.rows[0] ? findInvoice(c, l.rows[0].id, scope) : null;
 }
 const COLS: Record<string, string> = { number: 'number', portCallId: 'port_call_id', vcn: 'vcn', vesselId: 'vessel_id', vesselName: 'vessel_name', vesselImo: 'vessel_imo', billTo: 'bill_to', lines: 'lines', subtotal: 'subtotal', taxName: 'tax_name', taxRatePct: 'tax_rate_pct', taxAmount: 'tax_amount', total: 'total', currency: 'currency', status: 'status', proforma: 'proforma', issuedAt: 'issued_at', dueAt: 'due_at', paidAt: 'paid_at', paidAmount: 'paid_amount', paymentRef: 'payment_ref', payments: 'payments', cancelReason: 'cancel_reason', notes: 'notes', history: 'history', remindedAt: 'reminded_at' };
 export type Patch = Partial<{ number: string; portCallId: string | null; vcn: string; vesselId: string | null; vesselName: string; vesselImo: string; billTo: BillTo; lines: Line[]; subtotal: number; taxName: string; taxRatePct: number; taxAmount: number; total: number; currency: string; status: string; proforma: boolean; issuedAt: Date | null; dueAt: Date | null; paidAt: Date | null; paidAmount: number; paymentRef: string; payments: Payment[]; cancelReason: string; notes: string; history: HistoryEntry[]; remindedAt: Date | null }>;
@@ -101,14 +108,14 @@ export async function updateInvoice(c: Queryable, id: string, patch: Patch): Pro
     const vals = keys.map((k) => { const v = (patch as Record<string, unknown>)[k]; return v !== null && typeof v === 'object' && !(v instanceof Date) ? JSON.stringify(v) : v; });
     await c.query(`UPDATE invoices SET ${keys.map((k, i) => `${COLS[k]} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1`, [id, ...vals]);
   }
-  return (await findInvoice(c, id))!;
+  return (await findInvoice(c, id, NATIONAL_SCOPE))!;
 }
 export interface NewInvoice { number: string; portCallId: string | null; vcn: string; vesselId: string | null; vesselName: string; vesselImo: string; billTo: BillTo; lines: Line[]; subtotal: number; taxName: string; taxRatePct: number; taxAmount: number; total: number; currency: string; status?: string; proforma?: boolean; notes?: string; history: HistoryEntry[]; createdAt?: Date }
 export async function insertInvoice(c: Queryable, n: NewInvoice): Promise<Row> {
   const r = await c.query<{ id: string }>(`INSERT INTO invoices(number, port_call_id, vcn, vessel_id, vessel_name, vessel_imo, bill_to, lines, subtotal, tax_name, tax_rate_pct, tax_amount, total, currency, status, proforma, notes, history, created_at)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,COALESCE($19, now())) RETURNING id`,
     [n.number, n.portCallId, n.vcn, n.vesselId, n.vesselName, n.vesselImo, JSON.stringify(n.billTo), JSON.stringify(n.lines), n.subtotal, n.taxName, n.taxRatePct, n.taxAmount, n.total, n.currency, n.status ?? 'DRAFT', n.proforma ?? false, n.notes ?? '', JSON.stringify(n.history), n.createdAt ?? null]);
-  return (await findInvoice(c, r.rows[0].id))!;
+  return (await findInvoice(c, r.rows[0].id, NATIONAL_SCOPE))!;
 }
 /** `${prefix}-YYYY-NNNNN`: one atomic series per calendar year. */
 export async function nextInvoiceNumber(c: Queryable, env: Env, when: Date): Promise<string> {

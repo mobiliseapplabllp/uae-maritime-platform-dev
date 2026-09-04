@@ -2,8 +2,9 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable, scopeWhere } from '@maritime/service-kit';
 import type { Env } from './env';
+import { INVOICE_SCOPE, scopedWhere } from './scope';
 import { INVOICE_STATUSES, PAYMENT_METHODS, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, toApi, updateInvoice, type HistoryEntry, type Line, type Payment, type Row } from './invoicing';
 import { activeTariffs, billToFor, billableCall, findCallSnapshot } from './subjects';
 
@@ -23,7 +24,7 @@ export class InvoicesController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
 
   @RequirePerm('invoices.view') @Get()
-  async list(@Query() query: ListQuery) {
+  async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: '-createdAt', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const eq = (col: string, v: string | undefined) => { if (v) { args.push(v); where.push(`${col} = $${args.length}`); } };
@@ -33,6 +34,7 @@ export class InvoicesController {
     if (query.from) { args.push(new Date(query.from)); where.push(`COALESCE(issued_at, created_at) >= $${args.length}`); }
     if (query.to) { args.push(new Date(query.to)); where.push(`COALESCE(issued_at, created_at) <= $${args.length}`); }
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(number ILIKE $${args.length} OR vcn ILIKE $${args.length} OR vessel_name ILIKE $${args.length} OR bill_to->>'name' ILIKE $${args.length})`); }
+    scopeWhere(user.scope, where, args, INVOICE_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM invoices ${w}`, args);
     const rows = await this.pool.query<Row>(`SELECT * FROM invoices ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, number LIMIT ${p.limit} OFFSET ${p.offset}`, args);
@@ -41,10 +43,17 @@ export class InvoicesController {
 
   /** What the finance desk is owed, and how the book splits by status. */
   @RequirePerm('invoices.view') @Get('summary')
-  async summary() {
+  async summary(@CurrentUser() user: Principal) {
     const j = getJurisdiction(this.env.JURISDICTION);
-    const rows = await this.pool.query<{ status: string; n: string; total: string; paid: string }>('SELECT status, count(*) AS n, COALESCE(sum(total),0) AS total, COALESCE(sum(paid_amount),0) AS paid FROM invoices GROUP BY status');
-    const overdue = await this.pool.query<{ n: string; total: string }>("SELECT count(*) AS n, COALESCE(sum(total - paid_amount),0) AS total FROM invoices WHERE status = 'ISSUED' AND due_at IS NOT NULL AND due_at < now()");
+    /* An aggregate is a read of every row it counts, so it is scoped exactly as the list is: a payer's
+     * summary is of their own ledger, not of the administration's with their rows highlighted. */
+    const sc = scopedWhere(user.scope, INVOICE_SCOPE);
+    const rows = await this.pool.query<{ status: string; n: string; total: string; paid: string }>(
+      `SELECT status, count(*) AS n, COALESCE(sum(total),0) AS total, COALESCE(sum(paid_amount),0) AS paid FROM invoices ${sc.sql} GROUP BY status`, sc.args);
+    const ow = ["status = 'ISSUED'", 'due_at IS NOT NULL', 'due_at < now()']; const oa: unknown[] = [];
+    scopeWhere(user.scope, ow, oa, INVOICE_SCOPE);
+    const overdue = await this.pool.query<{ n: string; total: string }>(
+      `SELECT count(*) AS n, COALESCE(sum(total - paid_amount),0) AS total FROM invoices WHERE ${ow.join(' AND ')}`, oa);
     const byStatus = Object.fromEntries(rows.rows.map((r) => [r.status, { count: Number(r.n), total: round2(Number(r.total)), paid: round2(Number(r.paid)) }]));
     const billed = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.total), 0);
     const collected = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.paid), 0);
@@ -75,8 +84,8 @@ export class InvoicesController {
   }
 
   @RequirePerm('invoices.view') @Get(':id')
-  async get(@Param('id') id: string) {
-    const row = await findInvoice(this.pool, id); if (!row) throw notFound('Invoice not found');
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const row = await findInvoice(this.pool, id, user.scope); if (!row) throw notFound('Invoice not found');
     return this.detail(this.pool, row);
   }
 
@@ -100,9 +109,9 @@ export class InvoicesController {
   }
 
   @RequirePerm('invoices.create') @Put(':id')
-  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>) {
+  async update(@Param('id') id: string, @Body(zod(updateSchema)) b: z.infer<typeof updateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockInvoice(c, id); if (!before) throw notFound('Invoice not found');
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
       if (before.status !== 'DRAFT') throw badRequest('Only draft invoices can be edited');
       const patch: Parameters<typeof updateInvoice>[2] = {};
       if (b.lines) {
@@ -124,7 +133,7 @@ export class InvoicesController {
   @RequirePerm('invoices.issue') @Post(':id/issue')
   async issue(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockInvoice(c, id); if (!before) throw notFound('Invoice not found');
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
       const row = await issueInvoice(c, this.env, before, user?.name ?? 'system');
       await this.audit.record(c, { action: 'ISSUE', entity: 'Invoice', entityId: row.id, entityLabel: row.number, before: { status: before.status }, after: { status: row.status, issuedAt: iso(row.issued_at), dueAt: iso(row.due_at) } });
       await publishState(c, this.env, row, { event: EVENTS.revenue.invoiceIssued, data: { dueAt: iso(row.due_at) } });
@@ -136,7 +145,7 @@ export class InvoicesController {
   @RequirePerm('invoices.pay') @Post(':id/pay')
   async pay(@Param('id') id: string, @Body(zod(paySchema)) b: z.infer<typeof paySchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockInvoice(c, id); if (!before) throw notFound('Invoice not found');
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
       if (before.status !== 'ISSUED') throw conflict(`Only an issued invoice can be paid — this one is ${before.status.toLowerCase()}`);
       const total = num(before.total); const already = num(before.paid_amount);
       const outstanding = round2(total - already);
@@ -158,7 +167,7 @@ export class InvoicesController {
   @RequirePerm('invoices.issue') @Post(':id/cancel')
   async cancel(@Param('id') id: string, @Body(zod(cancelSchema)) b: z.infer<typeof cancelSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const before = await lockInvoice(c, id); if (!before) throw notFound('Invoice not found');
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
       if (before.status === 'PAID') throw conflict('A paid invoice cannot be cancelled — raise a credit against it');
       if (before.status === 'CANCELLED') throw conflict('This invoice is already cancelled');
       const reason = b.reason?.trim() || 'Cancelled by the finance desk';
@@ -171,9 +180,9 @@ export class InvoicesController {
   }
 
   @RequirePerm('invoices.delete') @Delete(':id')
-  async remove(@Param('id') id: string) {
+  async remove(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await lockInvoice(c, id); if (!row) throw notFound('Invoice not found');
+      const row = await lockInvoice(c, id, user.scope); if (!row) throw notFound('Invoice not found');
       if (row.status !== 'DRAFT') throw badRequest('Only draft invoices can be deleted — the rest are financial record');
       await c.query('DELETE FROM invoices WHERE id = $1', [row.id]);
       await this.audit.record(c, { action: 'DELETE', entity: 'Invoice', entityId: row.id, entityLabel: row.number, before: toApi(row) });

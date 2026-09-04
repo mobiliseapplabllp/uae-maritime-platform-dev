@@ -4,6 +4,8 @@ import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
 import { EVENTS, makeEvent, subjectFor } from '@maritime/contracts';
 import { AuditClient, PRINCIPAL_RESOLVER, StaticPrincipalResolver, createApp, loadEnv, signHS256, withTx } from '@maritime/service-kit';
+import { scopeWhere } from '@maritime/service-kit';
+import { INVOICE_SCOPE, TARIFF_SCOPE } from '../src/scope';
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedRevenue, seriesOf } from '../src/seed';
@@ -16,6 +18,8 @@ const DB = 'maritime_revenue_test'; const URL = `postgres://maritime:maritime@12
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const biller = tok('biller'); const cashier = tok('cashier'); const viewer = tok('viewer'); const nobody = tok('nobody');
+/* A payer, not an officer: Gulf Star reads their own ledger and nothing of anyone else's. */
+const agentGss = tok('agent-gss');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 const post = (p: string, body?: unknown, t = admin) => request(server as never).post(p).set('authorization', t).send((body ?? {}) as never);
 const put = (p: string, body: unknown, t = admin) => request(server as never).put(p).set('authorization', t).send(body as never);
@@ -43,6 +47,7 @@ beforeAll(async () => {
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Admin', perms: ['*'] },
     biller: { ...base, id: 'biller', sub: 'biller', name: 'Billing Officer', perms: ['invoices.view', 'invoices.create', 'invoices.issue', 'tariffs.view'] },
     cashier: { ...base, id: 'cashier', sub: 'cashier', name: 'Cashier', perms: ['invoices.view', 'invoices.pay'] },
+    'agent-gss': { ...base, id: 'agent-gss', sub: 'agent-gss', name: 'Gulf Star Shipping', kind: 'agent' as const, perms: ['invoices.view', 'tariffs.view'], scope: { level: 'COMPANY', companies: ['GSS'] } },
     viewer: { ...base, id: 'viewer', sub: 'viewer', name: 'Auditor', perms: ['invoices.view', 'tariffs.view'] },
     nobody: { ...base, id: 'nobody', sub: 'nobody', name: 'Nobody', perms: ['dashboard.view'] },
   });
@@ -363,5 +368,74 @@ describe('revenue — the event-driven billing path', () => {
     const second = await withTx(pool, (c) => remindOverdue(c, env, sweep));
     expect(second).toBe(0);
     expect((await g('/invoices?overdue=true&limit=1')).body.meta.total).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/* =============================================================================== tenancy === */
+
+describe('revenue — tenancy on the ledger', () => {
+  it('backfills the owner from the bill-to block, and keeps it in step when that block is rewritten', async () => {
+    const owned = await pool.query<{ owned: string; total: string }>(
+      "SELECT count(*) FILTER (WHERE scope_company <> '')::text AS owned, count(*)::text AS total FROM invoices");
+    expect(Number(owned.rows[0].owned)).toBeGreaterThan(0);
+    // an invoice whose bill-to names no company on the register has no owner, and that is not the same as
+    // belonging to everyone
+    const drift = await pool.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM invoices i JOIN companies c ON c.id = (i.bill_to->>'companyId')
+        WHERE i.scope_company <> c.code`);
+    expect(Number(drift.rows[0].n)).toBe(0);
+  });
+
+  it('shows a payer their own invoices and nobody else\'s, by list and by id alike', async () => {
+    const mine = await g('/invoices?limit=500', agentGss);
+    expect(mine.status).toBe(200);
+    expect(mine.body.meta.total).toBeGreaterThan(0);
+    const all = await g('/invoices?limit=500', admin);
+    expect(all.body.meta.total).toBeGreaterThan(mine.body.meta.total);
+
+    const others = await pool.query<{ id: string; number: string }>(
+      "SELECT id, number FROM invoices WHERE scope_company <> 'GSS' AND scope_company <> '' LIMIT 1");
+    const other = others.rows[0];
+    expect(other).toBeTruthy();
+    expect(mine.body.data.some((i: any) => i.id === other.id)).toBe(false);
+    expect((await g(`/invoices/${other.id}`, agentGss)).status).toBe(404);
+    expect((await g(`/invoices/${other.number}`, agentGss)).status).toBe(404);
+    expect((await g(`/invoices/${other.id}`, admin)).status).toBe(200);
+    // searching for it by number does not find it either — the filter is in the query, not over the results
+    expect((await g(`/invoices?q=${encodeURIComponent(other.number)}`, agentGss)).body.meta.total).toBe(0);
+    expect((await g(`/invoices?q=${encodeURIComponent(other.number)}`, admin)).body.meta.total).toBe(1);
+  });
+
+  it('gives a payer a summary of their own ledger, not the administration\'s', async () => {
+    const mine = await g('/invoices/summary', agentGss);
+    const all = await g('/invoices/summary', admin);
+    expect(mine.status).toBe(200);
+    const mineCount = Object.values(mine.body.data.byStatus as Record<string, { count: number }>).reduce((s, v) => s + v.count, 0);
+    const allCount = Object.values(all.body.data.byStatus as Record<string, { count: number }>).reduce((s, v) => s + v.count, 0);
+    expect(mineCount).toBeGreaterThan(0);
+    expect(mineCount).toBeLessThan(allCount);
+    expect(mineCount).toBe((await g('/invoices?limit=1', agentGss)).body.meta.total);
+    // an aggregate is a read of every row it counts: a total that included other payers' invoices would
+    // leak their business through a number
+    expect(mine.body.data.byStatus.PAID.total).toBeLessThan(all.body.data.byStatus.PAID.total);
+  });
+
+  it('publishes the rate card to a payer, because it is what an estimate is quoted from', () => {
+    /* No clause for any scope a principal can actually carry, which is what lets the tariff handlers carry
+     * no predicate at all. (An absent scope is still denied — that is the point of the default — but a
+     * resolved principal always has one, so it cannot arise on a request.) */
+    for (const scope of [{ level: 'NATIONAL' as const }, { level: 'COMPANY' as const, companies: ['GSS'] }, { level: 'PORT' as const, ports: ['AEAUH'] }]) {
+      const where: string[] = []; const args: unknown[] = [];
+      expect(scopeWhere(scope, where, args, TARIFF_SCOPE)).toBe(false);
+      expect(where).toEqual([]);
+    }
+    // an absent scope is denied even on a published register, because "no scope" is not "no restriction"
+    const none: string[] = [];
+    expect(scopeWhere(undefined, none, [], TARIFF_SCOPE)).toBe(true);
+    expect(none).toEqual(['false']);
+    // and the invoice policy is not public: a real payer is restricted there
+    const where: string[] = []; const args: unknown[] = [];
+    expect(scopeWhere({ level: 'COMPANY', companies: ['GSS'] }, where, args, INVOICE_SCOPE)).toBe(true);
+    expect(where.join('')).toContain('scope_company');
   });
 });
