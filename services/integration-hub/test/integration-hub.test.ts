@@ -9,6 +9,7 @@ import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { ADAPTERS, TOTAL_OPERATIONS, adapterByKey } from '../src/adapters/registry';
 import { fixturePath, materialise } from '../src/stubs';
+import { endpointProblem } from '../src/endpoint';
 
 const DB = 'maritime_integration_hub_test';
 const DB_URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`;
@@ -176,5 +177,61 @@ describe('operating the hub', () => {
     const r = await srv().get('/health').expect(200);
     expect(r.body.data.adapters).toBe(ADAPTERS.length);
     expect(r.body.data.operations).toBe(TOTAL_OPERATIONS);
+  });
+});
+
+describe('where a live adapter may be pointed', () => {
+  /*
+   * Switching to live writes a caller-supplied URL into the row the outbound client reads its host from.
+   * Holding settings.manage is not a reason to skip the check — an operator can be phished, and a
+   * government integration aimed at the cloud metadata service is the worst version of that.
+   */
+  it('refuses the addresses a request-forgery pivot would use', () => {
+    for (const bad of [
+      'http://169.254.169.254/latest/meta-data/',      // the metadata service
+      'https://169.254.169.254/',
+      'https://127.0.0.1/icp', 'https://10.1.2.3/icp', 'https://192.168.0.10/icp', 'https://172.16.5.4/icp',
+      'https://100.64.0.1/icp',
+      'https://icp.svc.cluster.local/x', 'https://postgres.internal/x', 'https://gateway.local/x',
+      'https://user:pass@icp.gov.ae/x',                // credentials in the URL
+      'https://icp.gov.ae/x?redirect=http://evil',     // a query string is not part of a base URL
+      'http://icp.gov.ae/x',                           // a counterpart is reached over TLS
+      'https://localhost/x', 'https://icp/x',          // unqualified
+      'not-a-url', 'file:///etc/passwd', 'gopher://icp.gov.ae/',
+    ]) {
+      expect(endpointProblem(bad), bad).not.toBeNull();
+    }
+  });
+
+  it('accepts a named counterpart over TLS', () => {
+    for (const good of ['https://icp.gov.ae', 'https://api.icp.gov.ae/v2/identity', 'https://gisis.imo.org/']) {
+      expect(endpointProblem(good), good).toBeNull();
+    }
+  });
+
+  it('allows a stub on this machine only outside production', () => {
+    expect(endpointProblem('http://localhost:9099/icp', { allowLocal: true })).toBeNull();
+    expect(endpointProblem('http://localhost:9099/icp')).not.toBeNull();
+    // even locally, only this machine — not the rest of the network
+    expect(endpointProblem('http://10.0.0.5/icp', { allowLocal: true })).not.toBeNull();
+    // and a local stub is a stub, not a way back into the platform's own infrastructure
+    for (const own of ['http://localhost:5432/x', 'http://localhost:4222/x', 'http://localhost:5401/x', 'http://localhost:80/x']) {
+      expect(endpointProblem(own, { allowLocal: true }), own).not.toBeNull();
+    }
+  });
+
+  it('refuses the switch over HTTP, and records the endpoint it was pointed at', async () => {
+    await srv().post('/integrations/icp/mode').set('Authorization', admin)
+      .send({ mode: 'live', baseUrl: 'http://169.254.169.254/latest/meta-data/' }).expect(400);
+    const untouched = await pool.query<{ mode: string; base_url: string | null }>("SELECT mode, base_url FROM adapters WHERE key='icp'");
+    expect(untouched.rows[0].mode).toBe('stub');
+    expect(String(untouched.rows[0].base_url ?? '')).not.toContain('169.254');
+
+    await srv().post('/integrations/icp/mode').set('Authorization', admin)
+      .send({ mode: 'live', baseUrl: 'https://api.icp.gov.ae/v2' }).expect(201);
+    const moved = await pool.query<{ mode: string; base_url: string }>("SELECT mode, base_url FROM adapters WHERE key='icp'");
+    expect(moved.rows[0].mode).toBe('live');
+    expect(moved.rows[0].base_url).toBe('https://api.icp.gov.ae/v2');
+    await srv().post('/integrations/icp/mode').set('Authorization', admin).send({ mode: 'stub' }).expect(201);
   });
 });

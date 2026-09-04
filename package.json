@@ -19,7 +19,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
     "gateway:kong": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tools/gateway/render-kong.ts",
     "gateway:nginx": "node --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON tools/gateway/render-nginx.ts",
-    "sast": "semgrep scan --config .semgrep.yml --error --metrics=off --exclude node_modules --exclude dist ."
+    "sast": "semgrep scan --config .semgrep.yml --error --metrics=off --exclude node_modules --exclude dist .",
+    "dast": "node --experimental-strip-types tools/dast/probe.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

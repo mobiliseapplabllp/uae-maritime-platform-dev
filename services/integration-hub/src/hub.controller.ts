@@ -6,6 +6,7 @@ import type { Env } from './env';
 import { HubClient } from './client';
 import { ADAPTERS, TOTAL_OPERATIONS, adapterByKey } from './adapters/registry';
 import { loadFixture } from './stubs';
+import { endpointProblem } from './endpoint';
 
 const callBody = z.object({
   operation: z.string().min(1).max(64),
@@ -13,7 +14,7 @@ const callBody = z.object({
   idempotencyKey: z.string().min(1).max(120).optional(),
   correlationId: z.string().max(120).optional(),
 });
-const modeBody = z.object({ mode: z.enum(['stub', 'live']), baseUrl: z.string().url().optional() });
+const modeBody = z.object({ mode: z.enum(['stub', 'live']), baseUrl: z.string().max(300).optional() });
 
 @Controller()
 export class HubController {
@@ -61,9 +62,13 @@ export class HubController {
   @RequirePerm('settings.manage') @Post('integrations/:key/mode')
   async setMode(@Param('key') key: string, @Body(zod(modeBody)) body: z.infer<typeof modeBody>) {
     if (!adapterByKey(key)) throw notFound(`unknown adapter ${key}`);
-    const before = await this.pool.query<{ mode: string }>('SELECT mode FROM adapters WHERE key = $1', [key]);
+    if (body.baseUrl) {
+      const problem = endpointProblem(body.baseUrl, { allowLocal: this.env.NODE_ENV !== 'production' });
+      if (problem) throw badRequest(problem);
+    }
+    const before = await this.pool.query<{ mode: string; base_url: string | null }>('SELECT mode, base_url FROM adapters WHERE key = $1', [key]);
     await this.pool.query('UPDATE adapters SET mode = $2, base_url = COALESCE($3, base_url), updated_at = now() WHERE key = $1', [key, body.mode, body.baseUrl ?? null]);
-    await this.audit.record(this.pool, { action: 'MODE_CHANGE', entity: 'Adapter', entityId: key, entityLabel: adapterByKey(key)!.name, before: before.rows[0], after: { mode: body.mode }, note: `Switched to ${body.mode}` });
+    await this.audit.record(this.pool, { action: 'MODE_CHANGE', entity: 'Adapter', entityId: key, entityLabel: adapterByKey(key)!.name, before: before.rows[0], after: { mode: body.mode, base_url: body.baseUrl ?? before.rows[0]?.base_url ?? null }, note: `Switched to ${body.mode}${body.baseUrl ? ` at ${body.baseUrl}` : ''}` });
     return { key, mode: body.mode };
   }
 

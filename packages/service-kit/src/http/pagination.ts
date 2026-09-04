@@ -8,8 +8,16 @@ export function parsePage(query: PageQuery, opts: { defaultSort?: string; maxLim
   const sort = String(query.sort || opts.defaultSort || '-createdAt');
   const sortDir: 'asc' | 'desc' = sort.startsWith('-') ? 'desc' : 'asc';
   let sortField = sort.replace(/^-/, '');
-  if (opts.sortable && !opts.sortable.includes(sortField)) { sortField = (opts.defaultSort || '-createdAt').replace(/^-/, ''); }
-  return { page, limit, offset: (page - 1) * limit, sortField, sortDir, q: String(query.q ?? '').trim() };
+  // An unrecognised sort field falls back to the register's default — and so does the direction with it.
+  // Honouring `-` from a field that was thrown away answered a different order for `?sort=-anything` than
+  // for `?sort=anything`, which let a caller see that the two were being treated differently at all.
+  let dir = sortDir;
+  if (opts.sortable && !opts.sortable.includes(sortField)) {
+    const fallback = opts.defaultSort || '-createdAt';
+    sortField = fallback.replace(/^-/, '');
+    dir = fallback.startsWith('-') ? 'desc' : 'asc';
+  }
+  return { page, limit, offset: (page - 1) * limit, sortField, sortDir: dir, q: String(query.q ?? '').trim() };
 }
 export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /** Map a camelCase API sort field to a snake_case column, restricted to a whitelist. */
