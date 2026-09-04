@@ -11,6 +11,7 @@ import { EnvelopeInterceptor } from './http/envelope';
 import { HttpPrincipalResolver, PRINCIPAL_RESOLVER, TOKEN_VERIFIER, type PrincipalResolver, type TokenVerifier } from './auth/principal';
 import { JwksCache, verifyJwt } from './auth/jwt';
 import { HealthController } from './health';
+import { TelemetryController } from './telemetry';
 import { SettingsClient } from './settings-client';
 import type { BaseEnv } from './config';
 
@@ -66,7 +67,7 @@ export class KitModule {
     ];
     return {
       module: KitModule,
-      controllers: [HealthController],
+      controllers: [HealthController, TelemetryController],
       providers,
       exports: [KIT_ENV, 'KIT_SERVICE_NAME', 'KIT_SERVICE_TOKEN', KIT_LOGGER, KIT_POOL, KIT_DB, KIT_BUS, KIT_RELAY, KIT_SETTINGS, TOKEN_VERIFIER, PRINCIPAL_RESOLVER, AuditClient],
     };

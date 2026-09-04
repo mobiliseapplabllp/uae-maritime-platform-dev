@@ -60,6 +60,7 @@ export const SERVICES: UpstreamService[] = [
   { name: 'mdm', envKey: 'MDM_URL', port: 5402 },
   { name: 'audit-ledger', envKey: 'AUDIT_URL', port: 5403 },
   { name: 'notifications', envKey: 'NOTIFICATIONS_URL', port: 5404 },
+  { name: 'scheduler', envKey: 'SCHEDULER_URL', port: 5405 },
   { name: 'reporting', envKey: 'REPORTING_URL', port: 5406 },
   { name: 'workflow', envKey: 'WORKFLOW_URL', port: 5407 },
   { name: 'rules', envKey: 'RULES_URL', port: 5408 },
@@ -75,7 +76,6 @@ export const SERVICES: UpstreamService[] = [
   { name: 'revenue', envKey: 'REVENUE_URL', port: 5428 },
   { name: 'ai-assistant', envKey: 'AI_ASSISTANT_URL', port: 5501 },
   { name: 'ai-agents', envKey: 'AI_AGENTS_URL', port: 5502 },
-  { name: 'insights-api', envKey: 'INSIGHTS_URL', port: 5503 },
 ];
 
 /** Public prefix → service. Order is irrelevant; resolution sorts longest prefix first. */
@@ -132,10 +132,10 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/facilities', service: 'facilities' },
   { prefix: '/api/invoices', service: 'revenue' },
   { prefix: '/api/tariffs', service: 'revenue' },
+  { prefix: '/api/jobs', service: 'scheduler' },
   // AI layer (every agent action goes through ai-tool-gateway behind these services)
   { prefix: '/api/ai', service: 'ai-assistant' },
   { prefix: '/api/agents', service: 'ai-agents' },
-  { prefix: '/api/insights', service: 'insights-api' },
 ];
 
 /** Upstream URL for a service: the env override when set, otherwise the native default. */

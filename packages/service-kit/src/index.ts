@@ -12,6 +12,7 @@ export * from './events/bus';
 export * from './events/outbox';
 export * from './audit';
 export * from './health';
+export * from './telemetry';
 export * from './settings-client';
 export * from './kit.module';
 export * from './app';

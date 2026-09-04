@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { readdirSync } from 'node:fs';
 import http, { type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -61,7 +62,21 @@ describe('route table', () => {
     expect(new Set(prefixes).size).toBe(prefixes.length);
     const names = new Set(SERVICES.map((s) => s.name));
     for (const r of ROUTES) expect(names.has(r.service), r.prefix).toBe(true);
-    expect(prefixes).toEqual(expect.arrayContaining(['/api/auth', '/api/internal', '/api/lookups', '/api/audit', '/api/dashboard', '/api/documents', '/api/vessels', '/api/port-calls', '/api/ai', '/api/insights']));
+    expect(prefixes).toEqual(expect.arrayContaining(['/api/auth', '/api/internal', '/api/lookups', '/api/audit', '/api/dashboard', '/api/documents', '/api/vessels', '/api/port-calls', '/api/ai', '/api/jobs']));
+  });
+  /* The route table drifted from reality twice at once: it probed an `insights-api` that no service
+   * in this repo provides — pinning /api/health at "degraded" forever — while `scheduler` ran on
+   * :5405 unrouted and unmonitored. Both directions are caught here against the filesystem. */
+  it('names exactly the services that exist in the repository', () => {
+    const onDisk = readdirSync(join(REPO_ROOT, 'services'), { withFileTypes: true })
+      .filter((d) => d.isDirectory() && d.name !== 'gateway')
+      .map((d) => d.name)
+      .sort();
+    expect(SERVICES.map((s) => s.name).sort()).toEqual(onDisk);
+  });
+  it('gives every service a distinct port and env key', () => {
+    expect(new Set(SERVICES.map((s) => s.port)).size).toBe(SERVICES.length);
+    expect(new Set(SERVICES.map((s) => s.envKey)).size).toBe(SERVICES.length);
   });
   it('resolves URLs from env with native defaults and matches the longest prefix segment-wise', () => {
     const routes = resolveRoutes({ MDM_URL: 'http://mdm.internal:9000/' });
