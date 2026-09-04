@@ -11,8 +11,9 @@ rules:
         - "**/tests/**"
         - "**/.env.example"
         - "pnpm-lock.yaml"
-        - "**/i18n/**"           # dictionaries: `password: 'Password'` is a label, not a credential
+        - "**/i18n/**"           # dictionaries: a translated field label is not a credential
         - "**/tools/dast/**"     # a probe's deliberately-wrong passwords are attack payloads, not secrets
+        - ".semgrep.yml"         # this pack documents the shapes it detects, and would otherwise match itself
     patterns:
       - pattern-regex: '(?i)(password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?token|client[_-]?secret)["'']?\s*[:=]\s*["''][^"''$]{8,}["'']'
       - pattern-not-regex: '(?i)(development-service-token|development-gateway-secret|development-only-secret-change-me|maritime-registry-demonstration-key|Demo@2026|replace-before-enabling|maritime:maritime)'

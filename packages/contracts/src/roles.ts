@@ -62,7 +62,7 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
       'masters.view','legislation.view','reports.view','audit.view','ai.use') },
   { code: 'MV', name: 'Management Viewer', description: 'Read-only management view across modules', system: false,
     permissions: P('dashboard.view','portcalls.view','vessels.view','incidents.view','inspections.view','invoices.view','legislation.view','facilities.view','reports.view','nmc.view','risk.view','seafarers.view','ai.use',
-      'registry.view','services.view','agents.view') },
+      'registry.view','services.view','agents.view','models.view') },
 ];
 
 export const roleByName = (name: string): RoleDefinition | undefined => ROLE_CATALOGUE.find((r) => r.name === name);

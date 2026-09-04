@@ -190,7 +190,7 @@ export function canChangeStatus(from: string, to: string, reason: string): Verdi
 /* -------------------------------------------------------------------------- publishing --- */
 
 /** The read-model shape reporting projects under the `company` kind. */
-export const companyReadModel = (c: CompanyApi) => ({ id: c.id, code: c.code, name: c.name, category: c.category, status: c.status, address: c.address, taxId: c.taxId });
+export const companyReadModel = (c: CompanyApi) => ({ id: c.id, code: c.code, name: c.name, nameAr: c.nameAr, category: c.category, status: c.status, address: c.address, taxId: c.taxId });
 
 export interface PublishOptions { event?: string; data?: Row; cause?: EventEnvelope; actor?: Actor }
 export async function publishCompany(c: Queryable, env: Env, row: CompanyRow, extra: CompanyExtras, opts: PublishOptions = {}): Promise<CompanyApi> {

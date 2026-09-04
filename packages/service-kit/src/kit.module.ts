@@ -13,6 +13,8 @@ import { JwksCache, verifyJwt } from './auth/jwt';
 import { HealthController } from './health';
 import { TelemetryController } from './telemetry';
 import { SettingsClient } from './settings-client';
+import { createCache, type Cache } from './cache';
+import { createSearch, type SearchAdapter } from './search';
 import type { BaseEnv } from './config';
 
 export interface KitOptions { env: BaseEnv; principalResolver?: Provider; tokenVerifier?: Provider; extraProviders?: Provider[] }
@@ -24,10 +26,17 @@ export const KIT_DB = 'KIT_DB';
 export const KIT_BUS = 'KIT_BUS';
 export const KIT_RELAY = 'KIT_RELAY';
 export const KIT_SETTINGS = 'KIT_SETTINGS';
+export const KIT_CACHE = 'KIT_CACHE';
+export const KIT_SEARCH = 'KIT_SEARCH';
 
 class KitLifecycle implements OnApplicationShutdown {
-  constructor(private readonly relay: OutboxRelay, private readonly bus: EventBus, private readonly pool: Pool) {}
-  async onApplicationShutdown() { this.relay.stop(); await this.bus.close().catch(() => undefined); await this.pool.end().catch(() => undefined); }
+  constructor(private readonly relay: OutboxRelay, private readonly bus: EventBus, private readonly pool: Pool, private readonly cache: Cache) {}
+  async onApplicationShutdown() {
+    this.relay.stop();
+    await this.bus.close().catch(() => undefined);
+    await this.cache.close().catch(() => undefined);
+    await this.pool.end().catch(() => undefined);
+  }
 }
 
 /** Wires the shared runtime into a service: config, logger, database, event bus + outbox relay, auth guard, envelope, audit, health. */
@@ -59,7 +68,9 @@ export class KitModule {
       { provide: KIT_BUS, useFactory: async (): Promise<EventBus> => (env.EVENT_BUS === 'nats' && env.NATS_URL ? NatsBus.connect(env.NATS_URL, logger) : new MemoryBus()) },
       { provide: KIT_RELAY, useFactory: (bus: EventBus) => { const r = new OutboxRelay(handle.pool, bus, logger); r.start(); return r; }, inject: [KIT_BUS] },
       { provide: KIT_SETTINGS, useFactory: () => new SettingsClient(env.MDM_URL, env.SERVICE_TOKEN) },
-      { provide: KitLifecycle, useFactory: (relay: OutboxRelay, bus: EventBus) => new KitLifecycle(relay, bus, handle.pool), inject: [KIT_RELAY, KIT_BUS] },
+      { provide: KIT_CACHE, useFactory: (): Promise<Cache> => createCache(env, (err) => logger.warn({ err: err.message }, 'cache backend error')) },
+      { provide: KIT_SEARCH, useFactory: (): SearchAdapter => createSearch(env, handle.pool, (err) => logger.warn({ err: err.message }, 'search engine unavailable, answering from PostgreSQL')) },
+      { provide: KitLifecycle, useFactory: (relay: OutboxRelay, bus: EventBus, cache: Cache) => new KitLifecycle(relay, bus, handle.pool, cache), inject: [KIT_RELAY, KIT_BUS, KIT_CACHE] },
       tokenVerifier, principalResolver, AuditClient, Reflector,
       { provide: APP_GUARD, useClass: AuthGuard },
       { provide: APP_INTERCEPTOR, useClass: EnvelopeInterceptor },
@@ -69,7 +80,7 @@ export class KitModule {
       module: KitModule,
       controllers: [HealthController, TelemetryController],
       providers,
-      exports: [KIT_ENV, 'KIT_SERVICE_NAME', 'KIT_SERVICE_TOKEN', KIT_LOGGER, KIT_POOL, KIT_DB, KIT_BUS, KIT_RELAY, KIT_SETTINGS, TOKEN_VERIFIER, PRINCIPAL_RESOLVER, AuditClient],
+      exports: [KIT_ENV, 'KIT_SERVICE_NAME', 'KIT_SERVICE_TOKEN', KIT_LOGGER, KIT_POOL, KIT_DB, KIT_BUS, KIT_RELAY, KIT_SETTINGS, KIT_CACHE, KIT_SEARCH, TOKEN_VERIFIER, PRINCIPAL_RESOLVER, AuditClient],
     };
   }
 }

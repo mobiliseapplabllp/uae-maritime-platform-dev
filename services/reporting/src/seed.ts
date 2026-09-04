@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { buildWorld, isStatutory, type World } from '@maritime/world';
 import { makeEvent, EVENTS } from '@maritime/contracts';
-import { createDb, runMigrations, withTx } from '@maritime/service-kit';
+import { createDb, runMigrations, withTx, createCache } from '@maritime/service-kit';
 import { env } from './env';
-import { project } from './consumer';
+import { project, invalidateDerived } from './consumer';
 
 /** Report library — saved reports run over the read models. Bilingual names; categories match the module colours. */
 export const REPORTS = [
@@ -72,6 +72,11 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
     for (const r of REPORTS) await c.query('INSERT INTO report_definitions(key, name, name_ar, category, description, perm, params, columns, query_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, category = EXCLUDED.category, description = EXCLUDED.description, perm = EXCLUDED.perm, params = EXCLUDED.params, columns = EXCLUDED.columns, query_key = EXCLUDED.query_key', [r.key, r.name, r.nameAr, r.category, r.description, r.perm, JSON.stringify(r.params), JSON.stringify(r.columns), r.queryKey]);
     counts.reports = REPORTS.length;
   });
+  /* A reseed rewrites every read model, so anything derived from them is now wrong. When the deployment
+   * shares a cache this clears it for every replica at once; when the cache is in-process this reaches only
+   * this script's own empty one, and the running service falls back on its time to live. That asymmetry is
+   * the practical reason a multi-replica deployment configures the shared driver. */
+  await createCache(env()).then((cache) => invalidateDerived(cache).finally(() => cache.close())).catch(() => undefined);
   await pool.end();
   return { ...counts, profile: world.profile };
 }

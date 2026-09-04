@@ -152,8 +152,11 @@ describe('facilities — the company directory', () => {
     expect(created.code).toMatch(/^TST\d+$/);
     const rm = (await outbox(EVENTS.readModel.upserted)).at(-1)!;
     expect(rm.data.kind).toBe('company');
-    // `scope` rides along so reporting can partition its projection the way this register partitions the row
-    expect(Object.keys(rm.data.entity).sort()).toEqual(['address', 'category', 'code', 'id', 'name', 'scope', 'status', 'taxId']);
+    /* `scope` rides along so reporting can partition its projection the way this register partitions the row,
+     * and `nameAr` so the search index has Arabic to analyse — a bilingual register whose read model is
+     * English-only can only ever be searched in English. The set is asserted whole on purpose: a read-model
+     * payload that grows without anyone noticing is how a field nobody meant to publish gets published. */
+    expect(Object.keys(rm.data.entity).sort()).toEqual(['address', 'category', 'code', 'id', 'name', 'nameAr', 'scope', 'status', 'taxId']);
     expect(rm.data.entity.scope).toEqual({ company: created.code });
     expect((await outbox(EVENTS.facilities.companyRegistered)).at(-1)?.data).toMatchObject({ code: created.code, name: created.name });
     expect((await post(C, { code: created.code, name: 'A clashing company', category: 'AGENCY' }, clerk)).status).toBe(409);

@@ -21,19 +21,6 @@ jobs:
     name: build and test
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgis/postgis:16-3.4
-        env:
-          POSTGRES_USER: maritime
-          POSTGRES_PASSWORD: maritime
-          POSTGRES_DB: postgres
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U maritime -d postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       TEST_ADMIN_DATABASE_URL: postgres://maritime:maritime@127.0.0.1:5432/postgres
       EVENT_BUS: memory
@@ -47,6 +34,27 @@ jobs:
           docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.11-alpine -js -m 8222
           for i in $(seq 1 30); do curl -fs http://127.0.0.1:8222/healthz >/dev/null && break; sleep 1; done
           curl -fs http://127.0.0.1:8222/healthz
+      # The platform needs PostGIS and pgvector in the same database and no upstream image ships both, which
+      # is why infra/docker/postgres.Dockerfile exists. CI builds and runs that image rather than the
+      # upstream one, so the tests run against the database the development stack actually uses: on
+      # postgis/postgis alone the vector extension is absent, the assistant's migration degrades to the
+      # in-process path by design, and the tests that assert it ranks in SQL fail with nothing wrong.
+      # It cannot be a service container because those start before the checkout that supplies the file.
+      - name: start PostgreSQL with PostGIS and pgvector
+        run: |
+          docker build -t maritime/postgres:16-3.4 -f infra/docker/postgres.Dockerfile infra/docker
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=maritime -e POSTGRES_PASSWORD=maritime -e POSTGRES_DB=postgres \
+            maritime/postgres:16-3.4
+          # Wait over TCP, not the socket. The entrypoint brings up a temporary socket-only server to run the
+          # init scripts and then restarts with the real configuration, so a socket check passes during init
+          # and the tests then race the restart.
+          for i in $(seq 1 90); do docker exec postgres pg_isready -h 127.0.0.1 -U maritime -d postgres >/dev/null 2>&1 && break; sleep 1; done
+          docker exec postgres pg_isready -h 127.0.0.1 -U maritime -d postgres
+          # A smoke test that the extension is installed, not provisioning: extensions are per-database and
+          # each service's migration creates its own. Failing here says "the image is wrong" in one line,
+          # instead of six assertions later saying "retrieval is in memory" and meaning the same thing.
+          docker exec postgres psql -U maritime -d postgres -c "CREATE EXTENSION IF NOT EXISTS vector"
       - uses: pnpm/action-setup@v4
         with:
           version: ${{ env.PNPM_VERSION }}
@@ -92,13 +100,15 @@ jobs:
           GITLEAKS_CONFIG: .gitleaks.toml
           GITLEAKS_ENABLE_SUMMARY: "true"
       - name: trivy filesystem scan (vulnerabilities, secrets, misconfigurations)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # Accepted findings live in the file with their reasons, scoped to the path each applies to.
+          trivyignores: .trivyignore.yaml
           exit-code: "1"
           skip-dirs: node_modules,dist,.turbo
           format: table
@@ -125,8 +135,11 @@ jobs:
           cache: pnpm
       - if: hashFiles('apps/web/package.json') != ''
         run: pnpm install --frozen-lockfile
+      # The trailing `...` builds the workspace packages the web app depends on before it builds the app.
+      # Without it `@maritime/contracts` is never compiled, its type declarations do not exist, and every
+      # file importing them fails to typecheck — which is what this job did the first time it ever ran.
       - if: hashFiles('apps/web/package.json') != ''
-        run: pnpm --filter @maritime/web build
+        run: pnpm --filter @maritime/web... build
       - if: hashFiles('apps/web/package.json') != ''
         run: pnpm --filter @maritime/web test
       - name: playwright drives

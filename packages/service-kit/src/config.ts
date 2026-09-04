@@ -23,6 +23,22 @@ export const baseEnvSchema = z.object({
   CORS_ORIGIN: z.string().default('http://localhost:5300,http://127.0.0.1:5300'),
   JSON_LIMIT: z.string().default('2mb'),
   RATE_LIMIT_PER_MIN: z.coerce.number().default(600),
+  /* Cache tier. `memory` keeps a bounded per-process cache and needs nothing else running, which is what
+   * development and a single-node deployment want. `redis` speaks the shared protocol, so the same setting
+   * serves Redis and Valkey and the deployment decides which one is installed. */
+  CACHE_DRIVER: z.enum(['memory', 'redis']).default('memory'),
+  CACHE_URL: z.string().optional(),
+  CACHE_PREFIX: z.string().default('maritime'),
+  CACHE_TTL_SEC: z.coerce.number().int().positive().default(60),
+  CACHE_MAX_ENTRIES: z.coerce.number().int().positive().default(5000),
+  /* Search tier. `postgres` searches the read models directly; `opensearch` puts the engine in front of
+   * them for matching and keeps PostgreSQL for authorisation and for the fallback when the engine is down. */
+  SEARCH_DRIVER: z.enum(['postgres', 'opensearch']).default('postgres'),
+  OPENSEARCH_URL: z.string().optional(),
+  OPENSEARCH_PREFIX: z.string().default('maritime'),
+  OPENSEARCH_USERNAME: z.string().optional(),
+  OPENSEARCH_PASSWORD: z.string().optional(),
+  OPENSEARCH_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
 });
 export type BaseEnv = z.infer<typeof baseEnvSchema>;
 
