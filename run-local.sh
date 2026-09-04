@@ -5,6 +5,7 @@
 #   ./run-local.sh start      start what is already built and seeded
 #   ./run-local.sh stop       stop every service and the runtime
 #   ./run-local.sh status     what is up and on which port
+#   ./run-local.sh update     pull the latest cloud work, rebuild, restart (the daily loop)
 #   ./run-local.sh reset      drop the databases and seed again from the shared world
 #
 # Prerequisites: Node 22+, pnpm 10+, PostgreSQL 16 (role `maritime`, password `maritime`),
@@ -123,6 +124,25 @@ case "${1:-up}" in
     bash infra/local/services.sh stop 2>&1 | sed 's/^/   /'
     bash infra/local/runtime.sh stop 2>&1 | sed 's/^/   /'
     ok "stopped" ;;
+  update)
+    say "Fetching the latest work"
+    git remote get-url origin >/dev/null 2>&1 || die "No git remote is configured. Add one first:
+     git remote add origin https://github.com/<owner>/<repo>.git"
+    BEFORE=$(git rev-parse HEAD)
+    git pull --ff-only origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | sed 's/^/   /' || die "pull failed — resolve it, then run ./run-local.sh update again"
+    AFTER=$(git rev-parse HEAD)
+    if [ "$BEFORE" = "$AFTER" ]; then ok "already up to date"; else
+      ok "$(git log --oneline "$BEFORE..$AFTER" | wc -l | tr -d ' ') new commit(s)"
+      git log --oneline "$BEFORE..$AFTER" | head -10 | sed 's/^/     /'
+    fi
+    install_and_build
+    say "Restarting services (each applies its own new migrations as it boots)"
+    bash infra/local/services.sh stop > /dev/null 2>&1
+    bash infra/local/services.sh start > "$LOG/start.log" 2>&1
+    ok "$(grep -c 'started' "$LOG/start.log") services restarted"
+    # the web dev server picks up source changes itself, so it is only started if it is not already up
+    curl -fs -o /dev/null "http://127.0.0.1:$WEB_PORT" 2>/dev/null || start_services
+    report ;;
   status)
     bash infra/local/runtime.sh status; bash infra/local/services.sh status
     curl -fs "http://127.0.0.1:$WEB_PORT" >/dev/null 2>&1 && echo "web: up (:$WEB_PORT)" || echo "web: down (:$WEB_PORT)" ;;
@@ -131,5 +151,5 @@ case "${1:-up}" in
     bash infra/local/services.sh stop >/dev/null 2>&1
     for s in $(ls services); do db=$(db_of "$s"); [ -n "$db" ] && dropdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" --if-exists "$db"; done
     create_databases; seed_all; start_services; report ;;
-  *) echo "usage: ./run-local.sh [up|start|stop|status|reset]" >&2; exit 2 ;;
+  *) echo "usage: ./run-local.sh [up|start|stop|status|update|reset]" >&2; exit 2 ;;
 esac
