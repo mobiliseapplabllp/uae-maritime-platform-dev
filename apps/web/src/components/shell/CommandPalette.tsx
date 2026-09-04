@@ -7,6 +7,7 @@ import api from '../../api/client';
 import { MODULES } from '../../modules';
 import { hasPerm } from '../../utils/perms';
 import { useUser } from '../../store';
+import { internalPath } from '../../utils/navigation';
 
 /* Global Ctrl+K command palette — search every register, or jump straight to a module. Recent picks are remembered per browser. */
 interface Hit { id: string; label: string; sub?: string; to: string }
@@ -38,7 +39,7 @@ export default function CommandPalette({ open, onClose }: { open: boolean; onClo
   }, [q]);
 
   const navCommands = useMemo(() => MODULES.filter((m) => m.key !== 'home' && hasPerm(user, m.perm)).map((m) => ({ label: `Go to ${m.name}`, sub: m.desc, to: m.home, icon: m.icon, color: m.color })), [user]);
-  const go = (item: Recent) => { saveRecent(item); onClose(); navigate(item.to); };
+  const go = (item: Recent) => { saveRecent(item); onClose(); navigate(internalPath(item.to)); };
   const recents = !q.trim() ? loadRecents() : [];
   const filteredNav = !q.trim() ? [] : navCommands.filter((c) => c.label.toLowerCase().includes(q.toLowerCase()));
 

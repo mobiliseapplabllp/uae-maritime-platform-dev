@@ -30,11 +30,11 @@
     "react-dom": "18.3.1",
     "react-i18next": "17.0.13",
     "react-redux": "9.3.0",
-    "react-router-dom": "6.30.6",
+    "react-router-dom": "7.18.3",
     "recharts": "2.15.4",
     "stylis": "4.4.0",
     "stylis-plugin-rtl": "2.1.1",
-    "xlsx": "0.18.5"
+    "write-excel-file": "^4.1.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

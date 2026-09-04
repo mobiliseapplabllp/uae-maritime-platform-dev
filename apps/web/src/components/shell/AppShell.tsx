@@ -30,6 +30,7 @@ import { useProfile } from '../../config/runtime';
 import type { Notification, SessionUser } from '../../types';
 import CommandPalette from './CommandPalette';
 import AiDock from './AiDock';
+import { internalPath } from '../../utils/navigation';
 
 const W = 236;
 /* Collapsed, the sidebar becomes an icon rail rather than disappearing: navigation stays one click
@@ -64,7 +65,7 @@ function Bell() {
           {items.length === 0 && <ListItem><ListItemText primary={t('app.nothingYet')} primaryTypographyProps={{ color: 'text.secondary' }} /></ListItem>}
           {items.map((n) => (
             <ListItemButton key={n.id} alignItems="flex-start" sx={{ opacity: n.read ? 0.62 : 1 }}
-              onClick={() => { api.post(`/notifications/${n.id}/read`).then(load); if (n.link) { navigate(n.link); setAnchor(null); } }}>
+              onClick={() => { api.post(`/notifications/${n.id}/read`).then(load); if (n.link) { navigate(internalPath(n.link)); setAnchor(null); } }}>
               <ListItemAvatar sx={{ minWidth: 30, mt: 1 }}><Box sx={{ width: 9, height: 9, borderRadius: '50%', bgcolor: SEVERITY_COLOR[n.severity || 'info'] || 'info.main' }} /></ListItemAvatar>
               <ListItemText primary={n.title} secondary={`${n.body || ''} · ${fromNow(n.createdAt)}`} primaryTypographyProps={{ fontWeight: n.read ? 400 : 600, fontSize: 13.5 }} secondaryTypographyProps={{ fontSize: 12 }} />
             </ListItemButton>

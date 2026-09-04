@@ -55,3 +55,31 @@ test.describe('foundation screens', () => {
     await expect(page.getByRole('heading', { name: 'No access' })).toBeVisible();
   });
 });
+
+test.describe('exports', () => {
+  /*
+   * The Excel writer changed: SheetJS is unmaintained on npm and carries two open high advisories, both in
+   * the parser this app never used. Swapping the engine is only safe if the file it produces is still a file
+   * Excel will open, so this drives the real menu and looks inside what comes out.
+   */
+  test('the register exports a workbook Excel will open', async ({ page }) => {
+    await login(page);
+    await page.goto('/invoices');
+    await expect(page.getByRole('button', { name: 'Export' }).first()).toBeVisible({ timeout: 20_000 });
+    const download = page.waitForEvent('download', { timeout: 60_000 });
+    await page.getByRole('button', { name: 'Export' }).first().click();
+    await page.getByRole('menuitem', { name: /Excel/i }).click();
+    const file = await download;
+    expect(file.suggestedFilename()).toMatch(/\.xlsx$/);
+    const path = await file.path();
+    const { readFileSync } = await import('node:fs');
+    const bytes = readFileSync(path);
+    // an .xlsx is a zip: it starts PK, and it has to carry the parts Excel looks for
+    expect(bytes.subarray(0, 2).toString('latin1')).toBe('PK');
+    expect(bytes.length).toBeGreaterThan(1000);
+    const text = bytes.toString('latin1');
+    for (const part of ['[Content_Types].xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml']) {
+      expect(text, `the workbook has no ${part}`).toContain(part);
+    }
+  });
+});

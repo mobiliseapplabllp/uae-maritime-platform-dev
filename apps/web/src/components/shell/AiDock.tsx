@@ -9,6 +9,7 @@ import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
 import api from '../../api/client';
 import { BRAND_GRADIENT, MONO } from '../../theme';
 import { AI_PORTAL } from '../../aiPortal';
+import { internalPath } from '../../utils/navigation';
 
 const blink = keyframes`0%,80%,100%{opacity:.25}40%{opacity:1}`;
 interface Source { label: string; link: string }
@@ -71,7 +72,7 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
               <Rich text={m.text} />
               {!!m.sources?.length && (
                 <Stack direction="row" spacing={0.75} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
-                  {m.sources.map((s) => <Chip key={s.link} size="small" icon={<OpenInNewRoundedIcon sx={{ fontSize: 13 }} />} label={s.label} onClick={() => { navigate(s.link); onClose(); }} sx={{ height: 22, fontSize: 11, fontWeight: 600 }} color="primary" variant="outlined" />)}
+                  {m.sources.map((s) => <Chip key={s.link} size="small" icon={<OpenInNewRoundedIcon sx={{ fontSize: 13 }} />} label={s.label} onClick={() => { navigate(internalPath(s.link)); onClose(); }} sx={{ height: 22, fontSize: 11, fontWeight: 600 }} color="primary" variant="outlined" />)}
                 </Stack>
               )}
             </Box>

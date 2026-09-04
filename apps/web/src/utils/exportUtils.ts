@@ -1,5 +1,5 @@
 /* Excel / PDF / CSV export helpers used by masters, registers and the report library. */
-import * as XLSX from 'xlsx';
+import writeXlsxFile, { type Row as XlsxRow, type Sheet as XlsxSheet } from 'write-excel-file/browser';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { getProfile } from '../config/runtime';
@@ -13,16 +13,45 @@ function saveBytes(filename: string, data: Blob | string, mime?: string) {
   a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   URL.revokeObjectURL(a.href);
 }
+/**
+ * A cell, typed the way a spreadsheet reads it: a number stays a number so a column can be summed, a date
+ * stays a date so it sorts, and everything else goes across as text.
+ */
+const cell = (v: unknown) => {
+  if (v === null || v === undefined || v === '') return { value: '' };
+  if (typeof v === 'number' && Number.isFinite(v)) return { value: v, type: Number };
+  if (v instanceof Date) return { value: v, type: Date, format: 'yyyy-mm-dd hh:mm' };
+  if (typeof v === 'boolean') return { value: v, type: Boolean };
+  return { value: String(v), type: String };
+};
+
+/**
+ * Writes the workbook.
+ *
+ * This used SheetJS, which is unmaintained on npm at 0.18.5 and carries two open high advisories — both in
+ * the parser, which the platform never reached because it only ever wrote files. Depending on an abandoned
+ * package for a capability we use one tenth of is not a position to defend at an audit, so the export moved
+ * to a maintained writer with the same shape.
+ */
 export async function exportExcel({ name, sheets }: { name: string; sheets: { name: string; columns: ExportColumn[]; rows: any[] }[] }) {
-  const wb = XLSX.utils.book_new();
-  for (const s of sheets) {
-    const data = [s.columns.map((c) => c.label), ...s.rows.map((r) => s.columns.map((c) => cellValue(r, c)))];
-    const ws = XLSX.utils.aoa_to_sheet(data);
-    ws['!cols'] = s.columns.map((c) => ({ wch: Math.min(42, Math.max(10, String(c.label).length + 6)) }));
-    XLSX.utils.book_append_sheet(wb, ws, s.name.slice(0, 28));
-  }
-  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
-  saveBytes(`${name}.xlsx`, new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  // Excel refuses a sheet name over 31 characters, one carrying \ / ? * [ ] :, or one that repeats — and a
+  // page title can be any of those.
+  const seen = new Set<string>();
+  const sheetName = (raw: string, i: number) => {
+    let out = (raw || `Sheet ${i + 1}`).replace(/[\\/?*[\]:]/g, ' ').slice(0, 28).trim() || `Sheet ${i + 1}`;
+    while (seen.has(out.toLowerCase())) out = `${out.slice(0, 25)} ${seen.size + 1}`;
+    seen.add(out.toLowerCase());
+    return out;
+  };
+  const books: XlsxSheet<Blob>[] = sheets.map((s, i) => ({
+    sheet: sheetName(s.name, i),
+    columns: s.columns.map((c) => ({ width: Math.min(42, Math.max(10, String(c.label).length + 6)) })),
+    data: [
+      s.columns.map((c) => ({ value: c.label, fontWeight: 'bold' as const })),
+      ...s.rows.map((r) => s.columns.map((c) => cell(cellValue(r, c)))),
+    ] as XlsxRow[],
+  }));
+  saveBytes(`${name}.xlsx`, await writeXlsxFile(books).toBlob());
 }
 export async function exportPdf({ name, title, subtitle, sections, landscape = false }: { name: string; title?: string; subtitle?: string; sections: { heading?: string; columns: ExportColumn[]; rows: any[] }[]; landscape?: boolean }) {
   const doc = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });

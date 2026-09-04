@@ -6,6 +6,7 @@ import api from '../../api/client';
 import { BRAND_GRADIENT, MONO } from '../../theme';
 import { fromNow, initials } from '../../utils/format';
 import type { ChipColor } from '../../utils/status';
+import { internalPath } from '../../utils/navigation';
 
 /* Teams-style entity hover card. Wrap any label: <EntityHover type="vessel" id={row.vesselId}>{row.vesselName}</EntityHover>
  * Types come from /cards/:type/:id — user, vessel, seafarer, berth, agent, incident, company. Cards are cached for the session. */
@@ -79,7 +80,7 @@ export default function EntityHover({ type, id, children, underline = true }: { 
                   {card.link && (
                     <>
                       <Divider />
-                      <Button fullWidth size="small" endIcon={<LaunchRoundedIcon sx={{ fontSize: 14 }} />} onClick={() => { setAnchor(null); navigate(card.link!); }} sx={{ borderRadius: 0, py: 0.75, fontSize: 12 }}>Open record</Button>
+                      <Button fullWidth size="small" endIcon={<LaunchRoundedIcon sx={{ fontSize: 14 }} />} onClick={() => { setAnchor(null); navigate(internalPath(card.link)); }} sx={{ borderRadius: 0, py: 0.75, fontSize: 12 }}>Open record</Button>
                     </>
                   )}
                 </>
