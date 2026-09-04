@@ -58,7 +58,9 @@ export async function probeService(s: PlatformService, env: Env): Promise<ProbeR
 }
 
 /** The cluster: reachability, per-database size and the connection counts that precede a pool
- *  exhaustion. Sizes come from pg_database, which is cluster-wide, so one connection sees them all. */
+ *  exhaustion. Sizes come from pg_database, which is cluster-wide, so one connection sees them all.
+ *  Test databases are excluded: `maritime_*_test` are throwaway artefacts of a test run, and
+ *  counting them made "platform data" nearly double what the platform actually holds. */
 export async function probeDatabase(pool: Pool, env: Env): Promise<ProbeResult> {
   void env;
   try {
@@ -67,7 +69,7 @@ export async function probeDatabase(pool: Pool, env: Env): Promise<ProbeResult> 
              round(pg_database_size(d.datname) / 1048576.0, 1)::text AS size_mb,
              (SELECT count(*) FROM pg_stat_activity a WHERE a.datname = d.datname)::text AS connections
         FROM pg_database d
-       WHERE d.datname LIKE 'maritime\\_%'
+       WHERE d.datname LIKE 'maritime\\_%' AND d.datname NOT LIKE '%\\_test'
        ORDER BY d.datname
     `));
     const databases = res.rows.map((r) => ({ name: r.datname, sizeMb: Number(r.size_mb), connections: Number(r.connections) }));

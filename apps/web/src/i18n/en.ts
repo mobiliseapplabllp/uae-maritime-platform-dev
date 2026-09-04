@@ -216,6 +216,19 @@ const en = {
     issuedUnder: 'Issued under {{convention}}', issuedByLine: 'Issued by {{issuer}}',
     verificationQr: 'Verification QR code', scanToVerify: 'Scan to verify', verifyAt: 'Verify at',
   },
+  platform: {
+    title: 'Platform Operations',
+    subtitle: 'Every service, database and stream probed independently — last sweep {{at}}, every {{every}}s',
+    refresh: 'Refresh now',
+    kpi: { services: 'Services answering', targets: 'All targets up', targetsSub: 'services, infrastructure and service levels', openIncidents: 'Open incidents', dataSize: 'Platform data', databases: '{{n}} databases' },
+    section: { services: 'Services', database: 'PostgreSQL', broker: 'Event broker' },
+    db: { connections: 'Connections', total: 'Total size', longest: 'Longest query', name: 'Database', size: 'Size', conns: 'Conns' },
+    bus: { streams: 'Streams', consumers: 'Consumers', pending: 'Pending', pendingHelp: 'Events published but not yet consumed. A number that keeps climbing means a service has stopped keeping up.', connections: 'Connections', stream: 'Stream', messages: 'Messages', maxLag: 'Max lag', noJetstream: 'JetStream is not reporting — the broker is reachable but stream state is unavailable.' },
+    outbox: { title: 'Unpublished events', help: 'Events written inside a transaction but not yet on the bus. A few in flight is normal; a backlog that persists means data is drifting between services.' },
+    sla: { title: 'Service Levels', subtitle: 'Measured as real requests through the gateway — the path a client actually takes, timed end to end', now: 'Now', target: 'Target', p95: 'P95 24h', p50: 'Median', building: 'Collecting — a trend appears once there is more than one hour of history.' },
+    incidents: { title: 'Outage History', subtitle: 'State changes recorded with measured durations, including restarts detected from uptime going backwards', all: 'All', openOnly: 'Open', target: 'Target', kind: 'Kind', started: 'Started', ended: 'Ended', duration: 'Duration', detail: 'Detail', ongoing: 'Ongoing', none: 'No incidents recorded.', restartedFrom: 'restarted — previous uptime {{sec}}s' },
+  },
+
 };
 export default en;
 export type Dictionary = typeof en;
