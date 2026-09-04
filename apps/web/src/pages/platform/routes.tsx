@@ -8,4 +8,5 @@ export const routes: RouteDef[] = [
   { path: '/platform', perm: 'platform.view', element: L(() => import('./PlatformStatus')) },
   { path: '/platform/slas', perm: 'platform.view', element: L(() => import('./PlatformSlas')) },
   { path: '/platform/incidents', perm: 'platform.view', element: L(() => import('./PlatformIncidents')) },
+  { path: '/platform/compliance', perm: 'platform.view', element: L(() => import('./PlatformCompliance')) },
 ];

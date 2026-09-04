@@ -42,6 +42,7 @@ import DesignServicesRoundedIcon from '@mui/icons-material/DesignServicesRounded
 import StorefrontRoundedIcon from '@mui/icons-material/StorefrontRounded';
 import AccountTreeRoundedIcon from '@mui/icons-material/AccountTreeRounded';
 import SpeedRoundedIcon from '@mui/icons-material/SpeedRounded';
+import RuleRoundedIcon from '@mui/icons-material/RuleRounded';
 
 export interface NavItem { to: string; label: string; icon: SvgIconComponent; perm: string; end?: boolean }
 export interface NavGroup { header: string; items: NavItem[] }
@@ -128,6 +129,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/platform', label: 'Service Health', icon: MonitorHeartRoundedIcon, perm: 'platform.view', end: true },
       { to: '/platform/slas', label: 'Service Levels', icon: SpeedRoundedIcon, perm: 'platform.view' },
       { to: '/platform/incidents', label: 'Outage History', icon: HistoryRoundedIcon, perm: 'platform.view' },
+      { to: '/platform/compliance', label: 'RFP Compliance', icon: RuleRoundedIcon, perm: 'platform.view' },
     ] }] },
   { key: 'admin', name: 'Administration', short: 'Admin', color: '#0A2239', desc: 'Users, roles, audit log and settings', icon: AdminPanelSettingsRoundedIcon, perm: 'users.view', home: '/admin/users',
     nav: [{ header: 'Administration', items: [

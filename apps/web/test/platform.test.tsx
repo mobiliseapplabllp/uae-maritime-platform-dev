@@ -10,6 +10,7 @@ import api from '../src/api/client';
 import PlatformStatus from '../src/pages/platform/PlatformStatus';
 import { availabilityColor, availabilityTone, duration, mb, outboxTone, pct } from '../src/pages/platform/shared';
 import { MODULES } from '../src/modules';
+import { COMPLIANCE, COMPLIANCE_URL, statusColor } from '../src/pages/platform/compliance';
 import { ROUTES } from '../src/routes';
 
 const wrap = (ui: React.ReactNode) => render(
@@ -111,5 +112,25 @@ describe('platform status board', () => {
     wrap(<PlatformStatus />);
     await waitFor(() => expect(screen.getByText(/Unpublished events/i)).toBeInTheDocument());
     expect(screen.getByText('ships: 42 (900s)')).toBeInTheDocument();
+  });
+});
+
+describe('RFP compliance summary', () => {
+  it('states counts that add up to the traced total', () => {
+    const total = COMPLIANCE.totals.reduce((a, s) => a + s.count, 0);
+    const bySection = COMPLIANCE.sections.reduce((a, s) => a + s.built + s.partial + s.absent + s.diverged, 0);
+    // the two ways of counting the same matrix must agree, or one of them is stale
+    expect(bySection).toBe(total);
+    expect(total).toBe(70);
+  });
+  it('never maps a status onto a palette key that does not exist', () => {
+    for (const s of COMPLIANCE.totals) expect(statusColor(s.key)).toMatch(/\.(main|disabled)$/);
+  });
+  it('points at a published artifact over https', () => {
+    expect(COMPLIANCE_URL).toMatch(/^https:\/\//);
+  });
+  it('gates the compliance page on platform.view like the rest of the module', () => {
+    const r = ROUTES.find((x) => x.path === '/platform/compliance');
+    expect(r?.perm).toBe('platform.view');
   });
 });

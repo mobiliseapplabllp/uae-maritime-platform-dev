@@ -227,6 +227,19 @@ const en = {
     outbox: { title: 'Unpublished events', help: 'Events written inside a transaction but not yet on the bus. A few in flight is normal; a backlog that persists means data is drifting between services.' },
     sla: { title: 'Service Levels', subtitle: 'Measured as real requests through the gateway — the path a client actually takes, timed end to end', now: 'Now', target: 'Target', p95: 'P95 24h', p50: 'Median', building: 'Collecting — a trend appears once there is more than one hour of history.' },
     incidents: { title: 'Outage History', subtitle: 'State changes recorded with measured durations, including restarts detected from uptime going backwards', all: 'All', openOnly: 'Open', target: 'Target', kind: 'Kind', started: 'Started', ended: 'Ended', duration: 'Duration', detail: 'Detail', ongoing: 'Ongoing', none: 'No incidents recorded.', restartedFrom: 'restarted — previous uptime {{sec}}s' },
+    compliance: {
+      title: 'RFP Compliance',
+      subtitle: '{{n}} commitments from the RFP and Technical Architecture Document traced against the code that exists — compiled {{at}}',
+      status: { built: 'Built', partial: 'Partial', absent: 'Not started', diverged: 'Diverged' },
+      statusHelp: { built: 'Implemented and demonstrable now', partial: 'Foundation in place, parts outstanding', absent: 'No code against the commitment', diverged: 'Built differently — needs a decision' },
+      bySection: 'By area',
+      deltaTitle: 'Remaining work, in order',
+      fullTitle: 'The full traceability matrix',
+      fullBody: 'Every commitment row by row, with the evidence behind each status — a count from a running database, a file in the repository, or a test. Filterable by status so the delta can be read on its own.',
+      open: 'Open the compliance matrix',
+      internal: 'Internal',
+      internalHelp: 'Prepared for Mobilise and LTTS. Status calls are the delivery team\u2019s own and are meant to be argued with.',
+    },
   },
 
 };
