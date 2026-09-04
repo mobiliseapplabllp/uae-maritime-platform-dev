@@ -67,7 +67,7 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
            contact_name = EXCLUDED.contact_name, contact_email = EXCLUDED.contact_email, contact_phone = EXCLUDED.contact_phone, tax_id = EXCLUDED.tax_id,
            registration_no = EXCLUDED.registration_no, address = EXCLUDED.address, city = EXCLUDED.city, status = EXCLUDED.status, status_reason = EXCLUDED.status_reason,
            status_changed_at = EXCLUDED.status_changed_at, rating = EXCLUDED.rating, onboarded_at = EXCLUDED.onboarded_at, real = EXCLUDED.real, updated_at = now()`,
-        [co.id, co.code, co.name, null, co.category, JSON.stringify(co.types), co.contactName, co.contactEmail, co.contactPhone, co.taxId, co.registrationNo,
+        [co.id, co.code, co.name, co.nameAr ?? null, co.category, JSON.stringify(co.types), co.contactName, co.contactEmail, co.contactPhone, co.taxId, co.registrationNo,
           co.address, co.address.split(',').pop()?.trim() ?? '', co.status,
           co.status === 'SUSPENDED' ? 'Suspended pending the close-out of an audit non-conformity' : co.status === 'BLACKLISTED' ? 'Blacklisted following repeated non-conformities' : co.status === 'INACTIVE' ? 'Retired from the directory' : '',
           co.status === 'ACTIVE' ? null : new Date(now.getTime() - 45 * D), co.rating, co.onboardedAt, co.real, co.onboardedAt]);
@@ -94,12 +94,12 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
         `INSERT INTO port_facilities(id, code, name, name_ar, facility_type, terminal, berth_type, operator_id, operator_name, isps_status, isps_level, soc_no, soc_expiry,
            psso_name, psso_phone, capabilities, loa_max, draft_max, capacity_value, capacity_unit, status, remarks)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-         ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, facility_type = EXCLUDED.facility_type, terminal = EXCLUDED.terminal,
+         ON CONFLICT (id) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, facility_type = EXCLUDED.facility_type, terminal = EXCLUDED.terminal,
            berth_type = EXCLUDED.berth_type, operator_id = EXCLUDED.operator_id, operator_name = EXCLUDED.operator_name, isps_status = EXCLUDED.isps_status,
            isps_level = EXCLUDED.isps_level, soc_no = EXCLUDED.soc_no, soc_expiry = EXCLUDED.soc_expiry, psso_name = EXCLUDED.psso_name, psso_phone = EXCLUDED.psso_phone,
            capabilities = EXCLUDED.capabilities, loa_max = EXCLUDED.loa_max, draft_max = EXCLUDED.draft_max, capacity_value = EXCLUDED.capacity_value,
            capacity_unit = EXCLUDED.capacity_unit, status = EXCLUDED.status, updated_at = now()`,
-        [b.id, b.code, b.name, null, b.berthType === 'SPM' ? 'SPM' : 'BERTH', b.terminal, b.berthType, op?.id ?? null, op?.name ?? '',
+        [b.id, b.code, b.name, b.nameAr, b.berthType === 'SPM' ? 'SPM' : 'BERTH', b.terminal, b.berthType, op?.id ?? null, op?.name ?? '',
           isps.status, 1, isps.socNo, isps.expiry, psso?.name ?? '', psso?.phone ?? '', JSON.stringify(CAPABILITY[b.berthType] ?? []),
           b.loaMax, b.draftMax, capacity, unit, b.status === 'MAINTENANCE' ? 'MAINTENANCE' : 'OPERATIONAL',
           isps.status === 'COMPLIANT' ? 'Facility security plan approved; annual verification current.' : '']);

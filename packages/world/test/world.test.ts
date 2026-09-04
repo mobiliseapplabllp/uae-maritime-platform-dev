@@ -128,6 +128,7 @@ describe('world', () => {
     expect(inw.registry.filter((r) => r.state === 'REGISTERED')).toHaveLength(14); expect(Math.min(...inw.registrations.filter((r) => r.officialNumber).map((r) => Number(r.officialNumber)))).toBe(900001);
     expect(inw.legalInstruments.some((i) => i.refNo === 'MSA-1958')).toBe(true); expect(inw.legalInstruments.every((i) => i.titleAr === undefined)).toBe(true);
     expect(inw.seafarers.every((s) => s.seafarerIdLabel === 'INDoS')).toBe(true);
+    expect(inw.companies.every((c) => c.nameAr === undefined)).toBe(true);
   });
 
   it('places every seafarer with a licensed manning agency, or names none at all', () => {
@@ -155,5 +156,24 @@ describe('world', () => {
     expect(crewing.roleName).toBe('Manning Agent');
     // the manning agency the demo signs in as is one that actually placed somebody
     expect(w.seafarers.filter((s) => s.manningAgentCode === 'MCA').length).toBeGreaterThan(0);
+  });
+  /* Bilingual search is only as good as the register behind it. The Arabic analysis chain, the trigram
+   * index and the search seam were all in place while `name_ar` was null on every company row, so a
+   * search in Arabic matched nothing and the failure was invisible — the query was correct, the data
+   * was empty. This holds the data. */
+  it('carries an Arabic name on every company and berth of the Emirati register', () => {
+    const arabic = /^[\u0600-\u06FF\u0750-\u077F0-9\s\u060C\u061F.\u0640\u2014\u2013-]+$/;
+    expect(w.companies).toHaveLength(20);
+    for (const c of w.companies) {
+      expect(c.nameAr, c.code).toBeTruthy();
+      expect(arabic.test(c.nameAr!), `${c.code}: ${c.nameAr}`).toBe(true);
+    }
+    for (const b of w.berths) {
+      expect(b.nameAr, b.code).toBeTruthy();
+      expect(arabic.test(b.nameAr), `${b.code}: ${b.nameAr}`).toBe(true);
+    }
+    // distinct names, so a search does not collapse the estate into one result
+    expect(new Set(w.companies.map((c) => c.nameAr)).size).toBe(w.companies.length);
+    expect(new Set(w.berths.map((b) => b.nameAr)).size).toBe(w.berths.length);
   });
 });
