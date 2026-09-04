@@ -116,18 +116,24 @@ SEEDED=$(bash infra/local/services.sh seed 2>&1 | grep -c "SEED COMPLETE")
 ok "seeded $SEEDED services"
 
 bold "6/6  Starting everything"
-LOGDIR="$ROOT/../.local/log"; mkdir -p "$LOGDIR"
+LOGDIR="${MARITIME_LOCAL_DIR:-$ROOT/.local}/log"; mkdir -p "$LOGDIR"
 # not piped: the detached services would hold the pipe open and the reader would never see EOF
 bash infra/local/services.sh start > "$LOGDIR/start.log" 2>&1
 ok "$(grep -c 'started\|already running' "$LOGDIR/start.log") services running"
 work "starting the web app"
 ( cd "$ROOT/apps/web" && setsid nohup pnpm dev > "$LOGDIR/web.log" 2>&1 < /dev/null & )
+# Vite pre-bundles every dependency on a cold start, which on a first run can take
+# well over a minute on a laptop; wait generously, and show the log if it never binds.
 WEB_OK=0
-for _ in $(seq 1 90); do
+for _ in $(seq 1 240); do
   if curl -fs -o /dev/null http://127.0.0.1:5300 2>/dev/null; then WEB_OK=1; break; fi
   sleep 1
 done
-[ $WEB_OK -eq 1 ] && ok "web app on :5300" || warn "the web app has not answered yet — check $LOGDIR/web.log, or run: cd apps/web && pnpm dev"
+if [ $WEB_OK -eq 1 ]; then ok "web app on :5300"; else
+  warn "the web app did not bind within four minutes. The last lines of $LOGDIR/web.log:"
+  tail -15 "$LOGDIR/web.log" 2>/dev/null | sed 's/^/       /' || echo "       (no log was written — the dev server never started)"
+  warn "start it yourself with:  cd apps/web && pnpm dev"
+fi
 
 PWORD=$(node -p "require('$ROOT/packages/world/dist/index.js').DEMO_PASSWORD" 2>/dev/null || echo 'Demo@2026')
 printf '\n\033[1m═══════════════════════════════════════════════════════════\033[0m\n'

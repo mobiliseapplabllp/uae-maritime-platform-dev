@@ -14,7 +14,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
-LOCAL="${MARITIME_LOCAL_DIR:-$ROOT/../.local}"; LOG="$LOCAL/log"; mkdir -p "$LOG"
+LOCAL="${MARITIME_LOCAL_DIR:-$ROOT/.local}"; LOG="$LOCAL/log"; mkdir -p "$LOG"
 PGUSER_="${PGUSER:-maritime}"; export PGPASSWORD="${PGPASSWORD:-maritime}"
 PGHOST_="${PGHOST:-127.0.0.1}"; PGPORT_="${PGPORT:-5432}"
 GATEWAY_PORT=5200; WEB_PORT=5300
