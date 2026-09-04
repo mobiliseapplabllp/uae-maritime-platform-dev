@@ -43,6 +43,19 @@ config:
   AUTH_MODE: keycloak
   CORS_ORIGIN: https://app.maritime.example
   RATE_LIMIT_PER_MIN: "600"
+  # Cache tier (STK-06). `redis` addresses Valkey too — the protocol is the same. A multi-replica
+  # deployment needs the shared driver: an in-process cache is invalidated on the replica that consumed
+  # the event and nowhere else.
+  CACHE_DRIVER: redis
+  CACHE_URL: redis://valkey:6379
+  CACHE_PREFIX: maritime
+  CACHE_TTL_SEC: "60"
+  # Search tier (STK-05). PostgreSQL stays behind the engine as the fallback, so an unreachable cluster
+  # degrades search rather than breaking it. Credentials come from the platform secret.
+  SEARCH_DRIVER: opensearch
+  OPENSEARCH_URL: https://opensearch:9200
+  OPENSEARCH_PREFIX: maritime
+  OPENSEARCH_TIMEOUT_MS: "3000"
 
 gateway:
   ingress:

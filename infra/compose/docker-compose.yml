@@ -25,6 +25,18 @@ x-common-env: &common-env
   IDENTITY_URL: http://identity-access:5401
   MDM_URL: http://mdm:5402
   CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5300,http://127.0.0.1:5300}
+  # Cache and search tiers. Both default to the in-process / PostgreSQL implementations so the stack runs
+  # with nothing extra; set CACHE_DRIVER=redis or SEARCH_DRIVER=opensearch in .env after bringing up the
+  # matching profile.
+  CACHE_DRIVER: ${CACHE_DRIVER:-memory}
+  CACHE_URL: ${CACHE_URL:-redis://valkey:6379}
+  CACHE_PREFIX: ${CACHE_PREFIX:-maritime}
+  CACHE_TTL_SEC: ${CACHE_TTL_SEC:-60}
+  SEARCH_DRIVER: ${SEARCH_DRIVER:-postgres}
+  OPENSEARCH_URL: ${OPENSEARCH_URL:-http://opensearch:9200}
+  OPENSEARCH_PREFIX: ${OPENSEARCH_PREFIX:-maritime}
+  OPENSEARCH_USERNAME: ${OPENSEARCH_USERNAME:-}
+  OPENSEARCH_PASSWORD: ${OPENSEARCH_PASSWORD:-}
 
 x-service: &service
   restart: unless-stopped
@@ -72,6 +84,48 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks: [maritime]
+
+  # The cache tier (STK-06). Valkey is the open-source continuation of Redis and speaks the same protocol,
+  # so CACHE_DRIVER=redis addresses either. Optional: without it every service keeps a bounded in-process
+  # cache, which is correct for one replica and stale-prone across several.
+  #   docker compose --profile cache up -d valkey
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    profiles: [cache]
+    networks: [maritime]
+
+  # The search tier (STK-05). Optional: without it search runs on the PostgreSQL read models, which is the
+  # development default and stays the fallback when the engine is unreachable.
+  #   docker compose --profile search up -d opensearch
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    environment:
+      discovery.type: single-node
+      bootstrap.memory_lock: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+      # Development only. A deployment sets DISABLE_SECURITY_PLUGIN=false and supplies real credentials,
+      # which is why OPENSEARCH_USERNAME/PASSWORD exist in the service environment above.
+      DISABLE_SECURITY_PLUGIN: "true"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports: ["9200:9200"]
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://127.0.0.1:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    profiles: [search]
     networks: [maritime]
 
   keycloak:
@@ -318,6 +372,7 @@ volumes:
   postgres-data:
   nats-data:
   documents-data:
+  opensearch-data:
 
 networks:
   maritime:

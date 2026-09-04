@@ -1,6 +1,6 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import type { Pool } from 'pg';
-import { CurrentUser, KIT_POOL, RequirePerm, type Principal } from '@maritime/service-kit';
+import { CurrentUser, KIT_CACHE, KIT_ENV, KIT_POOL, RequirePerm, scopedKey, type BaseEnv, type Cache, type Principal } from '@maritime/service-kit';
 import { CARGO_GROUP, D, H, certStatus, many, monthKey, months12 } from './queries';
 import {
   BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, INSPECTION_SCOPE, INVOICE_SCOPE, VESSEL_SCOPE, from,
@@ -9,13 +9,22 @@ import {
 interface CallRow { id: string; vcn: string; vessel_id: string; vessel_name: string; vessel_type: string | null; status: string; eta: Date; etd: Date | null; ata: Date | null; atb: Date | null; atd: Date | null; berth_id: string | null; berth_code: string | null; agent_name: string | null; cargo_ops: { cargoType: string; qty: number; unit: string; qtyMT: number }[] }
 interface BerthRow { id: string; code: string; name: string; terminal: string; berth_type: string; status: string; loa_max: string | null; draft_max: string | null }
 
+export const DASHBOARD_CACHE_PREFIX = 'dashboard';
+
 /** The command-centre payload: KPIs, throughput and revenue series, cargo mix, berth board, arrivals, certificate alerts and recent activity. */
 @Controller()
 export class DashboardController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_CACHE) private readonly cache: Cache, @Inject(KIT_ENV) private readonly env: BaseEnv) {}
 
+  /* Nine queries over five read models, asked again every time anyone opens the home page. The permission
+   * is enforced by the guard before this method runs, and the key carries the reader's scope, so a cached
+   * payload can only ever be returned to someone the same queries would have answered identically. */
   @RequirePerm('dashboard.view') @Get('dashboard')
   async summary(@CurrentUser() user: Principal) {
+    return this.cache.wrap(scopedKey(user, DASHBOARD_CACHE_PREFIX), this.env.CACHE_TTL_SEC, () => this.compute(user));
+  }
+
+  private async compute(user: Principal) {
     const now = new Date();
     const start12 = new Date(now.getFullYear(), now.getMonth() - 11, 1);
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);

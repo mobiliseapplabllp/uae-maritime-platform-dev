@@ -1,7 +1,9 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
+import { DASHBOARD_CACHE_PREFIX } from './dashboard.controller';
+import { STATS_CACHE_PREFIX } from './stats.controller';
 import { EVENTS, STREAM_PREFIX, type EventEnvelope } from '@maritime/contracts';
-import { KIT_BUS, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { KIT_BUS, KIT_CACHE, KIT_POOL, withInbox, type Cache, type EventBus, type Subscription } from '@maritime/service-kit';
 import { certStatus } from './queries';
 
 /** Read-model kinds and the upsert that projects each API-shaped entity into its table. */
@@ -28,9 +30,9 @@ export const PROJECTIONS: Record<string, (c: PoolClient, e: Row) => Promise<void
   inspection: (c, e) => { const f: Row[] = e.findings ?? []; return up(c, 'rm_inspections', { id: e.id, number: e.number, vessel_id: e.vesselId ?? null, vessel_name: e.vesselName ?? null, type: e.type, inspector: e.inspector ?? null, status: e.status, result: e.result || null, detention: !!e.detention, planned_at: e.plannedAt ?? null, started_at: e.startedAt ?? null, closed_at: e.closedAt ?? null, open_findings: e.openFindings ?? f.filter((x) => x.status === 'OPEN').length, total_findings: e.totalFindings ?? f.length, score_pct: e.scorePct ?? null, ...sp(e) }, 'number'); },
   incident: (c, e) => up(c, 'rm_incidents', { id: e.id, number: e.number, title: e.title, category: e.category ?? null, type: e.type, severity: e.severity, priority: e.priority ?? null, status: e.status, vessel_id: e.vesselId ?? null, vessel_name: e.vesselName ?? null, assigned_to_name: (typeof e.assignedTo === 'string' ? e.assignedTo : e.assignedTo?.name) ?? e.assignedToName ?? null, reported_at: e.reportedAt, acknowledged_at: e.acknowledgedAt ?? null, resolved_at: e.resolvedAt ?? null, closed_at: e.closedAt ?? null, ...sp(e) }, 'number'),
   seafarer: (c, e) => { const certs: Row[] = e.certificates ?? []; const svc: Row[] = e.seaService ?? []; return up(c, 'rm_seafarers', { id: e.id, name: e.name, rank: e.rank, cdc_no: e.cdcNo, seafarer_id_no: e.seafarerIdNo ?? e.seafarerId ?? e.indosNo ?? null, nationality: e.nationality ?? null, phone: e.phone ?? null, status: e.status ?? 'ACTIVE', current_vessel_id: e.currentVesselId ?? null, current_vessel_name: e.currentVesselName ?? null, cert_alerts: e.certAlerts ?? certs.filter((x) => certStatus(x.expiryDate) !== 'VALID').length, sea_service_days: e.seaServiceDays ?? Math.round(svc.reduce((s, x) => s + (new Date(x.to).getTime() - new Date(x.from).getTime()) / 86400000, 0)), service_records: e.serviceRecords ?? svc.length, manning_agent_code: e.manningAgentCode ?? '', manning_agent_name: e.manningAgentName ?? '', ...sc(e) }); },
-  company: (c, e) => up(c, 'rm_companies', { id: e.id, code: e.code, name: e.name, category: e.category ?? null, status: e.status ?? 'ACTIVE', address: e.address ?? null, tax_id: e.taxId ?? e.gstin ?? null, ...sc(e) }, 'code'),
+  company: (c, e) => up(c, 'rm_companies', { id: e.id, code: e.code, name: e.name, name_ar: e.nameAr ?? null, category: e.category ?? null, status: e.status ?? 'ACTIVE', address: e.address ?? null, tax_id: e.taxId ?? e.gstin ?? null, ...sc(e) }, 'code'),
   instrument: (c, e) => up(c, 'rm_instruments', { id: e.id, number: e.number ?? e.licenseNo, subject_kind: e.subjectKind ?? 'COMPANY', subject_id: e.subjectId ?? null, entity_name: e.entityName, entity_type: e.entityType, instrument_class: e.instrumentClass ?? 'LICENCE', status: e.status, applied_date: e.appliedDate ?? null, issue_date: e.issueDate ?? null, expiry_date: e.expiryDate ?? null, statutory: !!e.statutory, in_force: e.inForce ?? true, signed: !!(e.signed ?? e.signature?.value), performance_rating: e.performanceRating ?? null, audits: e.audits?.length ?? e.auditsCount ?? 0, ...sc(e) }, 'number'),
-  legalInstrument: (c, e) => up(c, 'rm_legal_instruments', { id: e.id, ref_no: e.refNo, title: e.title, type: e.type, status: e.status, issued_date: e.issuedDate ?? null, ack_required: !!e.ackRequired, acknowledged_by: e.acknowledgedBy ?? [] }, 'ref_no'),
+  legalInstrument: (c, e) => up(c, 'rm_legal_instruments', { id: e.id, ref_no: e.refNo, title: e.title, title_ar: e.titleAr ?? null, type: e.type, status: e.status, issued_date: e.issuedDate ?? null, ack_required: !!e.ackRequired, acknowledged_by: e.acknowledgedBy ?? [] }, 'ref_no'),
   registration: (c, e) => up(c, 'rm_registrations', { id: e.id, number: e.number ?? e.applicationNo, vessel_id: e.vesselId ?? null, vessel_name: e.vesselName ?? null, kind: e.kind, status: e.status, submitted_at: e.submittedAt ?? null, closed_at: e.closedAt ?? null, due_at: e.dueAt ?? null, ...sc(e) }, 'number'),
   tariff: (c, e) => up(c, 'rm_tariffs', { id: e.id, code: e.code, name: e.name, category: e.category ?? 'MARINE', unit: e.unit, rate: e.rate, active: e.active ?? true, revisions: e.revisions ?? [] }, 'code'),
   resource: (c, e) => up(c, 'rm_resources', { id: e.id, code: e.code, name: e.name, type: e.type, status: e.status ?? 'AVAILABLE', jobs: e.jobs ?? [], outages: e.outages ?? [], ...sp(e) }, 'code'),
@@ -53,11 +55,39 @@ export async function project(c: PoolClient, event: EventEnvelope): Promise<void
   if (event.type === EVENTS.mdm.lookupChanged && d.category) { await c.query('INSERT INTO rm_lookup_counts(category, entries) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET entries = EXCLUDED.entries, updated_at = now()', [d.category, d.count ?? 0]); }
 }
 
+/* Cached answers are derived from the read models, so the projection that changes a read model is the only
+ * thing that can make one wrong. Invalidation therefore hangs off the projection rather than off a timer:
+ * the entries go the moment the data behind them moves.
+ *
+ * It drops whole prefixes rather than reasoning about which readers were affected. Working out that a berth
+ * change only invalidates two ports' dashboards means re-deriving the tenancy predicate in a second place,
+ * and a cache is not worth a second copy of the boundary. A dropped prefix costs one recomputation.
+ *
+ * With more than one reporting replica this only holds if the cache is shared — an in-process cache is
+ * invalidated on the replica that consumed the event and nowhere else. That is the reason the Redis driver
+ * exists, and the reason the in-process default keeps a short time to live as its second line of defence. */
+export const CACHE_PREFIXES = [DASHBOARD_CACHE_PREFIX, STATS_CACHE_PREFIX];
+
+/**
+ * Drops everything a projection can have made stale. Call it *after* the transaction commits, never inside
+ * it: invalidating for a write that then rolls back throws away a correct answer, and invalidating before
+ * the commit re-populates the cache from the old rows.
+ *
+ * Anything that calls `project` directly — the seed, the tests — owes this call too, which is why it has a
+ * name instead of being three lines inside the consumer.
+ */
+export async function invalidateDerived(cache: Cache): Promise<void> {
+  for (const prefix of CACHE_PREFIXES) await cache.delPrefix(prefix);
+}
+
 @Injectable()
 export class ReadModelConsumer implements OnModuleInit, OnModuleDestroy {
   private sub?: Subscription;
-  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_CACHE) private readonly cache: Cache) {}
   async onModuleInit() { this.sub = await this.bus.subscribe('reporting-readmodels', [`${STREAM_PREFIX}.>`], (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
-  async handle(event: EventEnvelope) { await withInbox(this.pool, event, (c) => project(c, event)); }
+  async handle(event: EventEnvelope) {
+    await withInbox(this.pool, event, (c) => project(c, event));
+    await invalidateDerived(this.cache);
+  }
 }

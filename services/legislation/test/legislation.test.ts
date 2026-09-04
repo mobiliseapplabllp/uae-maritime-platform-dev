@@ -200,7 +200,9 @@ describe('legislation — drafting and editing', () => {
     const rm = await outbox(EVENTS.readModel.upserted);
     expect(rm.at(-1)?.data).toMatchObject({ kind: 'legalInstrument' });
     expect(rm.at(-1)?.data.entity).toMatchObject({ refNo: created.refNo, ackRequired: false, acknowledgedBy: [] });
-    expect(Object.keys(rm.at(-1)!.data.entity).sort()).toEqual(['ackRequired', 'acknowledgedBy', 'id', 'issuedDate', 'refNo', 'status', 'title', 'type']);
+    /* `titleAr` is published so the search index has Arabic to analyse: the register is bilingual, and a
+     * read model that carries only the English title can only ever be searched in English. */
+    expect(Object.keys(rm.at(-1)!.data.entity).sort()).toEqual(['ackRequired', 'acknowledgedBy', 'id', 'issuedDate', 'refNo', 'status', 'title', 'titleAr', 'type']);
   });
   it('allocates each type its own series, and never reuses a seeded number', async () => {
     const a = await newDraft({ type: 'ORDER', title: 'Test order one' });

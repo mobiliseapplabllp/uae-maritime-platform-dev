@@ -2,17 +2,17 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
-import { createApp, loadEnv, StaticPrincipalResolver, PRINCIPAL_RESOLVER, signHS256, withTx } from '@maritime/service-kit';
+import { KIT_CACHE, createApp, loadEnv, StaticPrincipalResolver, PRINCIPAL_RESOLVER, signHS256, withTx, type Cache } from '@maritime/service-kit';
 import { makeEvent, EVENTS } from '@maritime/contracts';
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedReporting } from '../src/seed';
-import { project } from '../src/consumer';
+import { invalidateDerived, project } from '../src/consumer';
 
 const ADMIN_URL = process.env.TEST_ADMIN_DATABASE_URL ?? 'postgres://maritime:maritime@127.0.0.1:5432/postgres';
 const DB = 'maritime_reporting_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`;
 const SECRET = 'test-secret-test-secret';
-let app: INestApplication; let server: unknown; let pool: Pool;
+let app: INestApplication; let server: unknown; let pool: Pool; let cache: Cache;
 const principal = (id: string, perms: string[]) => ({ id, sub: id, name: `User ${id}`, email: `${id}@maritime.example`, perms, scope: { level: 'NATIONAL' as const }, kind: 'user' as const, active: true });
 const token = (sub: string) => signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 3600, issuer: 'maritime-platform' });
 const get = (path: string, as = 'admin') => request(server as never).get(path).set('authorization', `Bearer ${token(as)}`);
@@ -35,6 +35,7 @@ beforeAll(async () => {
   app = await createApp({ env, module: buildAppModule(env, resolver) });
   await app.init(); server = app.getHttpServer();
   pool = new Pool({ connectionString: URL });
+  cache = app.get<Cache>(KIT_CACHE);
 });
 afterAll(async () => { await app?.close(); await pool?.end(); });
 
@@ -81,8 +82,68 @@ describe('reporting', () => {
     const a = makeEvent({ type: EVENTS.audit.recorded, source: 'identity-access', data: { action: 'LOGIN', entity: 'User', entityLabel: 'x@maritime.example', actor: { id: 'u1', name: 'Someone' }, at: new Date().toISOString() } });
     await withTx(pool, (c) => project(c, a)); await withTx(pool, (c) => project(c, a));
     expect(Number((await pool.query('SELECT count(*) AS n FROM rm_audit_activity WHERE id = $1', [a.id])).rows[0].n)).toBe(1);
+    /* Driving `project` directly is what the consumer does inside a transaction; the invalidation it does
+     * afterwards is part of the same contract, so this test owes it too. */
+    await invalidateDerived(cache);
     const dash = await get('/dashboard'); expect(dash.body.data.recentActivity[0].actor).toBe('Someone');
   });
+  /*
+   * STK-05 and STK-06: search runs behind a driver seam and the read paths are cached. Both are places
+   * where an answer can be produced somewhere other than the query that authorises it, so both are tested
+   * for the boundary and not only for the feature.
+   */
+  it('searches through the driver seam and reports which driver answered', async () => {
+    const r = await get('/search?q=Maersk');
+    expect(r.status).toBe(200);
+    expect(r.body.data.driver).toBe('postgres');
+    expect(r.body.data.groups.find((g: { type: string }) => g.type === 'vessel').items.length).toBeGreaterThan(0);
+  });
+
+  it('finds a notice by its Arabic title, not only its English one', async () => {
+    const ar = await get('/search?q=' + encodeURIComponent('الاتفاقية'));
+    const notices = ar.body.data.groups.find((g: { type: string }) => g.type === 'notice');
+    expect(notices?.items.length).toBeGreaterThan(0);
+    expect(notices.items[0].labelAr).toContain('الاتفاقية');
+  });
+
+  it('keeps the tenancy boundary in the query when search matches across it', async () => {
+    /* The driver ranks by relevance and knows nothing about the reader. An agent must still only see their
+     * own company's invoices, however high another company's rank. */
+    const all = (await get('/search?q=INV', 'admin')).body.data.groups.find((g: { type: string }) => g.type === 'invoice');
+    const mine = (await get('/search?q=INV', 'gss')).body.data.groups.find((g: { type: string }) => g.type === 'invoice');
+    expect(all.items.length).toBeGreaterThan(0);
+    if (mine) expect(mine.items.length).toBeLessThanOrEqual(all.items.length);
+    const invoices = await pool.query<{ scope_company: string }>('SELECT scope_company FROM rm_invoices WHERE number = ANY($1::text[])', [(mine?.items ?? []).map((i: { label: string }) => i.label)]);
+    for (const row of invoices.rows) expect(row.scope_company).toBe('GSS');
+  });
+
+  it('serves a repeated stat strip from the cache and recomputes it after a projection', async () => {
+    await invalidateDerived(cache);
+    const before = cache.stats().hits;
+    const first = await get('/stats/portcalls'); expect(first.status).toBe(200);
+    const second = await get('/stats/portcalls'); expect(second.status).toBe(200);
+    expect(second.body.data.cards).toEqual(first.body.data.cards);
+    expect(cache.stats().hits).toBeGreaterThan(before);
+    /* After a projection invalidates, the next ask is a miss again — the strip is recomputed rather than
+     * served from an entry the new rows have made wrong. */
+    await invalidateDerived(cache);
+    const misses = cache.stats().misses;
+    await get('/stats/portcalls');
+    expect(cache.stats().misses).toBeGreaterThan(misses);
+  });
+
+  it('never serves one tenant a cached answer computed for another', async () => {
+    /* The whole reason the cache key carries the reader's scope. Two readers ask the same question of the
+     * same endpoint; the numbers must still differ, which they cannot if one is served the other's entry. */
+    await invalidateDerived(cache);
+    const national = await get('/stats/portcalls', 'admin');
+    const agent = await get('/stats/portcalls', 'gss');
+    expect(national.status).toBe(200); expect(agent.status).toBe(200);
+    const totalOf = (r: { body: { data: { cards: { label: string; value: string | number }[] } } }) =>
+      String(r.body.data.cards.find((c) => c.label === 'Total port calls')?.value ?? '');
+    expect(totalOf(national)).not.toBe(totalOf(agent));
+  });
+
   /*
    * Reporting projects registers that are partitioned, and for a while it did not carry the partition: the
    * search palette, the hover cards and the stat strips all answered nationally to whoever held the module

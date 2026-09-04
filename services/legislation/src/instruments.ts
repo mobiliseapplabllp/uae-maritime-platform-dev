@@ -164,7 +164,7 @@ export async function allocateRefNo(c: Queryable, type: string, year: number, pa
 
 /** The read-model shape reporting projects under the `legalInstrument` kind. */
 export const readModelOf = (entity: InstrumentApi) => ({
-  id: entity.id, refNo: entity.refNo, title: entity.title, type: entity.type, status: entity.status,
+  id: entity.id, refNo: entity.refNo, title: entity.title, titleAr: entity.titleAr, type: entity.type, status: entity.status,
   issuedDate: entity.issuedDate, ackRequired: entity.ackRequired, acknowledgedBy: entity.acknowledgedBy,
 });
 

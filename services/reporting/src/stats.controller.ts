@@ -1,7 +1,7 @@
 import { Controller, Get, Inject, Param } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { hasPerm } from '@maritime/contracts';
-import { CurrentUser, KIT_POOL, forbidden, notFound, type Principal } from '@maritime/service-kit';
+import { CurrentUser, KIT_CACHE, KIT_ENV, KIT_POOL, forbidden, notFound, scopedKey, type BaseEnv, type Cache, type Principal } from '@maritime/service-kit';
 import { D, H, card, certStatus, count, many, money, monthYear, dayMonthYear, nf, one, type Card } from './queries';
 import {
   BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, CHECKLIST_SCOPE, INCIDENT_SCOPE, INSPECTION_SCOPE,
@@ -250,13 +250,22 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
   } },
 };
 
+/** Stat strips are re-read on every page open and change only when a projection lands, so they are cached. */
+export const STATS_CACHE_PREFIX = 'stats';
+
 @Controller('stats')
 export class StatsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_CACHE) private readonly cache: Cache, @Inject(KIT_ENV) private readonly env: BaseEnv) {}
   @Get(':scope')
   async get(@Param('scope') scope: string, @CurrentUser() user: Principal) {
     const s = SCOPES[scope]; if (!s) throw notFound(`Unknown stats scope "${scope}"`);
+    /* The permission is checked before the cache is consulted, not after: a cached answer must never be the
+     * thing that decides whether a reader was allowed to ask. */
     if (!hasPerm(user.perms, s.perm)) throw forbidden('Missing permission: ' + s.perm);
-    return { cards: await s.compute(this.pool, user) };
+    /* The key carries the reader's scope and permissions, so one tenant's numbers cannot be served to
+     * another. See `scopedKey` — the scope is hashed into the key rather than trusted to the caller. */
+    const key = scopedKey(user, STATS_CACHE_PREFIX, scope);
+    const cards = await this.cache.wrap(key, this.env.CACHE_TTL_SEC, () => s.compute(this.pool, user));
+    return { cards };
   }
 }
