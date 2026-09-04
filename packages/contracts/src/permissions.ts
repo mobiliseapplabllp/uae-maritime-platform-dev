@@ -32,6 +32,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
 export const EXTENDED_PERMISSION_GROUPS: PermissionGroup[] = [
   { module: 'mdm',    label: 'Master Data Stewardship', actions: ['review', 'approve'] },
   { module: 'studio', label: 'Service Studio',          actions: ['view', 'design', 'review', 'promote'] },
+  { module: 'platform', label: 'Platform Operations',   actions: ['view'] },
 ];
 
 export const ALL_PERMISSIONS: string[] = PERMISSION_GROUPS.flatMap((g) => g.actions.map((a) => `${g.module}.${a}`));

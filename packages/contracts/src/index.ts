@@ -7,3 +7,4 @@ export * from './events';
 export * from './api';
 export * from './jurisdiction';
 export * from './i18n';
+export * from './platform';
