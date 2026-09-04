@@ -18,15 +18,15 @@ export const statusColor = (s: string): string =>
 
 export const COMPLIANCE = {
   totals: [
-    { key: 'built' as const, count: 22 },
-    { key: 'partial' as const, count: 34 },
-    { key: 'absent' as const, count: 13 },
+    { key: 'built' as const, count: 24 },
+    { key: 'partial' as const, count: 35 },
+    { key: 'absent' as const, count: 10 },
     { key: 'diverged' as const, count: 1 },
   ],
   sections: [
     { key: 'arch', label: 'Architecture mandate', built: 4, partial: 5, absent: 0, diverged: 0 },
-    { key: 'stack', label: 'Technology stack', built: 4, partial: 3, absent: 2, diverged: 1 },
-    { key: 'agentic', label: 'Agentic AI framework', built: 7, partial: 3, absent: 2, diverged: 0 },
+    { key: 'stack', label: 'Technology stack', built: 6, partial: 3, absent: 0, diverged: 1 },
+    { key: 'agentic', label: 'Agentic AI framework', built: 7, partial: 4, absent: 1, diverged: 0 },
     { key: 'lcnc', label: 'Low-code / no-code', built: 2, partial: 2, absent: 2, diverged: 0 },
     { key: 'domains', label: 'The seven RFP domains', built: 0, partial: 7, absent: 0, diverged: 0 },
     { key: 'cross', label: 'Cross-domain and non-functional', built: 5, partial: 5, absent: 2, diverged: 0 },
@@ -35,9 +35,9 @@ export const COMPLIANCE = {
   delta: [
     { key: 'studio', name: 'Service Studio', why: 'The low-code runtime already carries the platform; without the design-time studio the vendor-independence objective is unmet.' },
     { key: 'counterparts', name: 'Live counterpart connections', why: 'The hub and all eight adapters are built and contract-tested; each still answers from a stub until endpoints and credentials are issued.' },
-    { key: 'aiplatform', name: 'ai-platform', why: 'Model registry, drift, vision and speech. Agent governance currently stops at behaviour.' },
+    { key: 'aiplatform', name: 'The modelling half of ai-platform', why: 'The registry, approval, residency gate, latency budget and drift detection are built. Training runs are recorded rather than executed, and vision and speech answer from a stub.' },
     { key: 'mobile', name: 'Mobile apps', why: 'Two Flutter apps; the offline inspector app is the largest single estimate in the TAD.' },
-    { key: 'coverage', name: 'Coverage instrumentation', why: 'The agentic service rate is a percentage the directive measures. It cannot be reported today.' },
+    { key: 'coverage', name: 'Coverage instrumentation', why: 'The agentic service rate is a percentage the directive measures. It cannot be reported today, though every inference is now recorded with its model, version and outcome.' },
     { key: 'assurance', name: 'Remaining assurance', why: 'Static analysis, dynamic probes, the OWASP Top 10 pass and the WCAG 2.2 AA audit are done. Load tests, the DR drill, the migration toolkit and escrow are not.' },
   ],
 };

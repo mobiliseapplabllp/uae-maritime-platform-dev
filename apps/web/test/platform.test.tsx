@@ -116,12 +116,17 @@ describe('platform status board', () => {
 });
 
 describe('RFP compliance summary', () => {
-  it('states counts that add up to the traced total', () => {
+  it('states counts that add up to the traced total, status by status', () => {
     const total = COMPLIANCE.totals.reduce((a, s) => a + s.count, 0);
     const bySection = COMPLIANCE.sections.reduce((a, s) => a + s.built + s.partial + s.absent + s.diverged, 0);
     // the two ways of counting the same matrix must agree, or one of them is stale
     expect(bySection).toBe(total);
     expect(total).toBe(70);
+    // and they must agree per status: summing to the same grand total is not agreement — a headline that
+    // said 35 built and 24 partial would pass that check while inverting what the page tells the reader
+    for (const { key, count } of COMPLIANCE.totals) {
+      expect(COMPLIANCE.sections.reduce((a, s) => a + s[key], 0), key).toBe(count);
+    }
   });
   it('never maps a status onto a palette key that does not exist', () => {
     // `text.disabled` is deliberately not in this set: at 26px bold it came out at 2.67:1 on white, and the
