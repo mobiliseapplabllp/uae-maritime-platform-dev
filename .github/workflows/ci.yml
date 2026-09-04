@@ -99,6 +99,8 @@ jobs:
           scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+          # Accepted findings live in the file with their reasons, scoped to the path each applies to.
+          trivyignores: .trivyignore.yaml
           exit-code: "1"
           skip-dirs: node_modules,dist,.turbo
           format: table

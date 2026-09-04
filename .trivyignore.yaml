@@ -1,0 +1,12 @@
+# Security findings accepted deliberately, each with the reason and the file it applies to. Scoped by path so
+# an exception for one image never silences the same finding for another.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - "infra/docker/postgres.Dockerfile"
+    statement: >-
+      The PostgreSQL entrypoint has to start as root: it runs initdb, takes ownership of the data directory
+      and only then drops to the postgres user itself, so a USER instruction here breaks first boot rather
+      than hardening anything. This image is a development and CI convenience — the upstream PostGIS image
+      with pgvector added — and is not deployed; the Helm chart expects a managed database. Revisit if it
+      ever becomes a deployed image, where the fix is a pre-owned data volume rather than this line.

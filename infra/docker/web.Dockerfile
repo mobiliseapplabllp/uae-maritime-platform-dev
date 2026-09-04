@@ -20,6 +20,10 @@ FROM ${NGINX_IMAGE} AS runtime
 ENV GATEWAY_URL=http://gateway:5200
 COPY infra/docker/nginx.web.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+# The base image already runs as this uid; stating it makes the guarantee the image's own rather than one
+# inherited from a base someone may later change, and gives a restricted PodSecurity policy a numeric id to
+# check `runAsNonRoot` against.
+USER 101
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=5 \
   CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
