@@ -67,6 +67,7 @@ export const SERVICES: UpstreamService[] = [
   { name: 'instruments', envKey: 'INSTRUMENTS_URL', port: 5409 },
   { name: 'documents', envKey: 'DOCUMENTS_URL', port: 5410 },
   { name: 'observability', envKey: 'OBSERVABILITY_URL', port: 5411 },
+  { name: 'integration-hub', envKey: 'INTEGRATION_HUB_URL', port: 5412 },
   { name: 'ships', envKey: 'SHIPS_URL', port: 5421 },
   { name: 'seafarers', envKey: 'SEAFARERS_URL', port: 5422 },
   { name: 'legislation', envKey: 'LEGISLATION_URL', port: 5423 },
@@ -135,6 +136,7 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/tariffs', service: 'revenue' },
   { prefix: '/api/jobs', service: 'scheduler' },
   { prefix: '/api/platform', service: 'observability' },
+  { prefix: '/api/integrations', service: 'integration-hub' },
   // AI layer (every agent action goes through ai-tool-gateway behind these services)
   { prefix: '/api/ai', service: 'ai-assistant' },
   { prefix: '/api/agents', service: 'ai-agents' },

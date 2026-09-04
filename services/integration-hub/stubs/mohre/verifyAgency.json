@@ -1,0 +1,10 @@
+{
+  "status": 200,
+  "body": {
+    "licenceNo": "{licenceNo}",
+    "status": "ACTIVE",
+    "name": "Blue Horizon Manning Services",
+    "validTo": "2027-01-15",
+    "quotaRemaining": 42
+  }
+}

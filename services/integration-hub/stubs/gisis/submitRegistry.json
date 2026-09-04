@@ -1,0 +1,9 @@
+{
+  "status": 202,
+  "body": {
+    "receipt": "GISIS-REG-2026-Q3-00118",
+    "period": "{period}",
+    "accepted": true,
+    "acceptedAt": "2026-09-04T06:01:00Z"
+  }
+}

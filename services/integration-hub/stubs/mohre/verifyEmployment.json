@@ -1,0 +1,11 @@
+{
+  "status": 200,
+  "body": {
+    "emiratesId": "{emiratesId}",
+    "employed": true,
+    "establishment": "Gulf Star Shipping LLC",
+    "establishmentLicence": "MOHRE-778120",
+    "occupation": "Able Seafarer Deck",
+    "validTo": "2027-03-31"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "body": {
+    "reference": "{reference}",
+    "status": "CLEARED",
+    "decidedAt": "2026-09-11T09:20:00Z",
+    "conditions": []
+  }
+}

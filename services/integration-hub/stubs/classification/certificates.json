@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "body": {
+    "imo": "{imo}",
+    "certificates": [
+      {
+        "kind": "CARGO_SHIP_SAFETY_CONSTRUCTION",
+        "no": "CSSC-114220",
+        "issued": "2024-02-14",
+        "expires": "2029-02-13",
+        "status": "VALID"
+      },
+      {
+        "kind": "LOAD_LINE",
+        "no": "ILL-114221",
+        "issued": "2024-02-14",
+        "expires": "2029-02-13",
+        "status": "VALID"
+      }
+    ]
+  }
+}

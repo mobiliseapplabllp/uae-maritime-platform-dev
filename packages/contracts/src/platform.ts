@@ -42,6 +42,7 @@ export const PLATFORM_SERVICES: PlatformService[] = [
   svc('instruments', 'INSTRUMENTS_URL', 5409, 'platform'),
   svc('documents', 'DOCUMENTS_URL', 5410, 'platform'),
   svc('observability', 'OBSERVABILITY_URL', 5411, 'platform'),
+  svc('integration-hub', 'INTEGRATION_HUB_URL', 5412, 'platform'),
   svc('ships', 'SHIPS_URL', 5421, 'domain'),
   svc('seafarers', 'SEAFARERS_URL', 5422, 'domain'),
   svc('legislation', 'LEGISLATION_URL', 5423, 'domain'),

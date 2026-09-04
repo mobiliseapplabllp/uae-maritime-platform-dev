@@ -1,0 +1,16 @@
+{
+  "status": 200,
+  "body": {
+    "imo": "{imo}",
+    "society": "Emirates Classification Society",
+    "class": "✠100A1",
+    "status": "IN_CLASS",
+    "surveysDue": [
+      {
+        "kind": "ANNUAL_HULL",
+        "dueBy": "2027-02-14"
+      }
+    ],
+    "conditions": []
+  }
+}

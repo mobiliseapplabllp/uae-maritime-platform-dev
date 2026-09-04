@@ -1,0 +1,11 @@
+{
+  "status": 201,
+  "body": {
+    "reference": "PAY-2026-0000914",
+    "invoiceNo": "{invoiceNo}",
+    "amountMinor": "{amountMinor}",
+    "currency": "{currency}",
+    "status": "PENDING",
+    "redirectUrl": "https://stub.local/pay/checkout/PAY-2026-0000914"
+  }
+}

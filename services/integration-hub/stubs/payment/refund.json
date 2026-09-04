@@ -1,0 +1,9 @@
+{
+  "status": 201,
+  "body": {
+    "refundReference": "RFD-2026-000221",
+    "reference": "{reference}",
+    "amountMinor": "{amountMinor}",
+    "status": "ACCEPTED"
+  }
+}

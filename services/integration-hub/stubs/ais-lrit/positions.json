@@ -1,0 +1,43 @@
+{
+  "status": 200,
+  "body": {
+    "since": "{since}",
+    "source": "T-AIS",
+    "count": 3,
+    "positions": [
+      {
+        "imo": "9512331",
+        "mmsi": "470111222",
+        "lat": 25.2631,
+        "lon": 55.3094,
+        "sog": 12.4,
+        "cog": 118.0,
+        "heading": 120,
+        "navStatus": "UNDER_WAY",
+        "at": "2026-09-04T05:58:12Z"
+      },
+      {
+        "imo": "9438201",
+        "mmsi": "470333444",
+        "lat": 24.9812,
+        "lon": 55.0104,
+        "sog": 0.1,
+        "cog": 0.0,
+        "heading": 270,
+        "navStatus": "MOORED",
+        "at": "2026-09-04T05:58:40Z"
+      },
+      {
+        "imo": "9701442",
+        "mmsi": "470555666",
+        "lat": 25.441,
+        "lon": 56.3612,
+        "sog": 8.9,
+        "cog": 301.5,
+        "heading": 300,
+        "navStatus": "UNDER_WAY",
+        "at": "2026-09-04T05:59:03Z"
+      }
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "status": 200,
+  "body": {
+    "since": "{since}",
+    "instruments": [
+      {
+        "imoRef": "MSC.541(107)",
+        "title": "Amendments to SOLAS chapter II-1",
+        "adopted": "2026-06-12",
+        "entryIntoForce": "2028-01-01",
+        "status": "ADOPTED"
+      },
+      {
+        "imoRef": "MEPC.398(82)",
+        "title": "Amendments to MARPOL Annex VI",
+        "adopted": "2026-04-03",
+        "entryIntoForce": "2027-08-01",
+        "status": "ADOPTED"
+      }
+    ]
+  }
+}

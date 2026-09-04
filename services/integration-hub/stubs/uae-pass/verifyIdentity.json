@@ -1,0 +1,12 @@
+{
+  "status": 200,
+  "body": {
+    "subject": "uaepass:{emiratesId}",
+    "emiratesId": "{emiratesId}",
+    "nameEn": "Khalid Al Marri",
+    "nameAr": "خالد المري",
+    "nationality": "ARE",
+    "verified": true,
+    "assuranceLevel": "SOP2"
+  }
+}

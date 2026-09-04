@@ -1,0 +1,10 @@
+{
+  "status": 202,
+  "body": {
+    "reference": "ICP-REV-2026-004417",
+    "facilityId": "{facilityId}",
+    "status": "SUBMITTED",
+    "reason": "{reason}",
+    "expectedBy": "2026-09-18"
+  }
+}

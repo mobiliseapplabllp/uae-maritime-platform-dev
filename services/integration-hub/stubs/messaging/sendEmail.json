@@ -1,0 +1,8 @@
+{
+  "status": 202,
+  "body": {
+    "messageId": "EML-2026-33418",
+    "to": "{to}",
+    "status": "QUEUED"
+  }
+}

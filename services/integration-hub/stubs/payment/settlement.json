@@ -1,0 +1,13 @@
+{
+  "status": 200,
+  "body": {
+    "reference": "{reference}",
+    "status": "SETTLED",
+    "settledAt": "2026-09-04T06:05:00Z",
+    "method": "CARD",
+    "fees": {
+      "amountMinor": 250,
+      "currency": "AED"
+    }
+  }
+}
