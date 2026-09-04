@@ -10,6 +10,7 @@ import { seedAiAgents } from '../src/seed';
 import { applyEvent } from '../src/consumer';
 import { adjudicate, raisesAutonomy, type AgentPolicy } from '../src/autonomy';
 import { bias, drift, performance, serviceLevels, confidenceDistribution, type MetricAgent, type MetricDecision } from '../src/metrics';
+import { coverage, requiredRate, type CoverageDecision, type CoverageRequest, type CoverageService } from '../src/coverage';
 import { effectOf } from '../src/runtime';
 
 const DB = 'maritime_ai_agents_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
@@ -595,5 +596,191 @@ describe('ai-agents — permissions', () => {
     const r = await request(server as never).get('/health');
     expect(r.status).toBe(200);
     expect(r.body.data).toMatchObject({ status: 'ok', service: 'ai-agents' });
+  });
+});
+
+describe('ai-agents — the agentic service rate', () => {
+  const D2 = 86_400_000;
+  const now = new Date('2027-01-01T00:00:00Z');
+  const ago = (days: number) => new Date(now.getTime() - days * D2).toISOString();
+  const svc = (code: string, domain = 1, active = true): CoverageService => ({ code, name: code, domain, active });
+  const req = (id: string, serviceCode: string, days = 1): CoverageRequest => ({ id, serviceCode, submittedAt: ago(days) });
+  const dec = (over: Partial<CoverageDecision>): CoverageDecision =>
+    ({ agentId: 'a1', disposition: 'ESCALATED', at: ago(1), requestId: 'r1', ...over });
+  const opts = { windowDays: 90, start: new Date('2026-01-01T00:00:00Z') };
+
+  it('counts the catalogue, not the services that happened to be applied for', () => {
+    // S3 has no requests at all. It is still a service the authority offers, so it is still in the denominator:
+    // dropping it would raise the rate by shrinking the field rather than by automating anything.
+    const r = coverage([svc('S1'), svc('S2'), svc('S3')], [req('r1', 'S1'), req('r2', 'S2')], [dec({})], now, opts);
+    expect(r.services).toBe(3);
+    expect(r.covered).toBe(1);
+    expect(r.serviceRate).toBe(33.3);
+    expect(r.withoutRequests).toBe(1);
+  });
+
+  it('does not count an agent that could act but never did', () => {
+    // the agentic service rate is a measurement of work done, not of configuration
+    const r = coverage([svc('S1'), svc('S2')], [req('r1', 'S1'), req('r2', 'S2')], [], now, opts);
+    expect(r.covered).toBe(0);
+    expect(r.serviceRate).toBe(0);
+  });
+
+  it('ignores decisions taken on anything that is not an application in the window', () => {
+    // agents also work on vessels, instruments and the intelligence panels; that work is real but it is not
+    // service delivery, and folding it in would answer a different question with a larger number. Joining
+    // through the application discards it without needing a rule, because none of it names one.
+    const r = coverage([svc('S1'), svc('S2')], [req('r1', 'S1')],
+      [dec({ requestId: null }), dec({ requestId: 'a-vessel-not-an-application' })], now, opts);
+    expect(r.covered).toBe(0);
+    expect(r.serviceRate).toBe(0);
+  });
+
+  it('never reports more applications touched than there were applications', () => {
+    // the defect this pins: counting applications from the window but decisions from all of history read
+    // "two of one applications touched", because the two sides of the ratio came from different populations
+    const services = [svc('S1'), svc('S2'), svc('S3', 7)];
+    const requests = [req('r1', 'S1', 200), req('r2', 'S1', 2), req('r3', 'S2', 5), req('r4', 'S3', 400)];
+    const decisions = [
+      dec({ requestId: 'r1' }), dec({ requestId: 'r2' }), dec({ requestId: 'r2', agentId: 'a2' }),
+      dec({ requestId: 'r3' }), dec({ requestId: 'r4' }),
+    ];
+    const r = coverage(services, requests, decisions, now, opts);
+    for (const row of r.rows) expect(row.touched, row.code).toBeLessThanOrEqual(row.requests);
+    expect(r.requestsTouched).toBeLessThanOrEqual(r.requests);
+    expect(r.covered).toBeLessThanOrEqual(r.services);
+    // r1 and r4 fell outside the window, so neither they nor the decisions on them are counted
+    expect(r.rows.find((x) => x.code === 'S1')).toMatchObject({ requests: 1, touched: 1, decisions: 2 });
+    expect(r.rows.find((x) => x.code === 'S3')).toMatchObject({ requests: 0, touched: 0, decisions: 0, covered: false });
+  });
+
+  it('separates breadth from depth, so wide and shallow cannot pass for wide and deep', () => {
+    const services = [svc('S1'), svc('S2')];
+    const requests = [req('r1', 'S1'), req('r2', 'S1'), req('r3', 'S1'), req('r4', 'S2')];
+    // one decision on one of S1's three applications, and one on S2's only application
+    const r = coverage(services, requests, [dec({ requestId: 'r1' }), dec({ requestId: 'r4' })], now, opts);
+    expect(r.serviceRate).toBe(100);   // every service touched
+    expect(r.requestRate).toBe(50);    // half the applications reached
+    expect(r.rows.find((x) => x.code === 'S1')).toMatchObject({ requests: 3, touched: 1 });
+  });
+
+  it('counts an application once however many decisions were taken on it', () => {
+    const r = coverage([svc('S1')], [req('r1', 'S1')],
+      [dec({ requestId: 'r1' }), dec({ requestId: 'r1', agentId: 'a2' }), dec({ requestId: 'r1', agentId: 'a3' })], now, opts);
+    expect(r.rows[0].decisions).toBe(3);
+    expect(r.rows[0].touched).toBe(1);
+    expect(r.rows[0].agents).toEqual(['a1', 'a2', 'a3']);
+    expect(r.requestRate).toBe(100);
+  });
+
+  it('reports separately where the agent finished the work and where a human did', () => {
+    const r = coverage([svc('S1'), svc('S2')], [req('r1', 'S1'), req('r2', 'S2')],
+      [dec({ disposition: 'AUTO_APPLIED' }), dec({ requestId: 'r2', disposition: 'ESCALATED' })], now, opts);
+    expect(r.serviceRate).toBe(100);
+    expect(r.autonomousServices).toBe(1);
+    expect(r.autonomousRate).toBe(50);
+  });
+
+  it('excludes what fell outside the window on both sides of the ratio', () => {
+    const r = coverage([svc('S1'), svc('S2')], [req('r1', 'S1', 200), req('r2', 'S2', 5)],
+      [dec({ requestId: 'r1' }), dec({ requestId: 'r2' })], now, opts);
+    expect(r.requests).toBe(1);
+    expect(r.covered).toBe(1);
+    // the decision on r1 is discarded with r1 itself, however recently it was taken
+    expect(r.rows.find((x) => x.code === 'S1')!.decisions).toBe(0);
+  });
+
+  it('leaves a retired service out of the count entirely', () => {
+    const r = coverage([svc('S1'), svc('S2', 1, false)], [req('r1', 'S1')], [dec({})], now, opts);
+    expect(r.services).toBe(1);
+    expect(r.serviceRate).toBe(100);
+  });
+
+  it('reads the directive as a straight line between its two milestones', () => {
+    const start = new Date('2026-01-01T00:00:00Z');
+    expect(requiredRate(start, start).required).toBe(50);
+    expect(requiredRate(new Date('2027-01-01T00:00:00Z'), start).required).toBe(65);
+    expect(requiredRate(new Date('2028-01-01T00:00:00Z'), start).required).toBe(80);
+    // the obligation neither runs backwards before the clock starts nor past its ceiling after it ends
+    expect(requiredRate(new Date('2025-01-01T00:00:00Z'), start).required).toBe(50);
+    expect(requiredRate(new Date('2031-01-01T00:00:00Z'), start).required).toBe(80);
+  });
+
+  it('says how many more services must be covered, against today and against the ceiling', () => {
+    const services = Array.from({ length: 10 }, (_, i) => svc(`S${i}`));
+    const requests = services.map((s, i) => req(`r${i}`, s.code));
+    const decisions = [0, 1, 2, 3].map((i) => dec({ requestId: `r${i}` }));
+    const r = coverage(services, requests, decisions, now, opts); // one year in: 65% owed, 40% held
+    expect(r.serviceRate).toBe(40);
+    expect(r.target.required).toBe(65);
+    expect(r.target.meets).toBe(false);
+    expect(r.target.servicesToRequired).toBe(3);   // 7 of 10 to stand at 65%
+    expect(r.target.servicesToEndTarget).toBe(4);  // 8 of 10 to stand at 80%
+  });
+
+  it('never asks for more services once the target is met', () => {
+    const services = Array.from({ length: 10 }, (_, i) => svc(`S${i}`));
+    const requests = services.map((s, i) => req(`r${i}`, s.code));
+    const decisions = services.map((_s, i) => dec({ requestId: `r${i}` }));
+    const r = coverage(services, requests, decisions, now, opts);
+    expect(r.serviceRate).toBe(100);
+    expect(r.target.meets).toBe(true);
+    expect(r.target.servicesToRequired).toBe(0);
+    expect(r.target.servicesToEndTarget).toBe(0);
+  });
+
+  it('breaks the rate down by domain, because a national average hides an untouched domain', () => {
+    const r = coverage(
+      [svc('S1', 1), svc('S2', 1), svc('S3', 7)],
+      [req('r1', 'S1'), req('r2', 'S2'), req('r3', 'S3')],
+      [dec({ requestId: 'r1' })], now, opts);
+    expect(r.byDomain).toHaveLength(2);
+    expect(r.byDomain.find((d) => d.domain === 1)).toMatchObject({ services: 2, covered: 1, rate: 50 });
+    expect(r.byDomain.find((d) => d.domain === 7)).toMatchObject({ services: 1, covered: 0, rate: 0 });
+  });
+
+  it('says nothing rather than zero when there is nothing to divide by', () => {
+    const r = coverage([], [], [], now, opts);
+    expect(r.serviceRate).toBeNull();
+    expect(r.requestRate).toBeNull();
+    expect(r.target.meets).toBeNull();
+  });
+});
+
+describe('ai-agents — the coverage endpoint', () => {
+  it('reports the agentic service rate over the seeded catalogue', async () => {
+    const r = await g('/agents/coverage');
+    expect(r.status).toBe(200);
+    const d = r.body.data;
+    expect(d.services).toBeGreaterThan(0);
+    expect(d.rows).toHaveLength(d.services);
+    // the parts must reconstruct the whole, or one of the two is lying
+    expect(d.rows.filter((x: any) => x.covered)).toHaveLength(d.covered);
+    expect(d.byDomain.reduce((n: number, x: any) => n + x.services, 0)).toBe(d.services);
+    expect(d.byDomain.reduce((n: number, x: any) => n + x.covered, 0)).toBe(d.covered);
+    expect(d.serviceRate).toBeCloseTo(Math.round((d.covered / d.services) * 1000) / 10, 5);
+    expect(d.target.startTarget).toBe(50);
+    expect(d.target.endTarget).toBe(80);
+    // the invariant that caught a real defect here: no part may exceed the whole it is part of
+    for (const row of d.rows) {
+      expect(row.touched, row.code).toBeLessThanOrEqual(row.requests);
+      expect(row.autonomous, row.code).toBeLessThanOrEqual(row.decisions);
+      expect(row.covered, row.code).toBe(row.decisions > 0);
+    }
+    expect(d.requestsTouched).toBeLessThanOrEqual(d.requests);
+    expect(d.covered).toBeLessThanOrEqual(d.services);
+    expect(d.autonomousServices).toBeLessThanOrEqual(d.covered);
+    expect(d.withoutRequests).toBe(d.rows.filter((x: any) => x.requests === 0).length);
+  });
+
+  it('narrows the window when asked, and can never report more than the whole catalogue', async () => {
+    const wide = await g('/agents/coverage?windowDays=3650');
+    const narrow = await g('/agents/coverage?windowDays=1');
+    expect(narrow.body.data.covered).toBeLessThanOrEqual(wide.body.data.covered);
+    expect(wide.body.data.covered).toBeLessThanOrEqual(wide.body.data.services);
+  });
+
+  it('is gated on agents.view like the rest of the module', async () => {
+    expect((await g('/agents/coverage', nobody)).status).toBe(403);
   });
 });

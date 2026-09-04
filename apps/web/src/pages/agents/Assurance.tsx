@@ -12,7 +12,7 @@ import PageHeader from '../../components/common/PageHeader';
 import { chartChrome, MONO } from '../../theme';
 import { fmtD } from '../../utils/format';
 import { LEVEL_META, confText, dimensionLabel, pctText } from './constants';
-import type { AgentRow, BiasData, DriftData, ServiceLevelData } from './types';
+import type { AgentRow, BiasData, CoverageData, DriftData, ServiceLevelData } from './types';
 
 /* Assurance — drift, bias and the service levels.
  *
@@ -32,6 +32,7 @@ export default function Assurance() {
   const { t } = useTranslation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector((s) => s.ui.mode);
+  const lang = useAppSelector((s) => s.ui.lang);
   const { axis, grid, tooltipStyle } = chartChrome(mode);
   const [tab, setTab] = useState(0);
   const [agentId, setAgentId] = useState('');
@@ -39,6 +40,7 @@ export default function Assurance() {
   const [drift, setDrift] = useState<DriftData | null>(null);
   const [bias, setBias] = useState<BiasData | null>(null);
   const [levels, setLevels] = useState<ServiceLevelData | null>(null);
+  const [adoption, setAdoption] = useState<CoverageData | null>(null);
 
   useEffect(() => { api.get<AgentRow[]>('/agents').then((r) => setAgents(r.data)).catch(() => {}); }, []);
 
@@ -50,9 +52,16 @@ export default function Assurance() {
     api.get<BiasData>('/agents/monitoring/bias', { params }).then((r) => setBias(r.data)).catch(fail);
     api.get<ServiceLevelData>('/agents/monitoring/metrics', { params }).then((r) => setLevels(r.data)).catch(fail);
   }, [agentId, dispatch]);
+  // adoption is a property of the catalogue rather than of any one agent, so the agent filter does not narrow it
+  useEffect(() => {
+    api.get<CoverageData>('/agents/coverage')
+      .then((r) => setAdoption(r.data))
+      .catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
+  }, [dispatch]);
   useEffect(() => { load(); }, [load]);
 
   const measured = drift?.perAgent.filter((a) => a.decisions > 0) ?? [];
+  const serviceName = (r: { name: string; nameAr?: string }) => (lang === 'ar' && r.nameAr ? r.nameAr : r.name);
 
   return (
     <>
@@ -69,6 +78,7 @@ export default function Assurance() {
           <Tab label={t('agents.tabDrift')} />
           <Tab label={t('agents.tabBias', { n: bias?.flagged ?? 0 })} />
           <Tab label={t('agents.tabServiceLevels')} />
+          <Tab label={t('agents.tabAdoption')} />
         </Tabs>
       </Card>
 
@@ -221,6 +231,120 @@ export default function Assurance() {
             </Stack>
             <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 1.5 }}>{t('agents.falsePositiveNote')}</Typography>
           </Section>
+        </>
+      ))}
+
+      {/* --------------------------------------------------------------- adoption */}
+      {tab === 3 && (!adoption ? <Skeleton variant="rounded" height={360} /> : (
+        <>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+            {t('agents.adoptionWindow', { days: adoption.windowDays, from: fmtD(adoption.from), to: fmtD(adoption.to), n: adoption.requests, services: adoption.services })}
+          </Typography>
+
+          <Alert severity={adoption.target.meets ? 'success' : 'warning'} sx={{ mb: 2 }}>
+            {adoption.target.meets ? t('agents.aheadOfSchedule') : t('agents.behindSchedule')}
+            {' — '}
+            {t('agents.owedToday', { v: adoption.target.required })}
+            {', '}
+            {t('agents.monthsIn', { n: adoption.target.monthsElapsed, of: 24 })}
+            {'. '}
+            {adoption.target.servicesToRequired > 0 && `${t('agents.servicesToRequired', { n: adoption.target.servicesToRequired })}. `}
+            {adoption.target.servicesToEndTarget > 0 && `${t('agents.servicesToEnd', { n: adoption.target.servicesToEndTarget, v: adoption.target.endTarget })}.`}
+          </Alert>
+
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            {[
+              { key: 'serviceRate', label: t('agents.serviceRate'), value: adoption.serviceRate, of: `${adoption.covered} / ${adoption.services}`, target: adoption.target.required, meets: adoption.target.meets },
+              { key: 'requestRate', label: t('agents.requestRate'), value: adoption.requestRate, of: `${adoption.requestsTouched} / ${adoption.requests}`, target: null, meets: null },
+              { key: 'autonomousRate', label: t('agents.autonomousRate'), value: adoption.autonomousRate, of: `${adoption.autonomousServices} / ${adoption.services}`, target: null, meets: null },
+            ].map((m) => (
+              <Grid item xs={12} sm={4} key={m.key}>
+                <Card sx={{ p: 2, height: '100%', borderLeft: 3, borderLeftColor: m.meets === null ? 'divider' : m.meets ? 'success.main' : 'warning.main' }}>
+                  <Stack direction="row" alignItems="baseline" spacing={1}>
+                    <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 24, fontVariantNumeric: 'tabular-nums' }}>{pctText(m.value, 1)}</Typography>
+                    {m.target != null && <Typography sx={{ fontSize: 11.5, color: 'text.secondary' }}>{t('agents.owedToday', { v: m.target })}</Typography>}
+                  </Stack>
+                  <Typography sx={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', mt: 0.25 }}>{m.label}</Typography>
+                  <LinearProgress variant="determinate" value={Math.min(100, m.value ?? 0)} aria-label={m.label}
+                    color={m.meets === null ? 'primary' : m.meets ? 'success' : 'warning'} sx={{ mt: 1, height: 6, borderRadius: 3 }} />
+                  <Typography sx={{ fontFamily: MONO, fontSize: 11, color: 'text.secondary', mt: 0.75 }}>{m.of}</Typography>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+
+          <Alert severity="info" icon={false} sx={{ mb: 2, fontSize: 13 }}>
+            <div>{t('agents.directiveSchedule', { a: adoption.target.startTarget, b: adoption.target.endTarget })}</div>
+            <div style={{ marginTop: 6 }}>{t('agents.coverageDenominator', { n: adoption.services, unused: adoption.withoutRequests })}</div>
+            <div style={{ marginTop: 6 }}>{t('agents.coverageBreadthDepth')}</div>
+          </Alert>
+
+          {adoption.requests === 0 ? (
+            <Card sx={{ p: 6, textAlign: 'center' }}><Typography color="text.secondary">{t('agents.noCoverageData')}</Typography></Card>
+          ) : (
+            <Grid container spacing={2}>
+              <Grid item xs={12} lg={5}>
+                <Section title={t('agents.byDomainTitle')} sub={t('agents.byDomainSub')}>
+                  {/* The plot area is laid out left to right in both languages. Recharts reserves the axis
+                      gutter in its own coordinates and does not mirror them, so under an RTL document the
+                      category labels are painted where the bars are drawn and disappear behind them. The
+                      labels themselves still shape right to left, which is what has to be readable; a
+                      percentage axis running 0 to 100 reads the same way round either way. */}
+                  <Box dir="ltr">
+                  <ResponsiveContainer width="100%" height={Math.max(200, adoption.byDomain.length * 38)}>
+                    <BarChart layout="vertical" data={adoption.byDomain.map((d) => ({ ...d, label: t(`domains.d${d.domain}`, { defaultValue: `${t('agents.colDomain')} ${d.domain}` }) }))}
+                      margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
+                      <CartesianGrid stroke={grid} horizontal={false} />
+                      <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 10, fill: axis }} axisLine={{ stroke: grid }} tickLine={false} unit="%" />
+                      <YAxis type="category" dataKey="label" width={lang === 'ar' ? 170 : 148} tick={{ fontSize: 10.5, fill: axis }} axisLine={false} tickLine={false} />
+                      <RTooltip contentStyle={tooltipStyle} cursor={{ fill: grid, opacity: 0.35 }} />
+                      <Bar dataKey="rate" fill="#0E7C86" name={t('agents.serviceRate')} radius={[0, 3, 3, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  </Box>
+                </Section>
+              </Grid>
+              <Grid item xs={12} lg={7}>
+                <Section title={t('agents.coverageServicesTitle')} sub={t('agents.coverageServicesSub')}>
+                  <TableContainer sx={{ maxHeight: 460 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>{t('agents.colService')}</TableCell>
+                          <TableCell align="right">{t('agents.colApplications')}</TableCell>
+                          <TableCell align="right">{t('agents.colTouched')}</TableCell>
+                          <TableCell align="right">{t('agents.colDecisions')}</TableCell>
+                          <TableCell>{t('agents.colLastTouched')}</TableCell>
+                          <TableCell>{t('agents.colCovered')}</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {adoption.rows.map((r) => (
+                          <TableRow key={r.code} hover>
+                            <TableCell>
+                              <Typography sx={{ fontSize: 12.5 }}>{serviceName(r)}</Typography>
+                              <Tooltip title={r.agents.join(', ')} placement="top-start">
+                                <Typography sx={{ fontFamily: MONO, fontSize: 10.5, color: 'text.secondary' }}>{r.code}</Typography>
+                              </Tooltip>
+                            </TableCell>
+                            <TableCell align="right" sx={{ fontFamily: MONO, fontSize: 12 }}>{r.requests}</TableCell>
+                            <TableCell align="right" sx={{ fontFamily: MONO, fontSize: 12 }}>{r.touched}</TableCell>
+                            <TableCell align="right" sx={{ fontFamily: MONO, fontSize: 12 }}>{r.decisions}</TableCell>
+                            <TableCell sx={{ fontFamily: MONO, fontSize: 11, color: 'text.secondary' }}>{r.lastAt ? fmtD(r.lastAt) : '—'}</TableCell>
+                            <TableCell>
+                              <Chip size="small" sx={{ height: 20, fontSize: 10.5 }}
+                                color={r.covered ? 'success' : 'default'} variant={r.covered ? 'filled' : 'outlined'}
+                                label={r.covered ? t('agents.covered') : r.requests === 0 ? t('agents.noApplications') : t('agents.notCovered')} />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </Section>
+              </Grid>
+            </Grid>
+          )}
         </>
       ))}
     </>

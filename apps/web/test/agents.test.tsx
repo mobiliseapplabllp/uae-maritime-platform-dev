@@ -6,6 +6,7 @@ import { ThemeProvider } from '@mui/material';
 import '../src/i18n';
 import { store } from '../src/store';
 import { setSession } from '../src/store/authSlice';
+import { setLang } from '../src/store/uiSlice';
 import { buildTheme } from '../src/theme';
 import api from '../src/api/client';
 import AgentOperations from '../src/pages/agents/AgentOperations';
@@ -14,7 +15,7 @@ import EscalationQueue from '../src/pages/agents/EscalationQueue';
 import Assurance from '../src/pages/agents/Assurance';
 import { escalationText, escalationMeta, isRunnable, raisesAutonomy, runSummary, dispositionMeta, pctText } from '../src/pages/agents/constants';
 import type {
-  Agent, AgentDashboardData, AgentRow, AiDecision, AiDecisionDetail, BiasData, DriftData, ServiceLevelData,
+  Agent, AgentDashboardData, AgentRow, AiDecision, AiDecisionDetail, BiasData, CoverageData, DriftData, ServiceLevelData,
 } from '../src/pages/agents/types';
 
 // recharts measures its container with ResizeObserver, which jsdom does not ship
@@ -136,6 +137,29 @@ const levels: ServiceLevelData = {
     { key: 'falsePositiveHighRisk', label: 'False-positive rate — high-risk vessel scoring', value: 30, target: 15, unit: '%', meets: false },
     { key: 'escalation', label: 'Decisions escalated to a human', value: 36.7, target: null, unit: '%', meets: null },
     { key: 'avgConfidence', label: 'Mean confidence', value: 0.83, target: null, unit: 'ratio', meets: null },
+  ],
+};
+
+const adoption: CoverageData = {
+  windowDays: 90, from: '2026-06-06T00:00:00Z', to: '2026-09-04T00:00:00Z',
+  services: 5, covered: 2, serviceRate: 40,
+  autonomousServices: 1, autonomousRate: 20,
+  requests: 10, requestsTouched: 3, requestRate: 30,
+  withoutRequests: 1,
+  target: {
+    start: '2026-01-01T00:00:00Z', end: '2028-01-01T00:00:00Z', monthsElapsed: 8.1,
+    required: 60.1, startTarget: 50, endTarget: 80, meets: false, servicesToRequired: 2, servicesToEndTarget: 2,
+  },
+  byDomain: [
+    { domain: 1, services: 3, covered: 2, rate: 66.7, requests: 8, touched: 3 },
+    { domain: 4, services: 2, covered: 0, rate: 0, requests: 2, touched: 0 },
+  ],
+  rows: [
+    { code: 'REG-PROVISIONAL', name: 'Provisional registration of a ship', nameAr: 'التسجيل المؤقت للسفينة', domain: 1, requests: 5, touched: 2, decisions: 4, autonomous: 2, agents: ['a1_document_intelligence'], lastAt: '2026-09-03T09:00:00Z', covered: true },
+    { code: 'SEAFARER-CRA', name: 'Certificate of Receipt of Application', domain: 1, requests: 3, touched: 1, decisions: 1, autonomous: 0, agents: ['a3_service_processing'], lastAt: '2026-09-01T09:00:00Z', covered: true },
+    { code: 'NMC-ALERT-REVIEW', name: 'Navigational alert review', domain: 4, requests: 2, touched: 0, decisions: 0, autonomous: 0, agents: [], lastAt: null, covered: false },
+    { code: 'PORT-WAIVER', name: 'Port dues waiver', domain: 1, requests: 0, touched: 0, decisions: 0, autonomous: 0, agents: [], lastAt: null, covered: false },
+    { code: 'NMC-DRILL', name: 'Contingency drill notification', domain: 4, requests: 0, touched: 0, decisions: 0, autonomous: 0, agents: [], lastAt: null, covered: false },
   ],
 };
 
@@ -304,6 +328,7 @@ describe('Assurance — drift, bias and the service levels', () => {
 
   const routes = {
     '/agents': ok(roster), '/agents/monitoring/drift': ok(drift), '/agents/monitoring/bias': ok(bias), '/agents/monitoring/metrics': ok(levels),
+    '/agents/coverage': ok(adoption),
   };
 
   it('names the drifting agents and draws the rolling accuracy and confidence distribution', async () => {
@@ -346,6 +371,74 @@ describe('Assurance — drift, bias and the service levels', () => {
     expect(screen.getByText('High-risk vessel scoring')).toBeInTheDocument();
     expect(screen.getByText('Reviewed by a human')).toBeInTheDocument();
     expect(screen.getByText(/Calls nobody reviewed are excluded rather than assumed correct/)).toBeInTheDocument();
+  });
+
+  it('states the agentic service rate against the rate the directive owes today', async () => {
+    mockGet(routes);
+    wrap(<Assurance />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Adoption' }));
+    expect(await screen.findByText('40%')).toBeInTheDocument();            // the rate held
+    expect(screen.getAllByText('owed today 60.1%').length).toBeGreaterThan(0);
+    expect(screen.getByText(/Below the rate owed/)).toBeInTheDocument();
+    expect(screen.getByText(/2 more services to stand at the rate owed today/)).toBeInTheDocument();
+    expect(screen.getByText('Agentic service rate')).toBeInTheDocument();
+    expect(screen.getByText('2 / 5')).toBeInTheDocument();
+  });
+
+  it('shows breadth beside depth, so wide and shallow cannot pass for wide and deep', async () => {
+    mockGet(routes);
+    wrap(<Assurance />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Adoption' }));
+    expect(await screen.findByText('30%')).toBeInTheDocument();            // applications reached
+    expect(screen.getByText('Applications an agent reached')).toBeInTheDocument();
+    expect(screen.getByText('3 / 10')).toBeInTheDocument();
+    expect(screen.getByText('20%')).toBeInTheDocument();                   // completed without a human
+    expect(screen.getByText('1 / 5')).toBeInTheDocument();
+    expect(screen.getByText(/Wide and shallow is a real state/)).toBeInTheDocument();
+  });
+
+  it('names the whole catalogue as the denominator, including the services nobody applied for', async () => {
+    mockGet(routes);
+    wrap(<Assurance />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Adoption' }));
+    expect(await screen.findByText(/5 services — including 1 that received no application/)).toBeInTheDocument();
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('Provisional registration of a ship')).toBeInTheDocument();
+    // the three states are distinguished: covered, applied for but untouched, and never applied for
+    expect(within(table).getAllByText('Covered')).toHaveLength(2);
+    expect(within(table).getByText('Not covered')).toBeInTheDocument();
+    expect(within(table).getAllByText('No applications')).toHaveLength(2);
+  });
+
+  it('names each service in the reader\'s own language', async () => {
+    // the language switch that changes i18next lives in App, which this harness does not mount; the row name
+    // is read from the store, which is the part under test here
+    mockGet(routes);
+    store.dispatch(setLang('ar'));
+    try {
+      wrap(<Assurance />);
+      fireEvent.click(await screen.findByRole('tab', { name: 'Adoption' }));
+      const table = await screen.findByRole('table');
+      expect(within(table).getByText('التسجيل المؤقت للسفينة')).toBeInTheDocument();
+      expect(within(table).queryByText('Provisional registration of a ship')).not.toBeInTheDocument();
+      // a service the catalogue holds in English only keeps its English name rather than showing nothing
+      expect(within(table).getByText('Certificate of Receipt of Application')).toBeInTheDocument();
+    } finally {
+      store.dispatch(setLang('en'));
+    }
+  });
+
+  it('does not narrow adoption to one agent, because coverage is a property of the catalogue', async () => {
+    const get = mockGet(routes);
+    wrap(<Assurance />);
+    await screen.findByText('Assurance');
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Agent' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Berth Sentinel' }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/agents/monitoring/drift', { params: { agentId: 'sentinel' } }));
+    // every coverage call is unfiltered: one agent's share of the catalogue is not the adoption rate
+    const coverageCalls = get.mock.calls.filter((c: unknown[]) => c[0] === '/agents/coverage');
+    expect(coverageCalls.length).toBeGreaterThan(0);
+    for (const c of coverageCalls) expect(c[1]).toBeUndefined();
   });
 
   it('narrows every assurance report to one agent', async () => {

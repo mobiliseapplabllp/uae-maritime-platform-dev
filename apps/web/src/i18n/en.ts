@@ -72,6 +72,25 @@ const en = {
     highRiskTitle: 'High-risk vessel scoring', highRiskSub: 'The false-positive ceiling the service level sets, and the calls it is measured on',
     highRiskCalls: 'High-risk calls', highRiskReviewed: 'Reviewed by a human', falsePositives: 'Overturned on review', escalatedCount: 'Escalated',
     falsePositiveNote: 'The false-positive rate is the share of high-risk calls a human actually looked at and overturned. Calls nobody reviewed are excluded rather than assumed correct.',
+    tabAdoption: 'Adoption',
+    adoptionWindow: 'Rolling {{days}} days · {{from}} to {{to}} · {{n}} applications received across {{services}} services',
+    serviceRate: 'Agentic service rate', requestRate: 'Applications an agent reached', autonomousRate: 'Services an agent completed alone',
+    owedToday: 'owed today {{v}}%', directiveSchedule: 'Directive: {{a}}% at the start of the programme, {{b}}% at twenty-four months. The obligation between them is read as a straight line.',
+    monthsIn: 'month {{n}} of {{of}}', aheadOfSchedule: 'At or above the rate owed', behindSchedule: 'Below the rate owed',
+    servicesToRequired: '{{n}} more services to stand at the rate owed today', servicesToEnd: '{{n}} more to reach {{v}}%',
+    coverageDenominator: 'The denominator is the whole published catalogue — {{n}} services — including {{unused}} that received no application in this window at all. A service nobody applied for is still a service the directive counts.',
+    coverageBreadthDepth: 'Breadth and depth are reported apart on purpose. One decision on one application covers a service; the application rate says how much of the actual casework an agent reached. Wide and shallow is a real state and only the pair makes it visible.',
+    byDomainTitle: 'By domain', byDomainSub: 'A national average hides a domain nothing has reached',
+    coverageServicesTitle: 'Service by service', coverageServicesSub: 'Every published service, most-worked first',
+    colService: 'Service', colDomain: 'Domain', colApplications: 'Applications', colTouched: 'Reached', colAgentsOn: 'Agents', colLastTouched: 'Last decision', colCovered: 'Coverage',
+    covered: 'Covered', notCovered: 'Not covered', noApplications: 'No applications',
+    noCoverageData: 'No service in the catalogue received an application in this window.',
+  },
+  /* The seven domains the RFP divides the authority's work into. They are referred to by number in the
+   * service catalogue and in every agent's configuration, and a number is not a label a reader can use. */
+  domains: {
+    d1: 'Ships', d2: 'Seafarers & MET', d3: 'Legislation', d4: 'National Maritime Centre',
+    d5: 'Inspection & Audit', d6: 'Ports', d7: 'Facilities & Companies',
   },
   legislation: {
     title: 'Notices & Circulars', sub: 'Acts, rules, circulars, notices, orders and conventions — the register of legal instruments in force',

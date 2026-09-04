@@ -23,6 +23,13 @@ export const envSchema = baseEnvSchema.extend({
   BIAS_MIN_COHORT: z.coerce.number().int().positive().default(5),
   /** A cohort whose escalation or override rate differs from the population by more than this is flagged for audit. */
   BIAS_FLAG_DELTA_PCT: z.coerce.number().default(20),
+  /** The window the agentic service rate is read over. Wide enough that a quarterly service still counts. */
+  COVERAGE_WINDOW_DAYS: z.coerce.number().int().positive().default(90),
+  /**
+   * The day the adoption clock started. The directive fixes the rates and the interval, not the date the
+   * interval runs from — that is the programme's, so the deployment states it rather than the code guessing.
+   */
+  COVERAGE_START: z.string().default('2026-01-01'),
 });
 export type Env = z.infer<typeof envSchema>;
 export const env = () => loadEnv(envSchema);

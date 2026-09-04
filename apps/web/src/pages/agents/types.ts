@@ -116,3 +116,23 @@ export interface ServiceLevelData {
   decisions: number; reviewed: number; escalated: number;
   highRiskCalls: number; highRiskReviewed: number; falsePositives: number; metrics: ServiceLevel[];
 }
+
+export interface CoverageTarget {
+  start: string; end: string; monthsElapsed: number; required: number; startTarget: number; endTarget: number;
+  meets: boolean | null; servicesToRequired: number; servicesToEndTarget: number;
+}
+export interface ServiceCoverageRow {
+  code: string; name: string; nameAr?: string; domain: number;
+  requests: number; touched: number; decisions: number; autonomous: number;
+  agents: string[]; lastAt: string | null; covered: boolean;
+}
+export interface DomainCoverage { domain: number; services: number; covered: number; rate: number | null; requests: number; touched: number }
+/** GET /agents/coverage */
+export interface CoverageData {
+  windowDays: number; from: string; to: string;
+  services: number; covered: number; serviceRate: number | null;
+  autonomousServices: number; autonomousRate: number | null;
+  requests: number; requestsTouched: number; requestRate: number | null;
+  withoutRequests: number; target: CoverageTarget;
+  byDomain: DomainCoverage[]; rows: ServiceCoverageRow[];
+}

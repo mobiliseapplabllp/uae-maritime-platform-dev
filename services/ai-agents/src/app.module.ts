@@ -4,6 +4,7 @@ import type { Env } from './env';
 import { AgentsController } from './agents.controller';
 import { DecisionsController } from './decisions.controller';
 import { MonitoringController } from './monitoring.controller';
+import { CoverageController } from './coverage.controller';
 import { AgentsConsumer } from './consumer';
 
 /* The decision and monitoring controllers are registered before the roster so `/agents/decisions` and
@@ -11,7 +12,7 @@ import { AgentsConsumer } from './consumer';
 export function buildAppModule(env: Env, principalResolver?: Provider) {
   @Module({
     imports: [KitModule.forRoot({ env, principalResolver })],
-    controllers: [DecisionsController, MonitoringController, AgentsController],
+    controllers: [DecisionsController, MonitoringController, CoverageController, AgentsController],
     providers: [AgentsConsumer],
   })
   class AppModule {}
