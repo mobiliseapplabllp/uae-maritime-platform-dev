@@ -94,7 +94,16 @@ describe('scheduler', () => {
     expect((await srv().put('/jobs/sla-breach-sweep').set('authorization', admin).send({ eventType: 'not an event' })).status).toBe(400);
     const changed = await srv().put('/jobs/sla-breach-sweep').set('authorization', admin).send({ cron: '*/10 * * * *', payload: { graceMinutes: 5 } });
     expect(changed.status).toBe(200); expect(changed.body.data).toMatchObject({ cron: '*/10 * * * *', payload: { graceMinutes: 5 }, eventType: EVENTS.scheduler.sweepSla });
-    expect(changed.body.data.nextRunAt).not.toBe(before.nextRunAt); expect(new Date(changed.body.data.nextRunAt).getUTCMinutes() % 10).toBe(0);
+    // The job was seeded on a fifteen-minute cadence and is being moved to a ten-minute one. Asserting
+    // that the two next-run times differ looks like it proves the reschedule took, and does not: for the
+    // ten minutes before every hour both schedules next fire at the top of it, so that assertion failed
+    // once an hour on the wall clock. What the new cadence does guarantee is that the next run lands on a
+    // ten-minute boundary and is never more than ten minutes away, which the old one could not satisfy.
+    const next = new Date(changed.body.data.nextRunAt);
+    expect(next.getUTCMinutes() % 10).toBe(0);
+    expect(next.getTime() - Date.now()).toBeGreaterThan(0);
+    expect(next.getTime() - Date.now()).toBeLessThanOrEqual(10 * 60_000);
+    expect(before.cron).toBe('*/15 * * * *');
     const renamed = await srv().put('/jobs/sla-breach-sweep').set('authorization', admin).send({ name: 'SLA breach sweep (10 min)' });
     expect(renamed.body.data.nextRunAt).toBe(changed.body.data.nextRunAt);
     const run = await srv().post('/jobs/sla-breach-sweep/run').set('authorization', admin);
