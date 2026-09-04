@@ -124,7 +124,9 @@ describe('RFP compliance summary', () => {
     expect(total).toBe(70);
   });
   it('never maps a status onto a palette key that does not exist', () => {
-    for (const s of COMPLIANCE.totals) expect(statusColor(s.key)).toMatch(/\.(main|disabled)$/);
+    // `text.disabled` is deliberately not in this set: at 26px bold it came out at 2.67:1 on white, and the
+    // figure it renders is how much of the platform is not built — the last number that should be hard to read.
+    for (const s of COMPLIANCE.totals) expect(statusColor(s.key), s.key).toMatch(/\.(main|secondary)$/);
   });
   it('points at published artifacts over https, and at two different ones', () => {
     expect(COMPLIANCE_URL).toMatch(/^https:\/\//);

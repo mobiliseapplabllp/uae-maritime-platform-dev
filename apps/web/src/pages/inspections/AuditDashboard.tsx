@@ -14,7 +14,7 @@ import type { InspectionDashboardData } from './types';
 
 /* Survey & audit dashboard — outcome mix, deficiency intensity and checklist compliance across PSC/FSI/ISM/ISPS/MLC/HSE/terminal audits. */
 const RESULT_COLORS = {
-  light: { SATISFACTORY: '#0797A5', DEFICIENCIES: '#B98A2F', DETAINED: '#C14F33' },
+  light: { SATISFACTORY: '#056A73', DEFICIENCIES: '#B98A2F', DETAINED: '#C14F33' },
   dark: { SATISFACTORY: '#2FA6AE', DEFICIENCIES: '#B8892B', DETAINED: '#D0644A' },
 } as const;
 

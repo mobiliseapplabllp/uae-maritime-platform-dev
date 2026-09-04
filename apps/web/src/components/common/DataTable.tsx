@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Card, Table, TableHead, TableRow, TableCell, TableBody, TablePagination, Box, TextField, InputAdornment, LinearProgress, Typography, TableSortLabel, TableContainer } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import type { Column } from '../../types';
@@ -16,6 +17,7 @@ export default function DataTable<R extends Record<string, any>>({
   columns, rows, total, page, limit, onPage, onLimit, loading, search, onSearch, searchPlaceholder = 'Search…', sort, onSort,
   toolbar, onRowClick, emptyMessage = 'Nothing found', dense = true, rowKey,
 }: Props<R>) {
+  const { t } = useTranslation();
   const [q, setQ] = useState(search || '');
   const sortKey = sort?.replace(/^-/, '');
   const sortDir: 'asc' | 'desc' = sort?.startsWith('-') ? 'desc' : 'asc';
@@ -33,7 +35,7 @@ export default function DataTable<R extends Record<string, any>>({
         <Box sx={{ flex: 1 }} />
         <Typography variant="caption" color="text.secondary">{total ?? 0} records</Typography>
       </Box>
-      {loading && <LinearProgress />}
+      {loading && <LinearProgress aria-label={t('common.loading')} />}
       <TableContainer sx={{ overflowX: 'auto' }}>
         <Table size={dense ? 'small' : 'medium'}>
           <TableHead>

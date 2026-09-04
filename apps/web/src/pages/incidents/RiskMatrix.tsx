@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Card, Box, Typography, Skeleton, Stack, ButtonGroup, Button, Tooltip } from '@mui/material';
@@ -21,12 +21,18 @@ function Matrix({ title, cells, days }: { title: string; cells: MatrixCell[]; da
     <Card sx={{ p: 2.5, height: '100%' }}>
       <Typography variant="h6" component="h2" sx={{ fontSize: 15, mb: 0.5 }}>{title}</Typography>
       <Typography variant="caption" color="text.secondary">{t('incidents.casesFrom', { n: days })}</Typography>
+      {/* A grid owns rows and rows own cells: putting gridcells straight under the grid left assistive
+          technology with fifty cells and no way to say which row any of them was in. The CSS grid still
+          lays the whole thing out in one flow — `display: contents` lets each row carry the semantics
+          without taking part in the layout. */}
       <Box role="grid" aria-label={title} sx={{ display: 'grid', gridTemplateColumns: '92px repeat(5, 1fr)', mt: 2.5, gap: '3px' }}>
-        <Box />
-        {CONSEQ.map((c) => <Typography key={c} sx={{ fontSize: 9.5, fontWeight: 700, textAlign: 'center', color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{c}</Typography>)}
+        <Box role="row" sx={{ display: 'contents' }}>
+          <Box role="columnheader" />
+          {CONSEQ.map((c) => <Typography role="columnheader" key={c} sx={{ fontSize: 9.5, fontWeight: 700, textAlign: 'center', color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{c}</Typography>)}
+        </Box>
         {[5, 4, 3, 2, 1].map((l) => (
-          <Fragment key={l}>
-            <Typography sx={{ fontSize: 10.5, fontWeight: 700, color: 'text.secondary', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 1 }}>{LIKELY[l - 1]}</Typography>
+          <Box role="row" key={l} sx={{ display: 'contents' }}>
+            <Typography role="rowheader" sx={{ fontSize: 10.5, fontWeight: 700, color: 'text.secondary', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', pr: 1 }}>{LIKELY[l - 1]}</Typography>
             {[1, 2, 3, 4, 5].map((c) => {
               const cell = byKey[`${l}:${c}`];
               const n = cell ? cell.count : 0;
@@ -40,7 +46,7 @@ function Matrix({ title, cells, days }: { title: string; cells: MatrixCell[]; da
                 </Tooltip>
               );
             })}
-          </Fragment>
+          </Box>
         ))}
       </Box>
     </Card>

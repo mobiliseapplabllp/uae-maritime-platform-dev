@@ -261,9 +261,26 @@ describe('case-file helpers', () => {
     expect(docSize(2400)).toBe('2.3 MB');
   });
   it('bands the 5×5 heatmap by likelihood × consequence', () => {
-    expect(matrixBand(5, 5)).toBe('#B3452E');
-    expect(matrixBand(2, 4)).toBe('#C77B2E');
-    expect(matrixBand(2, 2)).toBe('#C7A62E');
-    expect(matrixBand(1, 2)).toBe('#3D8361');
+    // four bands, in order of score, each distinct from its neighbours
+    const bands = [matrixBand(1, 2), matrixBand(2, 2), matrixBand(2, 4), matrixBand(5, 5)];
+    expect(new Set(bands).size).toBe(4);
+    expect(matrixBand(3, 5)).toBe(matrixBand(5, 3));                  // the score is what decides, not the axis
+    expect(matrixBand(1, 1)).toBe(matrixBand(1, 3));                  // both are the low band
+  });
+  it('bands the heatmap in colours that can carry the case count printed on them', () => {
+    // Each cell prints its count in white. Pinning the hex values here is what let two of the four bands
+    // sit at 3.33:1 and 2.35:1 for as long as they did — the test agreed with the colour instead of
+    // asking whether the number on it could be read. This asks (WCAG 1.4.3, 4.5:1 for body text).
+    const channel = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+      return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+    };
+    const againstWhite = (hex: string) => 1.05 / (luminance(hex) + 0.05);
+    for (const [l, c] of [[1, 1], [2, 2], [2, 4], [3, 3], [4, 4], [5, 5], [1, 5], [5, 1]] as const) {
+      const band = matrixBand(l, c);
+      expect(band, `${band} at ${l}×${c}`).toMatch(/^#[0-9A-F]{6}$/i);
+      expect(againstWhite(band), `${band} at ${l}×${c} carries white text at ${againstWhite(band).toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

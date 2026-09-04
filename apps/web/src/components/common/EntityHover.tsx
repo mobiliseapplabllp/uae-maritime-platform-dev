@@ -12,7 +12,7 @@ import type { ChipColor } from '../../utils/status';
 export interface HoverCard { kind: string; title: string; subtitle?: string; link?: string; lines?: { label: string; value: string | null; kind?: 'since' }[]; chips?: { label: string; tone?: string }[]; error?: boolean }
 const cache = new Map<string, HoverCard>();
 const TONE_COLOR: Record<string, ChipColor> = { success: 'success', warning: 'warning', error: 'error', info: 'info', default: 'default' };
-const KIND_COLOR: Record<string, string> = { user: '#75479C', vessel: '#3B6FB6', seafarer: '#75479C', berth: '#0797A5', agent: '#2C6E52', company: '#2C6E52', incident: '#B3452E' };
+const KIND_COLOR: Record<string, string> = { user: '#75479C', vessel: '#3B6FB6', seafarer: '#75479C', berth: '#056A73', agent: '#2C6E52', company: '#2C6E52', incident: '#B3452E' };
 
 export default function EntityHover({ type, id, children, underline = true }: { type: string; id?: string | null; children: React.ReactNode; underline?: boolean }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);

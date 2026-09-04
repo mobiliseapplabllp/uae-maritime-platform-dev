@@ -71,7 +71,7 @@ export default function PortCallsList() {
 
   return (
     <>
-      <PageHeader icon={ViewTimelineRoundedIcon} iconColor="#0797A5" title="Port calls" sub="Every vessel call from announcement to sailing"
+      <PageHeader icon={ViewTimelineRoundedIcon} iconColor="#056A73" title="Port calls" sub="Every vessel call from announcement to sailing"
         actions={hasPerm(user, 'portcalls.create') && <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={openCreate}>Announce call</Button>} />
       <PageStats scope="portcalls" />
       <DataTable<PortCallRow>

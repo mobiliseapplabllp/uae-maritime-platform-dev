@@ -166,7 +166,7 @@ export default function AgentOperations() {
               <YAxis type="category" dataKey="name" width={150} tick={{ fontSize: 11, fill: axis }} axisLine={false} tickLine={false} />
               <RTooltip contentStyle={tooltipStyle} cursor={{ fill: grid, opacity: 0.35 }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              <Bar dataKey="autoApplied" stackId="d" fill="#0797A5" name={t('agents.barApplied')} barSize={14} />
+              <Bar dataKey="autoApplied" stackId="d" fill="#056A73" name={t('agents.barApplied')} barSize={14} />
               <Bar dataKey="escalated" stackId="d" fill="#B98A2F" name={t('agents.barEscalated')} barSize={14} />
               <Bar dataKey="awaitingReview" stackId="d" fill="#5A6B78" name={t('agents.barAwaiting')} barSize={14} />
               <Bar dataKey="overridden" stackId="d" fill="#C14F33" name={t('agents.barOverturned')} barSize={14} radius={[0, 3, 3, 0]} />

@@ -99,7 +99,7 @@ export default function Assurance() {
                       <YAxis tick={{ fontSize: 10, fill: axis }} axisLine={false} tickLine={false} domain={[0, 100]} />
                       <RTooltip contentStyle={tooltipStyle} />
                       <Legend wrapperStyle={{ fontSize: 11 }} />
-                      <Line type="monotone" dataKey="agreementRate" stroke="#0797A5" strokeWidth={2} dot={{ r: 2 }} connectNulls name={t('agents.seriesAgreement')} />
+                      <Line type="monotone" dataKey="agreementRate" stroke="#056A73" strokeWidth={2} dot={{ r: 2 }} connectNulls name={t('agents.seriesAgreement')} />
                       <Line type="monotone" dataKey="escalationRate" stroke="#B98A2F" strokeWidth={2} dot={{ r: 2 }} connectNulls name={t('agents.seriesEscalation')} />
                     </LineChart>
                   </ResponsiveContainer>

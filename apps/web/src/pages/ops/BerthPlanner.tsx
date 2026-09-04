@@ -34,7 +34,7 @@ export default function BerthPlanner() {
 
   const span = useMemo(() => (data ? spanOf(data.window.from, data.window.to) : null), [data]);
 
-  if (!data || !span) return <><PageHeader icon={ViewTimelineRoundedIcon} iconColor="#0797A5" title="Berth Window Planner" sub="Loading…" /><Skeleton variant="rounded" height={520} /></>;
+  if (!data || !span) return <><PageHeader icon={ViewTimelineRoundedIcon} iconColor="#056A73" title="Berth Window Planner" sub="Loading…" /><Skeleton variant="rounded" height={520} /></>;
 
   const nowPct = pctOf(span, new Date());
   const ticks = dayTicks(span);
@@ -45,7 +45,7 @@ export default function BerthPlanner() {
 
   return (
     <>
-      <PageHeader icon={ViewTimelineRoundedIcon} iconColor="#0797A5" title="Berth Window Planner"
+      <PageHeader icon={ViewTimelineRoundedIcon} iconColor="#056A73" title="Berth Window Planner"
         sub={`${data.berths.length} berths · ${fmtDayShort(data.window.from)} – ${fmtDayShort(data.window.to)}`}
         actions={(
           <Stack direction="row" spacing={1} alignItems="center">
@@ -90,7 +90,7 @@ export default function BerthPlanner() {
               <Box sx={{ position: 'relative' }}>
                 {data.berths.map((b) => {
                   const blocks = data.blocks.filter((bl) => bl.berthId === b.id);
-                  const accent = TERM_COLOR[b.berthType] || '#0797A5';
+                  const accent = TERM_COLOR[b.berthType] || '#056A73';
                   return (
                     <Box key={b.id} sx={{ height: ROW_H, borderBottom: 1, borderColor: 'divider', position: 'relative', bgcolor: b.status === 'MAINTENANCE' ? (mode === 'dark' ? 'rgba(180,120,20,0.08)' : 'rgba(180,120,20,0.05)') : 'transparent' }}>
                       {ticks.map((t, i) => <Box key={i} aria-hidden sx={{ position: 'absolute', left: `${t.pct}%`, top: 0, bottom: 0, borderLeft: `1px dashed ${grid}` }} />)}
@@ -106,7 +106,13 @@ export default function BerthPlanner() {
                               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(bl.id); } }}
                               sx={{
                                 position: 'absolute', left: `${startPct}%`, width: `${w}%`, top: 6, bottom: 6, borderRadius: '5px', cursor: 'pointer', px: 0.75, display: 'flex', alignItems: 'center', overflow: 'hidden',
-                                bgcolor: isConflict ? '#B3452E' : bl.actual ? accent : 'transparent', border: bl.actual ? 'none' : `1.5px dashed ${accent}`, color: bl.actual ? '#fff' : accent,
+                                // A planned window is drawn as an outline in the terminal's colour; a conflict fills the
+                                // block red, and the label on it has to be white or it is the terminal colour on red —
+                                // which for the container teal was 1.57:1, unreadable.
+                                bgcolor: isConflict ? '#B3452E' : bl.actual ? accent : 'transparent', border: bl.actual ? 'none' : `1.5px dashed ${accent}`, color: isConflict || bl.actual ? '#fff' : accent,
+                                // 24px is the smallest a pointer target may be (WCAG 2.5.8); a short window would
+                                // otherwise draw as a 12px sliver nobody can hit.
+                                minWidth: 24,
                                 boxShadow: isConflict ? '0 0 0 2px rgba(179,69,46,0.35)' : 'none', transition: 'transform .1s', '&:hover': { transform: 'scale(1.015)', zIndex: 2 },
                               }}>
                               <Typography noWrap sx={{ fontSize: 10.5, fontWeight: 700 }}>{bl.vessel ? bl.vessel.name : bl.vcn}</Typography>

@@ -32,7 +32,7 @@ export default function VesselSchedule() {
 
   return (
     <>
-      <PageHeader icon={EventNoteRoundedIcon} iconColor="#0797A5" title="Vessel schedule" sub="The daily programme — expected arrivals, planned berthings and sailings, and what actually sailed"
+      <PageHeader icon={EventNoteRoundedIcon} iconColor="#056A73" title="Vessel schedule" sub="The daily programme — expected arrivals, planned berthings and sailings, and what actually sailed"
         actions={(
           <ToggleButtonGroup exclusive size="small" value={days} onChange={(_, v: number | null) => v && setDays(v)} aria-label="Window">
             <ToggleButton value={3}>3 days</ToggleButton>

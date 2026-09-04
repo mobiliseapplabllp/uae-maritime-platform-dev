@@ -192,7 +192,10 @@ export default function TrafficMap() {
                 <Typography variant="caption" color="text.secondary">Derived signals — advisory, never auto-enforcement</Typography>
               </Box>
               <Divider />
-              <Stack divider={<Divider />} component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }} aria-label="Unacknowledged alerts">
+              {/* The rule between alerts is drawn as a border on each item rather than as an element between
+                  them: a <ul> may contain only list items, and a separator dropped in as a sibling is neither
+                  a list item nor allowed to be one. */}
+              <Stack component="ul" sx={{ listStyle: 'none', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }} aria-label="Unacknowledged alerts">
                 {data.alerts.map((a) => {
                   const who = a.vessel?.name || a.vesselName || 'Unknown target';
                   return (

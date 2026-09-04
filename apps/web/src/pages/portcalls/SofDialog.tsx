@@ -41,7 +41,7 @@ export default function SofDialog({ callId, open, onClose }: { callId: string; o
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><DescriptionRoundedIcon aria-hidden sx={{ color: '#0797A5' }} /> Statement of Facts</DialogTitle>
+      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><DescriptionRoundedIcon aria-hidden sx={{ color: '#056A73' }} /> Statement of Facts</DialogTitle>
       <DialogContent dividers>
         {!data && <Skeleton variant="rounded" height={300} />}
         {data && (

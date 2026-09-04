@@ -8,8 +8,13 @@ export const COMPLIANCE_COMPILED = '04 September 2026';
 
 export type ComplianceStatus = 'built' | 'partial' | 'absent' | 'diverged';
 
+/**
+ * The colour a verdict is shown in. `absent` used the disabled grey, which at 26px bold came out at 2.67:1
+ * against white — below AA even for large text, and it is the number that says how much is not built, which
+ * is the last figure that should be hard to read.
+ */
 export const statusColor = (s: string): string =>
-  ({ built: 'success.main', partial: 'warning.main', absent: 'text.disabled', diverged: 'secondary.main' }[s] ?? 'text.secondary');
+  ({ built: 'success.main', partial: 'warning.main', absent: 'text.secondary', diverged: 'secondary.main' }[s] ?? 'text.secondary');
 
 export const COMPLIANCE = {
   totals: [

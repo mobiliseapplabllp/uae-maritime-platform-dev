@@ -11,10 +11,10 @@ export const STATUSES: readonly string[] = INCIDENT_STATUS;
 export const SEV_ORDER = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
 /** Severity palette, one hue per band — never re-ranked between light and dark. */
 export const SEV_COLORS = {
-  light: { LOW: '#0797A5', MEDIUM: '#B98A2F', HIGH: '#C14F33', CRITICAL: '#7E2213' },
+  light: { LOW: '#056A73', MEDIUM: '#B98A2F', HIGH: '#C14F33', CRITICAL: '#7E2213' },
   dark: { LOW: '#2FA6AE', MEDIUM: '#B8892B', HIGH: '#D0644A', CRITICAL: '#F0937A' },
 } as const;
-export const CHANNEL_COLOR: Record<string, string> = { VHF: '#0B4F8A', PHONE: '#2C6E52', EMAIL: '#8A5A2B', PORTAL: '#5A6B78', PATROL: '#9C6412', CCTV: '#75479C', AIS: '#0797A5' };
+export const CHANNEL_COLOR: Record<string, string> = { VHF: '#0B4F8A', PHONE: '#2C6E52', EMAIL: '#8A5A2B', PORTAL: '#5A6B78', PATROL: '#9C6412', CCTV: '#75479C', AIS: '#056A73' };
 export const TRANSITION_LABEL: Record<string, string> = { ACKNOWLEDGED: 'Acknowledge', RESPONDING: 'Start response', MONITORING: 'Move to monitoring', RESOLVED: 'Resolve', CLOSED: 'Close case' };
 export const REOPEN_FROM: readonly string[] = ['RESOLVED', 'CLOSED'];
 export const DIRECTIONS = ['IN', 'OUT', 'INTERNAL'] as const;
@@ -45,10 +45,15 @@ export function buildTimeline(inc: Pick<Incident, 'statusHistory' | 'log' | 'doc
 /* 5×5 likelihood × consequence matrix — the classic HSE heatmap. */
 export const CONSEQ = ['Negligible', 'Minor', 'Moderate', 'Major', 'Catastrophic'];
 export const LIKELY = ['Rare', 'Unlikely', 'Possible', 'Likely', 'Almost certain'];
+/**
+ * The band a cell falls in. Each colour carries the case count in white, so each has to clear 4.5:1 against
+ * white — the amber and the yellow did not (3.33 and 2.35), which meant the number in a moderate-risk cell
+ * was unreadable to anyone who needed the contrast. Deepened until they do, keeping the red-to-green order.
+ */
 export function matrixBand(likelihood: number, consequence: number) {
   const score = likelihood * consequence;
-  if (score >= 15) return '#B3452E';
-  if (score >= 8) return '#C77B2E';
-  if (score >= 4) return '#C7A62E';
-  return '#3D8361';
+  if (score >= 15) return '#B3452E';     // 5.52:1
+  if (score >= 8) return '#9C5A1B';      // 5.40:1
+  if (score >= 4) return '#7A6510';      // 5.68:1
+  return '#356F52';                      // 5.92:1
 }

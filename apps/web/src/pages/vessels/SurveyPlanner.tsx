@@ -61,7 +61,7 @@ export default function SurveyPlanner() {
               </Box>
             ))}
           </Box>
-          <Box sx={{ flex: 1, position: 'relative', overflowX: 'auto' }}>
+          <Box tabIndex={0} role="group" aria-label="Survey and dry-dock timeline — scrolls sideways" sx={{ flex: 1, position: 'relative', overflowX: 'auto' }}>
             <Box sx={{ minWidth: 1100, position: 'relative' }}>
               <Box sx={{ height: 32, borderBottom: 1, borderColor: 'divider', position: 'relative' }}>
                 {monthTicks.map((t, i) => (

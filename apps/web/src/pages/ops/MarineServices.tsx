@@ -25,7 +25,7 @@ import type { CraftRef, MarineResource, ResourceStatus, ResourceType } from './t
 /* Marine craft & pilot board — the resources behind every berthing: tugs, pilot launches, mooring boats, the pilot roster and the survey launch.
  * Each card carries the unit's service digest; the drawer opens the full record. */
 const TYPE_META: Record<ResourceType, { label: string; icon: SvgIconComponent; color: string }> = {
-  TUG: { label: 'Tugs', icon: DirectionsBoatRoundedIcon, color: '#0797A5' },
+  TUG: { label: 'Tugs', icon: DirectionsBoatRoundedIcon, color: '#056A73' },
   PILOT_LAUNCH: { label: 'Pilot launches', icon: SailingRoundedIcon, color: '#0B74B0' },
   MOORING_BOAT: { label: 'Mooring boats', icon: SupportRoundedIcon, color: '#5A6B78' },
   PILOT: { label: 'Pilot roster', icon: PersonPinCircleRoundedIcon, color: '#75479C' },
@@ -67,7 +67,7 @@ export default function MarineServices() {
 
   return (
     <>
-      <PageHeader icon={DirectionsBoatRoundedIcon} iconColor="#0797A5" title="Marine craft & pilots" sub={`Pilotage runs 24×365 · ${available} available · ${tasked} tasked now`} />
+      <PageHeader icon={DirectionsBoatRoundedIcon} iconColor="#056A73" title="Marine craft & pilots" sub={`Pilotage runs 24×365 · ${available} available · ${tasked} tasked now`} />
       <PageStats scope="marine" />
       <Tabs value={tab} onChange={(_, t: number) => setTab(t)} aria-label="Marine craft views" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider', minHeight: 40 }}>
         <Tab label={`Craft board (${rows.length})`} sx={{ minHeight: 40 }} />

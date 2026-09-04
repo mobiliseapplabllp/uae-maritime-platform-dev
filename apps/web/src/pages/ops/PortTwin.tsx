@@ -101,7 +101,7 @@ export default function PortTwin() {
 
   return (
     <>
-      <PageHeader icon={SpaceDashboardRoundedIcon} iconColor="#0797A5" title="Quay view — live 2-D twin"
+      <PageHeader icon={SpaceDashboardRoundedIcon} iconColor="#056A73" title="Quay view — live 2-D twin"
         sub={`${occupied} of ${data.berths.length} berths occupied · ${data.anchorage.length} at anchorage · ${data.inbound.length} inbound — refreshes every minute`}
         actions={<Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button>} />
       <Card sx={{ p: 1.5 }}>

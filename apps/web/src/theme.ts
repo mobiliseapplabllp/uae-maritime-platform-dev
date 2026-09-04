@@ -44,6 +44,9 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
       MuiButton: { defaultProps: { disableElevation: true } },
       MuiTooltip: { defaultProps: { arrow: true } },
       MuiTextField: { defaultProps: { size: 'small' } },
+      // A table that scrolls has to be reachable by keyboard, or its rows are readable only with a mouse
+      // (WCAG 2.1.1). Set here rather than at each of the two dozen call sites, so the next table inherits it.
+      MuiTableContainer: { defaultProps: { tabIndex: 0 } },
       MuiFormControl: { defaultProps: { size: 'small' } },
     },
   });
@@ -51,12 +54,25 @@ export const buildTheme = (mode: Mode, direction: 'ltr' | 'rtl' = 'ltr'): Theme 
 
 // Validated categorical palettes. Fixed order: container, dryBulk, liquid, other — never cycled, never re-ranked.
 export const CHART_SERIES = {
-  light: { container: '#0797A5', dryBulk: '#B98A2F', liquid: '#3B6FB6', other: '#C14F33' },
+  light: { container: '#056A73', dryBulk: '#B98A2F', liquid: '#3B6FB6', other: '#C14F33' },
   dark: { container: '#2FA6AE', dryBulk: '#B8892B', liquid: '#5E88CE', other: '#D0644A' },
 } as const;
 export type SeriesKey = keyof typeof CHART_SERIES.light;
 export const SERIES_ORDER: SeriesKey[] = ['container', 'dryBulk', 'liquid', 'other'];
 export const SERIES_LABELS: Record<SeriesKey, string> = { container: 'Container', dryBulk: 'Dry bulk', liquid: 'Liquid', other: 'Other' };
+/**
+ * The platform's accent colours, and the rule about them.
+ *
+ * Every one of these is used two ways: as an icon or a chart fill, where nothing is read off it, and as the
+ * background of a chip, an avatar or a timeline block, where white text sits on top. The second use has to
+ * clear 4.5:1 (WCAG 1.4.3). The teal did not — it was #056A73, which gives 3.51 against white — so it is
+ * darkened here rather than in the eight places that use it, and every other accent already clears.
+ */
+export const ACCENT = {
+  teal: '#056A73', blue: '#0B74B0', slate: '#5A6B78', purple: '#75479C',
+  green: '#2C6E52', rust: '#B3452E', amber: '#9C6412', magenta: '#BD3861',
+} as const;
+
 export const BRAND_GRADIENT = 'linear-gradient(100deg,#0B74B0 0%,#75479C 55%,#BD3861 100%)';
 export const BRAND = { blue: '#0B74B0', purple: '#75479C', magenta: '#BD3861', navy: '#0A2239' } as const;
 export const MONO = '"IBM Plex Mono",monospace';

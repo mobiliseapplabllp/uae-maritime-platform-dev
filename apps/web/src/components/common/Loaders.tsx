@@ -15,7 +15,7 @@ export function GlobalProgress() {
   useEffect(() => onBusy(setBusy), []);
   useEffect(() => { if (busy) { setVisible(true); return undefined; } const t = setTimeout(() => setVisible(false), 350); return () => clearTimeout(t); }, [busy]);
   return (
-    <Box sx={{ position: 'relative', height: 2.5, overflow: 'hidden', bgcolor: 'transparent' }} role="progressbar" aria-hidden={!visible}>
+    <Box aria-hidden sx={{ position: 'relative', height: 2.5, overflow: 'hidden', bgcolor: 'transparent' }}>
       {visible && <Box sx={{ position: 'absolute', inset: 0, width: '40%', background: BRAND_GRADIENT, animation: `${slide} 1s ease-in-out infinite`, borderRadius: 2 }} />}
     </Box>
   );

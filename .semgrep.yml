@@ -12,6 +12,7 @@ rules:
         - "**/.env.example"
         - "pnpm-lock.yaml"
         - "**/i18n/**"           # dictionaries: `password: 'Password'` is a label, not a credential
+        - "**/tools/dast/**"     # a probe's deliberately-wrong passwords are attack payloads, not secrets
     patterns:
       - pattern-regex: '(?i)(password|passwd|secret|api[_-]?key|private[_-]?key|access[_-]?token|client[_-]?secret)["'']?\s*[:=]\s*["''][^"''$]{8,}["'']'
       - pattern-not-regex: '(?i)(development-service-token|development-gateway-secret|development-only-secret-change-me|maritime-registry-demonstration-key|Demo@2026|replace-before-enabling|maritime:maritime)'
@@ -270,7 +271,7 @@ rules:
       - metavariable-regex:
           metavariable: $V
           regex: ^(?!.*(example|changeme|placeholder|\$\{|process\.env|<|test|demo)).{12,}$
-    paths: { exclude: ["**/*.test.ts", "**/*.test.tsx", "**/world/**", "**/seed/**"] }
+    paths: { exclude: ["**/*.test.ts", "**/*.test.tsx", "**/world/**", "**/seed/**", "**/tools/dast/**"] }
 
   # ---------------------------------------------------------------- A07 Identification & authentication
   - id: maritime-jwt-verification-weakened

@@ -9,7 +9,7 @@ export const typeLabel = (t: string) => TYPE_LABELS[t] || t;
 export const CERT_TYPES = ['Certificate of Registry', 'Classification Certificate', 'Safety Management Certificate', 'International Ship Security Certificate', 'IOPP Certificate', 'Load Line Certificate', 'Maritime Labour Certificate', 'Safety Equipment Certificate', 'Safety Radio Certificate', 'Tonnage Certificate'];
 export const BAND_COLOR: Record<string, ChipColor> = { LOW: 'success', MEDIUM: 'warning', HIGH: 'error' };
 export const SURVEY_TYPE_LABEL: Record<SurveyEventType, string> = { ANNUAL: 'Annual', INTERMEDIATE: 'Intermediate', SPECIAL: 'Special survey', DRY_DOCK: 'Dry dock' };
-export const SURVEY_STATUS_COLOR: Record<SurveyStatus, string> = { OVERDUE: '#B3452E', WINDOW_OPEN: '#B77817', PLANNED: '#0797A5' };
+export const SURVEY_STATUS_COLOR: Record<SurveyStatus, string> = { OVERDUE: '#B3452E', WINDOW_OPEN: '#B77817', PLANNED: '#056A73' };
 
 /** Share of fleet certificates that are valid, as a whole percentage — null when the fleet holds none. */
 export const certHealthPct = (c: { valid: number; expiring: number; expired: number }) => { const total = c.valid + c.expiring + c.expired; return total ? Math.round((c.valid / total) * 100) : null; };

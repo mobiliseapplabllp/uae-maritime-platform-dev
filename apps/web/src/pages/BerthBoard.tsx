@@ -70,7 +70,7 @@ export default function BerthBoard() {
 
   return (
     <>
-      <PageHeader icon={AnchorRoundedIcon} iconColor="#0797A5" title="Berth board" sub="Live occupancy across every terminal — with the berth master maintained in place"
+      <PageHeader icon={AnchorRoundedIcon} iconColor="#056A73" title="Berth board" sub="Live occupancy across every terminal — with the berth master maintained in place"
         actions={<>
           <ToggleButtonGroup exclusive size="small" value={view} onChange={(_, v) => setViewPersist(v)} aria-label="View">
             <ToggleButton value="cards" aria-label="Cards"><GridViewRoundedIcon sx={{ fontSize: 18, mr: 0.5 }} />Cards</ToggleButton>

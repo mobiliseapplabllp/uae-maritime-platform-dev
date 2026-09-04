@@ -17,7 +17,7 @@ export default function BerthsPage() {
   const [outages, setOutages] = useState<BerthLite | null>(null);
   return (
     <>
-      <CrudPage<BerthRow> statsScope="masters" icon={AnchorRoundedIcon} iconColor="#0797A5" title="Berths & terminals" sub="Physical berth inventory — allocation checks run against these limits · click a row for its outage history"
+      <CrudPage<BerthRow> statsScope="masters" icon={AnchorRoundedIcon} iconColor="#056A73" title="Berths & terminals" sub="Physical berth inventory — allocation checks run against these limits · click a row for its outage history"
         entityName="berth" endpoint="/berths" permBase="masters" defaultSort="code" searchPlaceholder="Search code, name, terminal…" exportName="berths"
         beforeTable={<BerthDowntimePanel onOpenBerth={(b) => setOutages(b)} />} onRowClick={(row) => setOutages(row)}
         columns={[
