@@ -7,8 +7,7 @@ import {
 import type { Env } from './env';
 import { COMPLETION_CLIENT, type CompletionClient, type Language } from './completion';
 import { INDEX_CACHE } from './providers';
-import { SUGGESTIONS, answer, type IndexCache } from './assistant';
-import { search } from './retrieval';
+import { SUGGESTIONS, answer, retrieve, type IndexCache } from './assistant';
 import { toolCatalogue } from './tools';
 import { appendMessage, conversationApi, createConversation, messagesOf, publishConversation, titleFrom, type ConversationRecord } from './conversations';
 import { EVENTS } from '@maritime/contracts';
@@ -50,13 +49,16 @@ export class AssistantController {
     const q = String(query.q ?? '').trim();
     if (!q) throw badRequest('Give me something to look for');
     const index = await this.indexCache.get();
-    const hits = search(q, index.docs, index.idf, {
+    const hits = await retrieve(this.pool, index, q, {
       permissions: user.perms, topK: Math.min(20, Number(query.limit) || this.env.RETRIEVAL_TOP_K),
       minScore: this.env.RETRIEVAL_MIN_SCORE, kinds: query.kind ? query.kind.split(',').map((s) => s.trim()) : undefined,
+      denseWeight: this.env.RETRIEVAL_DENSE_WEIGHT, annMinDocs: this.env.RETRIEVAL_ANN_MIN_DOCS,
+      forceMemory: this.env.RETRIEVAL_VECTOR_MODE === 'memory',
     });
     return hits.map((h) => ({
       id: h.doc.id, kind: h.doc.kind, ref: h.doc.ref, title: h.doc.title, titleAr: h.doc.titleAr ?? null, link: h.doc.link,
-      permission: h.doc.permission, score: h.score, untrusted: h.doc.untrusted, markers: h.doc.injectionMarkers,
+      permission: h.doc.permission, score: h.score, lexical: h.lexical, fuzzy: h.dense,
+      untrusted: h.doc.untrusted, markers: h.doc.injectionMarkers,
       excerpt: h.doc.body.replace(/\s+/g, ' ').slice(0, 300),
     }));
   }

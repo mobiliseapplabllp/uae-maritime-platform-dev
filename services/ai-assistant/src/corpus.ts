@@ -1,5 +1,5 @@
 import type { Queryable } from '@maritime/service-kit';
-import { buildIndex, type CorpusDoc } from './retrieval';
+import { INDEX_VERSION, buildIndex, type CorpusDoc } from './retrieval';
 
 /* The corpus: the platform's own content, turned into passages an answer can cite.
  *
@@ -88,8 +88,11 @@ export async function reindex(c: Queryable): Promise<{ documents: number; terms:
   }));
   const index = buildIndex(docs);
   for (const d of index.docs) {
-    await c.query('UPDATE corpus SET terms = $2, token_count = $3, untrusted = $4, injection_markers = $5, updated_at = now() WHERE id = $1',
-      [d.id, JSON.stringify(d.terms), d.tokenCount, d.untrusted, JSON.stringify(d.injectionMarkers)]);
+    /* `dense` is the canonical trigram vector and is written here; where the cluster has pgvector, the
+     * migration's trigger keeps the indexed copy equal to it, so this statement is the same either way. */
+    await c.query(`UPDATE corpus SET terms = $2, token_count = $3, untrusted = $4, injection_markers = $5, dense = $6, updated_at = now()
+                    WHERE id = $1`,
+      [d.id, JSON.stringify(d.terms), d.tokenCount, d.untrusted, JSON.stringify(d.injectionMarkers), d.dense.length ? d.dense : null]);
   }
   await c.query('DELETE FROM corpus_terms');
   const terms = Object.entries(index.idf);
@@ -97,5 +100,9 @@ export async function reindex(c: Queryable): Promise<{ documents: number; terms:
     await c.query('INSERT INTO corpus_terms(term, df, idf) VALUES ($1, $2, $3) ON CONFLICT (term) DO UPDATE SET df = EXCLUDED.df, idf = EXCLUDED.idf',
       [term, index.docs.filter((d) => d.terms[term] !== undefined).length, idf]);
   }
+  await c.query(`INSERT INTO corpus_index(id, version, documents, terms, built_at) VALUES (true, $1, $2, $3, now())
+                 ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version, documents = EXCLUDED.documents,
+                   terms = EXCLUDED.terms, built_at = EXCLUDED.built_at`,
+    [INDEX_VERSION, index.docs.length, terms.length]);
   return { documents: index.docs.length, terms: terms.length };
 }

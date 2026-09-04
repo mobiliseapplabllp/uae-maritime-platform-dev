@@ -1,7 +1,8 @@
 import type { Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { ASSISTANT_CONTRACT, type CompletionClient, type GroundingBlock, type Language } from './completion';
-import { search, type CorpusIndex, type IndexedDoc } from './retrieval';
+import { DEFAULT_DENSE_WEIGHT, embedQueryDense, search, type CorpusIndex, type Hit, type IndexedDoc } from './retrieval';
+import { detectVectorMode, recall } from './vectors';
 import { plan, runTools, type Citation, type Row, type ToolRefusal, type ToolRun } from './tools';
 
 /* The answer pipeline.
@@ -63,6 +64,55 @@ export function followUps(tools: ToolRun[], hits: { doc: IndexedDoc }[]): string
   return [...new Set(out)].slice(0, 4).length ? [...new Set(out)].slice(0, 4) : SUGGESTIONS.slice(0, 3);
 }
 
+/* ------------------------------------------------------------------------------ retrieval --- */
+
+/** How many candidates the recall pass asks for per passage the answer will use. The dense vector is
+ *  approximate twice over — once in the hashing, once in the ANN traversal — so it is asked for a pool wide
+ *  enough that the exact re-ranking, not the approximation, decides what an answer is grounded in. */
+export const RECALL_FACTOR = 20;
+export const RECALL_MIN = 200;
+
+export interface RetrievalOptions {
+  permissions: readonly string[];
+  topK?: number;
+  minScore?: number;
+  kinds?: string[];
+  denseWeight?: number;
+  /** The corpus size at which the first pass moves into SQL. */
+  annMinDocs?: number;
+  /** Forces the in-process path, whatever the cluster has. */
+  forceMemory?: boolean;
+}
+
+/**
+ * The passages a reader may see, ranked.
+ *
+ * Two passes, always in this order. Recall narrows the corpus to a candidate pool; scoring ranks that pool
+ * on the exact vectors. Where the recall pass runs is the only thing that changes between modes — in SQL
+ * against pgvector's index once the corpus is large enough to be worth it, in process below that, where
+ * scoring everything is exact and costs less than the round trip. Both give the same ordering, because the
+ * pool is far wider than the answer and the exact vectors decide it either way.
+ *
+ * The permission filter is in the recall query's WHERE clause, not applied to its results. A passage this
+ * reader may not see is never a candidate in either mode.
+ */
+export async function retrieve(db: Queryable, index: CorpusIndex, question: string, opts: RetrievalOptions): Promise<Hit[]> {
+  const topK = opts.topK ?? 5;
+  const denseWeight = opts.denseWeight ?? DEFAULT_DENSE_WEIGHT;
+  const scoring = { permissions: opts.permissions, topK, minScore: opts.minScore, kinds: opts.kinds, denseWeight };
+
+  const bigEnough = index.docs.length >= (opts.annMinDocs ?? Number.POSITIVE_INFINITY);
+  if (!bigEnough || denseWeight <= 0) return search(question, index.docs, index.idf, scoring);
+
+  const mode = await detectVectorMode(db, opts.forceMemory);
+  if (mode === 'memory') return search(question, index.docs, index.idf, scoring);
+
+  const q = embedQueryDense(question);
+  if (!q.length) return search(question, index.docs, index.idf, scoring);
+  const pool = await recall(db, q, { permissions: opts.permissions, kinds: opts.kinds, limit: Math.max(topK * RECALL_FACTOR, RECALL_MIN) });
+  return search(question, index.docs, index.idf, { ...scoring, candidates: new Set(pool.map((c) => c.id)) });
+}
+
 /**
  * Answers one question for one user under that user's permissions.
  *
@@ -82,8 +132,10 @@ export async function answer(deps: AssistantDeps, request: AnswerRequest): Promi
   // 2. the records, read through the tool surface and never around it
   const tools = await runTools({ db: deps.db, permissions: request.permissions, now }, question, allowed);
   // 3. the passages this user may see, ranked
-  const hits = search(question, deps.index.docs, deps.index.idf, {
+  const hits = await retrieve(deps.db, deps.index, question, {
     permissions: request.permissions, topK: deps.env.RETRIEVAL_TOP_K, minScore: deps.env.RETRIEVAL_MIN_SCORE,
+    denseWeight: deps.env.RETRIEVAL_DENSE_WEIGHT, annMinDocs: deps.env.RETRIEVAL_ANN_MIN_DOCS,
+    forceMemory: deps.env.RETRIEVAL_VECTOR_MODE === 'memory',
   });
 
   const grounding: GroundingBlock[] = hits.map((h) => ({
@@ -133,6 +185,8 @@ export async function loadIndex(db: Queryable): Promise<CorpusIndex> {
     id: r.id, kind: r.kind, ref: r.ref, title: r.title, titleAr: r.title_ar, body: r.body, link: r.link, permission: r.permission,
     entityType: r.entity_type, entityId: r.entity_id, terms: r.terms ?? {}, tokenCount: r.token_count,
     untrusted: r.untrusted, injectionMarkers: r.injection_markers ?? [],
+    // the canonical numeric vector, not pgvector's copy of it: the in-process path has to work either way
+    dense: Array.isArray(r.dense) ? r.dense.map(Number) : [],
   }));
   const idf: Record<string, number> = {};
   for (const t of (await db.query<Row>('SELECT term, idf FROM corpus_terms')).rows) idf[t.term] = Number(t.idf);

@@ -5,6 +5,7 @@ import { AssistantController } from './assistant.controller';
 import { ConversationsController } from './conversations.controller';
 import { DraftsController } from './drafts.controller';
 import { AssistantConsumer } from './consumer';
+import { CorpusBackfill } from './backfill';
 import { assistantProviders } from './providers';
 
 /* The conversation and draft controllers are registered before the assistant's own surface so their literal
@@ -13,7 +14,7 @@ export function buildAppModule(env: Env, principalResolver?: Provider) {
   @Module({
     imports: [KitModule.forRoot({ env, principalResolver })],
     controllers: [ConversationsController, DraftsController, AssistantController],
-    providers: [...assistantProviders, AssistantConsumer],
+    providers: [...assistantProviders, AssistantConsumer, CorpusBackfill],
   })
   class AppModule {}
   return AppModule;

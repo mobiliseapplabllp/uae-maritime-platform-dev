@@ -8,7 +8,11 @@ import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedAiAssistant } from '../src/seed';
 import { applyEvent } from '../src/consumer';
-import { buildIndex, cosine, detectInjection, embedQuery, mayRead, search, stem, tokenize } from '../src/retrieval';
+import { INDEX_VERSION, buildIndex, cosine, detectInjection, docText, embedQuery, embedQueryDense, mayRead, search, stem, tokenize } from '../src/retrieval';
+import { DENSE_ONLY_MIN, EMBED_DIM, denseContribution, denseCosine, embedTokens, trigrams } from '../src/embedding';
+import { detectVectorMode, recall, writeDense } from '../src/vectors';
+import { CorpusBackfill } from '../src/backfill';
+import { loadIndex, retrieve } from '../src/assistant';
 import { ASSISTANT_CONTRACT, GatewayCompletionClient, LocalCompletionClient, createCompletionClient } from '../src/completion';
 import { plan } from '../src/tools';
 
@@ -440,5 +444,182 @@ describe('ai-assistant — permissions', () => {
     const r = await request(server as never).get('/health');
     expect(r.status).toBe(200);
     expect(r.body.data).toMatchObject({ status: 'ok', service: 'ai-assistant' });
+  });
+});
+
+/* ===================================================== the trigram half, and where it is stored === */
+
+describe('ai-assistant — the fuzzy half of retrieval', () => {
+  const e = (text: string) => embedTokens(tokenize(text));
+  const near = (a: string, b: string) => denseCosine(e(a), e(b));
+  const docs = [
+    { id: 'a', kind: 'legislation', ref: 'MSA-01', title: 'Bunkering safety circular', body: 'Bunkering operations at the terminal require a safety checklist before transfer begins.', link: '/legislation', permission: 'legislation.view' },
+    { id: 'b', kind: 'legislation', ref: 'MSA-02', title: 'Ballast water management', body: 'Ballast water exchange records are to be kept aboard and produced on inspection.', link: '/legislation', permission: 'legislation.view' },
+  ];
+
+  it('bounds a token so its prefix and its suffix are grams in their own right', () => {
+    expect(trigrams('bunker')).toEqual(['#bu', 'bun', 'unk', 'nke', 'ker', 'er#']);
+    expect(trigrams('a')).toEqual(['#a#']);
+  });
+  it('embeds deterministically, to a fixed width, at unit length', () => {
+    const v = e('bunkering safety circular');
+    expect(v).toHaveLength(EMBED_DIM);
+    expect(Math.sqrt(v.reduce((s, x) => s + x * x, 0))).toBeCloseTo(1, 5);
+    expect(e('bunkering safety circular')).toEqual(v);
+    expect(embedTokens([])).toEqual([]);
+    // nothing is comparable to a vector that was never computed
+    expect(denseCosine(v, [])).toBe(0);
+    expect(denseCosine(v, v)).toBeCloseTo(1, 5);
+  });
+  it('reads a misspelling, a transliteration and a partial reference as near', () => {
+    expect(near('bunkering safety circular', 'bunkerring safty circular')).toBeGreaterThan(0.7);
+    expect(near('Al Mansoori', 'Al-Mansouri')).toBeGreaterThan(0.6);
+    expect(near('MAR/LIC/2026', 'MAR/LIC/2026/0031')).toBeGreaterThan(0.7);
+  });
+  it('reads unrelated prose as nothing at all, so it cannot lift a passage on background overlap', () => {
+    // two pieces of English share trigrams whatever they are about; that similarity is discounted to zero
+    expect(near('what is outstanding on the billing ledger', docs[0].body)).toBeLessThan(0.15);
+    expect(denseContribution(near('what is outstanding on the billing ledger', docs[0].body))).toBe(0);
+    expect(denseContribution(near('xyzzy quuxian', docs[0].body))).toBe(0);
+    expect(denseContribution(0.15)).toBe(0);
+    expect(denseContribution(1)).toBe(1);
+  });
+  it('works on Arabic, where the English stemmer does nothing', () => {
+    expect(near('تفتيش السفينة', 'تفتيش السفن في الميناء')).toBeGreaterThan(0.5);
+    expect(denseContribution(near('تفتيش السفينة', 'رسوم الإرساء في الميناء'))).toBeLessThan(0.05);
+  });
+  it('indexes both titles, so a register can be searched in either language', () => {
+    const bilingual = [{ ...docs[0], titleAr: 'تعميم سلامة التزود بالوقود' }, docs[1]];
+    const index = buildIndex(bilingual);
+    expect(tokenize(docText(bilingual[0]))).toEqual(expect.arrayContaining(['تعميم', 'التزود', 'bunker']));
+    const hits = search('تعميم التزود بالوقود', index.docs, index.idf, { permissions: ['*'] });
+    expect(hits.map((h) => h.doc.id)).toEqual(['a']);
+    expect(hits[0].lexical).toBeGreaterThan(0);
+  });
+  it('will not retrieve on a coincidence of word endings alone', () => {
+    // `frobnicate` and `certificate` share four trigrams and nothing else; across a few hundred passages one
+    // such coincidence always clears the floor, and it must not be enough to cite a passage
+    const coincidence = denseContribution(near('frobnicate', 'Tonnage Certificate — issue or renewal'));
+    expect(coincidence).toBeGreaterThan(0);
+    expect(coincidence).toBeLessThan(DENSE_ONLY_MIN);
+    const index = buildIndex(docs);
+    expect(search('xyzzy quuxian frobnicate', index.docs, index.idf, { permissions: ['*'], minScore: 0 })).toHaveLength(0);
+  });
+  it('finds the passage a question misspells past the exact half, and still finds the right one', () => {
+    const index = buildIndex(docs);
+    // not one of these words is in the corpus, so the word-level index has nothing to match
+    expect(embedQuery('bunkerring operatons', index.idf)).toEqual({});
+    expect(search('bunkerring operatons', index.docs, index.idf, { permissions: ['*'], denseWeight: 0 })).toHaveLength(0);
+
+    const hits = search('bunkerring operatons', index.docs, index.idf, { permissions: ['*'] });
+    expect(hits.map((h) => h.doc.id)).toEqual(['a']);
+    expect(hits[0].lexical).toBe(0);
+    // nothing but the fuzzy half put it there, so it had to clear the bar a coincidence cannot
+    expect(hits[0].dense).toBeGreaterThanOrEqual(DENSE_ONLY_MIN);
+  });
+  it('still scopes before it ranks — the fuzzy half is scored inside the reader\'s permissions, never outside them', () => {
+    const index = buildIndex(docs);
+    expect(search('bunkerring operatons', index.docs, index.idf, { permissions: ['ai.use', 'invoices.view'] })).toHaveLength(0);
+  });
+  it('leaves the exact ranking exactly as it was when the fuzzy half is turned off', () => {
+    const index = buildIndex(docs);
+    const pure = search('bunkering circular', index.docs, index.idf, { permissions: ['*'], minScore: 0, denseWeight: 0 });
+    expect(pure.map((h) => h.doc.id)).toEqual(['a']);
+    expect(pure[0].score).toBe(cosine(embedQuery('bunkering circular', index.idf), index.docs[0].terms));
+  });
+});
+
+describe('ai-assistant — retrieval storage', () => {
+  it('runs on pgvector here, and stores a vector for every passage', async () => {
+    expect(await detectVectorMode(pool)).toBe('pgvector');
+    const r = await pool.query<{ docs: number; dense: number; indexed: number; dim: number }>(
+      `SELECT count(*)::int AS docs, count(dense)::int AS dense, count(embedding)::int AS indexed,
+              COALESCE(min(array_length(dense, 1)), 0)::int AS dim FROM corpus`);
+    const { docs, dense, indexed, dim } = r.rows[0];
+    expect(docs).toBeGreaterThan(50);
+    expect(dense).toBe(docs);
+    // the indexed copy is the trigger's business, not the indexer's, and it has to be exactly in step
+    expect(indexed).toBe(docs);
+    expect(dim).toBe(EMBED_DIM);
+  });
+  it('keeps the indexed copy in step with the canonical one, including when there is nothing to index', async () => {
+    const id = (await pool.query<{ id: string }>('SELECT id FROM corpus ORDER BY id LIMIT 1')).rows[0].id;
+    const before = (await pool.query<{ dense: number[] }>('SELECT dense FROM corpus WHERE id = $1', [id])).rows[0].dense;
+    await writeDense(pool, id, []);
+    expect((await pool.query('SELECT embedding FROM corpus WHERE id = $1', [id])).rows[0].embedding).toBeNull();
+    await writeDense(pool, id, before);
+    const back = (await pool.query<{ embedding: string }>('SELECT embedding::text FROM corpus WHERE id = $1', [id])).rows[0].embedding;
+    expect(back).not.toBeNull();
+    expect(JSON.parse(back)).toHaveLength(EMBED_DIM);
+  });
+  it('filters the recall query by permission in its WHERE clause, so an unreadable passage is never a candidate', async () => {
+    const q = embedQueryDense('port state control inspection campaign');
+    const asAdmin = await recall(pool, q, { permissions: ['*'], limit: 20 });
+    expect(asAdmin.length).toBeGreaterThan(0);
+    // the corpus is legislation, services and reference data; a clerk holds none of those permissions
+    expect(await recall(pool, q, { permissions: ['ai.use', 'invoices.view'], limit: 20 })).toEqual([]);
+    const asSurveyor = await recall(pool, q, { permissions: ['ai.use', 'masters.view'], limit: 50 });
+    expect(asSurveyor.length).toBeGreaterThan(0);
+    expect(asSurveyor.every((c) => c.id.startsWith('reference:'))).toBe(true);
+    // and `kinds` narrows it further, in the same clause
+    expect((await recall(pool, q, { permissions: ['*'], kinds: ['service'], limit: 20 })).every((c) => c.id.startsWith('service:'))).toBe(true);
+  });
+  it('returns the same ranking whether the first pass runs in SQL or in process', async () => {
+    const index = await loadIndex(pool);
+    expect(index.docs.every((d) => d.dense.length === EMBED_DIM)).toBe(true);
+    for (const question of ['port state control inspection campaign', 'what does a bunker barge licence need', 'ballast water record book']) {
+      const inSql = await retrieve(pool, index, question, { permissions: OFFICER_PERMS, topK: 5, annMinDocs: 1 });
+      const inProcess = await retrieve(pool, index, question, { permissions: OFFICER_PERMS, topK: 5, forceMemory: true, annMinDocs: 1 });
+      expect(inSql.map((h) => `${h.doc.id}:${h.score}`)).toEqual(inProcess.map((h) => `${h.doc.id}:${h.score}`));
+      expect(inSql.length).toBeGreaterThan(0);
+    }
+  });
+  it('does not drop the passage the exact half would have chosen, however narrow the recall pass is', async () => {
+    const index = await loadIndex(pool);
+    for (const question of ['port state control inspection campaign', 'what does a bunker barge licence need']) {
+      const best = search(question, index.docs, index.idf, { permissions: ['*'], topK: 1, minScore: 0 })[0];
+      const pool20 = await recall(pool, embedQueryDense(question), { permissions: ['*'], limit: 20 });
+      expect(pool20.map((c) => c.id)).toContain(best.doc.id);
+    }
+  });
+});
+
+describe('ai-assistant — an index that was written before the vectors existed', () => {
+  it('rebuilds itself at boot, once, and does nothing at all when there is nothing to rebuild', async () => {
+    const backfill = app.get(CorpusBackfill);
+    // a service that is already current pays for one count and no writes
+    expect(await backfill.run()).toBeNull();
+
+    // exactly what an upgraded deployment looks like: the column is there, and nothing has filled it
+    await pool.query('UPDATE corpus SET dense = NULL');
+    expect((await pool.query('SELECT count(*)::int AS n FROM corpus WHERE embedding IS NOT NULL')).rows[0].n).toBe(0);
+    const asked = 'bunkering safety at the fuel jetty';
+    const index = await loadIndex(pool);
+    expect(index.docs.every((d) => d.dense.length === 0)).toBe(true);
+    // retrieval still works on the word-level half alone, which is why this degrades rather than breaking
+    expect((await retrieve(pool, index, asked, { permissions: ['*'], topK: 3 })).length).toBeGreaterThan(0);
+
+    const rebuilt = await backfill.run();
+    expect(rebuilt?.documents).toBeGreaterThan(50);
+    const after = await pool.query<{ dense: number; indexed: number }>(
+      'SELECT count(dense)::int AS dense, count(embedding)::int AS indexed FROM corpus');
+    expect(after.rows[0].dense).toBe(rebuilt?.documents);
+    expect(after.rows[0].indexed).toBe(rebuilt?.documents);
+    expect(await backfill.run()).toBeNull();
+  });
+  it('rebuilds an index that is complete but was built by another version of this code', async () => {
+    const backfill = app.get(CorpusBackfill);
+    expect((await pool.query<{ version: string }>('SELECT version FROM corpus_index WHERE id')).rows[0].version).toBe(INDEX_VERSION);
+    expect(await backfill.run()).toBeNull();
+
+    /* Every vector is present and every one of them is wrong: this is what a deployment looks like after a
+     * change to the tokeniser or to which fields are indexed, and it is the case no migration can detect. */
+    await pool.query('UPDATE corpus_index SET version = $1 WHERE id', ['2020.01-something-else']);
+    expect((await pool.query('SELECT count(*)::int AS n FROM corpus WHERE dense IS NULL')).rows[0].n).toBe(0);
+
+    const rebuilt = await backfill.run();
+    expect(rebuilt?.documents).toBeGreaterThan(50);
+    expect((await pool.query<{ version: string }>('SELECT version FROM corpus_index WHERE id')).rows[0].version).toBe(INDEX_VERSION);
+    expect(await backfill.run()).toBeNull();
   });
 });
