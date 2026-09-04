@@ -173,10 +173,21 @@ case "${1:-up}" in
       git log --oneline "$BEFORE..$AFTER" | head -10 | sed 's/^/     /'
     fi
     install_and_build
+    # A pull can bring a service that did not exist last time, and a service with no database fails
+    # on boot. create_databases only creates what is missing, so this is cheap on an ordinary update.
+    create_databases
     say "Restarting services (each applies its own new migrations as it boots)"
     bash infra/local/services.sh stop > /dev/null 2>&1
     bash infra/local/services.sh start > "$LOG/start.log" 2>&1
-    ok "$(grep -c 'started' "$LOG/start.log") services restarted"
+    sleep 6
+    # count what is answering, not what the log claims it launched
+    LIVE=$(bash infra/local/services.sh status 2>/dev/null | grep -c ': up')
+    TOTAL=$(ls services | wc -l | tr -d ' ')
+    if [ "$LIVE" -eq "$TOTAL" ]; then ok "$LIVE/$TOTAL services answering"; else
+      warn "$LIVE/$TOTAL services answering — these are not:"
+      bash infra/local/services.sh status 2>/dev/null | grep ': down' | sed 's/^/       /'
+      warn "their logs are in $LOG/ — one file per service"
+    fi
     # the web dev server picks up source changes itself, so it is only started if it is not already up
     curl -fs -o /dev/null "http://127.0.0.1:$WEB_PORT" 2>/dev/null || start_services
     report ;;
