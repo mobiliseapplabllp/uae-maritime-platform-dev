@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { geoFor, buildWorld, stableId, type WorldChecklistTemplate, type WorldInspection } from '@maritime/world';
-import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
+import { createDb, runMigrations, seedLookupMirror, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
-import { upsertLookup, upsertPortCall, upsertVessel } from './subjects';
+import { upsertPortCall, upsertVessel } from './subjects';
 import { DETAINABLE_ACTION, scoreChecklist, type ChecklistAnswer, type Row } from './inspections';
 
 /* Seeds the survey desk from the shared world: the versioned checklist templates the builder edits, every survey
@@ -46,7 +46,7 @@ export async function seedInspection(databaseUrl: string, profile = 'AE') {
      * read-model event would. A call with no berth is not yet any port's, and stays shared. */
     const homePort = geoFor(world.profile).portCode;
     for (const call of world.portCalls) await upsertPortCall(c, { id: call.id, vcn: call.vcn, vesselId: call.vesselId, status: call.status, berthCode: call.berthCode, eta: call.eta, atb: call.atb, atd: call.atd, scopePort: call.berthCode ? homePort : '' });
-    for (const l of world.lookups) if (l.category === 'deficiencyCode' || l.category === 'actionCode') await upsertLookup(c, { id: `${l.category}:${l.code}`, ...l } as Row);
+    const lookups = await seedLookupMirror(c, world.lookups);
 
     for (const t of world.checklistTemplates) {
       await c.query(`INSERT INTO checklist_templates(id, name, inspection_type, description, items, active, version, pass_score_pct) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -112,7 +112,7 @@ export async function seedInspection(databaseUrl: string, profile = 'AE') {
     return {
       profile: world.profile, templates: world.checklistTemplates.length, inspections: world.inspections.length, findings, detentions,
       vessels: world.vessels.length, portCalls: world.portCalls.length,
-      lookups: world.lookups.filter((l) => l.category === 'deficiencyCode' || l.category === 'actionCode').length, series: series.size,
+      lookups, series: series.size,
     };
   });
   await pool.end();

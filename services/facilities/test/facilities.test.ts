@@ -351,6 +351,10 @@ describe('facilities — the dashboard and the vocabularies', () => {
   it('serves the vocabularies and the standing transitions it enforces', async () => {
     const r = await g('/facilities/meta');
     expect(r.body.data.categories).toContain('TERMINAL_OPERATOR');
+    // the vocabularies come from this service's mirror of the Data Studio masters, labelled in both languages
+    expect(r.body.data.categoryOptions.find((o: any) => o.code === 'AGENCY')).toMatchObject({ label: 'Shipping agency', labelAr: 'وكالة ملاحية' });
+    expect(r.body.data.facilityTypes).toContain('MARINA'); expect(r.body.data.visitTypes.map((o: any) => o.code)).toContain('SPOT_CHECK');
+    expect(r.body.data.accreditationCategories).toHaveLength(6); expect(r.body.data.accreditationCategories[0].meta).toMatchObject({ cycleMonths: 12 });
     expect(r.body.data.statusTransitions.BLACKLISTED).toEqual(['ACTIVE', 'INACTIVE']);
     expect(r.body.data.ispsStatuses).toContain('COMPLIANT');
     expect(r.body.data.licensedTypes.some((t: any) => t.type === 'SHIPPING_AGENCY')).toBe(true);
@@ -452,6 +456,23 @@ describe('facilities — who may do what', () => {
     const entries = await outbox(EVENTS.audit.recorded);
     expect(entries.map((e) => e.data.action)).toEqual(expect.arrayContaining(['CREATE', 'AUDIT', 'OBLIGATION_RAISED', 'SUSPEND']));
     expect(entries.every((e) => e.data.entityLabel && e.data.entity)).toBe(true);
+  });
+  it('validates every vocabulary against the mirror of the master, and follows the master as it changes', async () => {
+    const bad = await post(C, { code: 'VOC1', name: 'Vocabulary test', category: 'ORBITAL_AGENCY' }, clerk);
+    expect(bad.status).toBe(400); expect(bad.body.message).toMatch(/ORBITAL_AGENCY.*companyCategory/); expect(bad.body.allowed).toContain('AGENCY');
+    expect((await post(C, { code: 'VOC2', name: 'Vocabulary test', category: 'AGENCY', types: ['MOON_MINING'] }, clerk)).body.message).toMatch(/MOON_MINING/);
+    expect((await post(F, { name: 'Vocabulary jetty', facilityType: 'SPACEPORT' }, clerk)).body.message).toMatch(/SPACEPORT.*facilityType/);
+    expect((await post(F, { name: 'Vocabulary jetty', facilityType: 'JETTY', capabilities: ['CONTAINER', 'ANTIMATTER'] }, clerk)).body.message).toMatch(/ANTIMATTER.*facilityCapability/);
+    // Data Studio adds the value; the event lands; the same request is accepted — no release, no call to mdm
+    const added = makeEvent({ type: EVENTS.mdm.lookupChanged, source: 'mdm', data: { category: 'companyCategory', code: 'ORBITAL_AGENCY', change: 'created', lookup: { category: 'companyCategory', code: 'ORBITAL_AGENCY', label: 'Orbital agency', labelAr: 'وكالة مدارية', meta: {}, active: true } } });
+    await withInbox(pool, added, (c) => applyEvent(c, { env, audit }, added));
+    const ok = await post(C, { code: 'VOC1', name: 'Vocabulary test', category: 'ORBITAL_AGENCY' }, clerk); expect(ok.status).toBe(201);
+    expect((await g('/facilities/meta')).body.data.categoryOptions.find((o: any) => o.code === 'ORBITAL_AGENCY')).toMatchObject({ label: 'Orbital agency', labelAr: 'وكالة مدارية' });
+    const removed = makeEvent({ type: EVENTS.mdm.lookupChanged, source: 'mdm', data: { category: 'companyCategory', code: 'ORBITAL_AGENCY', change: 'deleted' } });
+    await withInbox(pool, removed, (c) => applyEvent(c, { env, audit }, removed));
+    expect((await put(`${C}/${ok.body.data.id}`, { category: 'ORBITAL_AGENCY' }, clerk)).status).toBe(400);
+    expect((await post(`${C}/${ok.body.data.id}/obligations`, { kind: 'WISH', title: 'Not a kind' }, clerk)).body.message).toMatch(/WISH.*obligationKind/);
+    expect((await post(`${C}/${ok.body.data.id}/obligations`, { kind: 'DOCUMENT', title: 'Produce the trade licence' }, clerk)).status).toBe(201);
   });
 });
 

@@ -45,6 +45,8 @@ export const INSTRUMENT_CLASS_BY_TYPE: Record<string, InstrumentClass> = {
   SEAMAN_CARD: 'CERTIFICATE', GMDSS_CERTIFICATE: 'CERTIFICATE', MEDICAL_FITNESS_CERTIFICATE: 'CERTIFICATE',
   ISPS_STATEMENT_OF_COMPLIANCE: 'CERTIFICATE',
   MET_INSTITUTION_ACCREDITATION: 'ACCREDITATION', MET_PROGRAMME_APPROVAL: 'ACCREDITATION',
+  // the six RFP accreditation schemes run on an annual cycle, so they are accreditations rather than two-year licences
+  COMPASS_CALIBRATION: 'ACCREDITATION', LSA_SERVICING: 'ACCREDITATION', FFA_SERVICING: 'ACCREDITATION', SMALL_VESSEL_SURVEY: 'ACCREDITATION', PEST_CONTROL: 'ACCREDITATION', TOWAGE_CERTIFICATION: 'ACCREDITATION',
   ...Object.fromEntries([...VESSEL_STATUTORY_CERT_TYPES, ...COMPANY_STATUTORY_CERT_TYPES].map((t) => [t, 'CERTIFICATE' as InstrumentClass])),
 };
 export const NUMBER_PREFIX_BY_CLASS: Record<InstrumentClass, string> = {
@@ -56,6 +58,7 @@ export const NUMBER_PREFIX_BY_TYPE: Record<string, string> = {
   FLAG_STATE_ENDORSEMENT: 'FSE', CERTIFICATE_OF_RECEIPT_OF_APPLICATION: 'CRA', SEAMAN_CARD: 'SMC-ID',
   GMDSS_CERTIFICATE: 'GMDSS', MEDICAL_FITNESS_CERTIFICATE: 'MED',
   ISPS_STATEMENT_OF_COMPLIANCE: 'ISPS', MET_INSTITUTION_ACCREDITATION: 'MET', MET_PROGRAMME_APPROVAL: 'MPA',
+  COMPASS_CALIBRATION: 'ACC-CMP', LSA_SERVICING: 'ACC-LSA', FFA_SERVICING: 'ACC-FFA', SMALL_VESSEL_SURVEY: 'ACC-SVS', PEST_CONTROL: 'ACC-PST', TOWAGE_CERTIFICATION: 'ACC-TOW',
   CARGO_SHIP_SAFETY_CONSTRUCTION: 'SAFCON', CARGO_SHIP_SAFETY_EQUIPMENT: 'SEQ', CARGO_SHIP_SAFETY_RADIO: 'SRC',
   INTERNATIONAL_LOAD_LINE: 'ILL', IOPP_CERTIFICATE: 'IOPP', IAPP_CERTIFICATE: 'IAPP', SEWAGE_POLLUTION_PREVENTION: 'ISPP',
   SAFETY_MANAGEMENT_CERTIFICATE: 'SMC', SHIP_SECURITY_CERTIFICATE: 'ISSC', MARITIME_LABOUR_CERTIFICATE: 'MLC',
@@ -75,3 +78,7 @@ export const instrumentClassOf = (type: string): InstrumentClass => INSTRUMENT_C
 export const numberPrefixOf = (type: string): string => NUMBER_PREFIX_BY_TYPE[type] ?? NUMBER_PREFIX_BY_CLASS[instrumentClassOf(type)];
 export const validityMonthsOf = (type: string): number => VALIDITY_MONTHS_BY_TYPE[type] ?? VALIDITY_MONTHS[instrumentClassOf(type)];
 export const typeAllowedFor = (subjectKind: SubjectKind, type: string): boolean => LICENSE_TYPES_BY_SUBJECT[subjectKind]?.includes(type) ?? false;
+
+/** The six accreditation schemes of RFP Domain 7, as the contract knows them; Data Studio's `accreditationCategory` master carries each one's cycle. */
+export const ACCREDITATION_CATEGORY_TYPES = ['COMPASS_CALIBRATION', 'LSA_SERVICING', 'FFA_SERVICING', 'SMALL_VESSEL_SURVEY', 'PEST_CONTROL', 'TOWAGE_CERTIFICATION'] as const;
+export const isAccreditationScheme = (type: string): boolean => (ACCREDITATION_CATEGORY_TYPES as readonly string[]).includes(type);

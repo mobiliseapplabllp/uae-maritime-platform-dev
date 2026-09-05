@@ -1,12 +1,12 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { type PageQuery } from '@maritime/contracts';
-import { CurrentUser, type Principal, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, paged, parsePage, scopeWhere } from '@maritime/service-kit';
+import { CurrentUser, type Principal, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, lookupOptions, paged, parsePage, scopeWhere } from '@maritime/service-kit';
 import { SUBJECT_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, COMPANY_CATEGORIES, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, FACILITY_TYPES, ISPS_STATUS,
-  OBLIGATION_KINDS, OBLIGATION_STATUS, SUBJECT_KINDS, auditApi, directoryDashboard, obligationApi,
+  AUDIT_RESULTS, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, ISPS_STATUS,
+  OBLIGATION_STATUS, SUBJECT_KINDS, auditApi, directoryDashboard, obligationApi,
   type AuditRow, type ObligationRow, type Row,
 } from './directory';
 import { renewalWorkList } from './compliance';
@@ -46,16 +46,22 @@ export class DirectoryController {
     };
   }
 
-  /** The vocabularies the directory screens are built from, and the standing transitions it enforces. */
+  /* The vocabularies the directory screens are built from, and the standing transitions it enforces. The
+   * vocabularies are read from this service's mirror of the Data Studio masters — the same rows the
+   * controllers validate against — so a screen can never offer a value the API would refuse. The statuses
+   * and transitions are state machines and stay in code. */
   @RequirePerm('facilities.view') @Get('meta')
   async meta() {
     const types = await this.pool.query<{ type: string; n: string }>('SELECT jsonb_array_elements_text(types) AS type, count(*) AS n FROM companies GROUP BY 1 ORDER BY count(*) DESC, 1');
     const terminals = await this.pool.query<{ terminal: string; n: string }>("SELECT terminal, count(*) AS n FROM port_facilities WHERE terminal <> '' GROUP BY 1 ORDER BY 1");
+    const master = (category: string) => lookupOptions(this.pool, category);
+    const [categories, facilityTypes, capabilities, obligationKinds, visitTypes, accreditationCategories] = await Promise.all(['companyCategory', 'facilityType', 'facilityCapability', 'obligationKind', 'visitType', 'accreditationCategory'].map(master));
     return {
-      categories: [...COMPANY_CATEGORIES], statuses: [...COMPANY_STATUS], statusTransitions: COMPANY_STATUS_TRANSITIONS,
+      categories: categories.map((o) => o.code), categoryOptions: categories, statuses: [...COMPANY_STATUS], statusTransitions: COMPANY_STATUS_TRANSITIONS,
       auditResults: [...AUDIT_RESULTS], subjectKinds: [...SUBJECT_KINDS],
-      facilityTypes: [...FACILITY_TYPES], facilityStatuses: [...FACILITY_STATUS], ispsStatuses: [...ISPS_STATUS],
-      obligationKinds: [...OBLIGATION_KINDS], obligationStatuses: [...OBLIGATION_STATUS],
+      facilityTypes: facilityTypes.map((o) => o.code), facilityTypeOptions: facilityTypes, facilityCapabilities: capabilities, facilityStatuses: [...FACILITY_STATUS], ispsStatuses: [...ISPS_STATUS],
+      obligationKinds: obligationKinds.map((o) => o.code), obligationKindOptions: obligationKinds, obligationStatuses: [...OBLIGATION_STATUS],
+      visitTypes, accreditationCategories,
       licensedTypes: types.rows.map((r) => ({ type: r.type, count: Number(r.n) })),
       terminals: terminals.rows.map((r) => ({ terminal: r.terminal, count: Number(r.n) })),
       renewalWindowDays: this.env.RENEWAL_WINDOW_DAYS,

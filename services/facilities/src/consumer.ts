@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { NATIONAL_SCOPE, EVENTS, makeEvent, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, enqueue, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, enqueue, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { facilityApi, publishCompany, type CompanyRow, type FacilityRow, type Row } from './directory';
 import { projectSnapshot } from './subjects';
@@ -40,6 +40,7 @@ async function announce(c: PoolClient, env: Env, type: string, data: Row, cause:
 }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
+  if (await applyLookupEvent(c, event)) return; // the masters the directory validates against
   const result = await projectSnapshot(c, event);
   if (!result.kind) return;
   const entity = (result.entity ?? {}) as Row;
@@ -90,7 +91,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   }
 }
 
-export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.companyUpserted)];
+export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.companyUpserted), ...LOOKUP_SUBJECTS];
 
 @Injectable()
 export class FacilitiesConsumer implements OnModuleInit, OnModuleDestroy {

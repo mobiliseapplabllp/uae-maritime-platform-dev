@@ -31,8 +31,8 @@ afterAll(async () => { await app?.close(); });
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
 
 describe('mdm', () => {
-  it('seeds nineteen lookup categories with counts and lists by category', async () => {
-    const cats = await g('/lookups/categories'); expect(cats.body.data).toHaveLength(19); expect(cats.body.data.find((c: { key: string }) => c.key === 'vesselType').count).toBeGreaterThan(5);
+  it('seeds every declared master with counts and lists by category', async () => {
+    const cats = await g('/lookups/categories'); expect(cats.body.data).toHaveLength(48); expect(cats.body.data.every((c: { count: number }) => c.count > 0)).toBe(true); expect(cats.body.data.find((c: { key: string }) => c.key === 'vesselType').count).toBeGreaterThan(5);
     const list = await g('/lookups?category=cargoType&limit=100'); expect(list.body.meta.total).toBeGreaterThan(8); expect(list.body.data[0].category).toBe('cargoType');
   });
   it('creates, updates and soft-deletes lookups with audit, and blocks viewers from writing', async () => {
@@ -43,6 +43,10 @@ describe('mdm', () => {
     const del = await request(server as never).delete(`/lookups/${created.body.data.id}`).set('authorization', admin); expect(del.body.data.softDelete).toBe(true);
     expect((await g(`/lookups/${created.body.data.id}`)).body.data.active).toBe(false);
     expect((await request(server as never).post('/lookups').set('authorization', viewer).send({ category: 'vesselType', code: 'X', label: 'x' })).status).toBe(403);
+    // every mirror applies the change from the event alone: the entry rides on it, with the category's live count
+    const px = new Pool({ connectionString: URL }); const events = (await px.query("SELECT payload FROM outbox WHERE payload->>'type' = 'mdm.lookup.changed' ORDER BY id")).rows.map((r) => r.payload as { data: Record<string, any> }); await px.end();
+    const made = events.find((e) => e.data.change === 'created' && e.data.code === 'LNG'); expect(made?.data.lookup).toMatchObject({ category: 'vesselType', code: 'LNG', label: 'LNG Carrier', labelAr: 'ناقلة غاز', active: true }); expect(made?.data.count).toBeGreaterThan(5);
+    const gone = events.find((e) => e.data.change === 'deactivated' && e.data.code === 'LNG'); expect(gone?.data.lookup.active).toBe(false);
   });
   it('masks secrets in settings, keeps them on masked round-trips and merges module settings over defaults', async () => {
     await request(server as never).put('/settings/smtp').set('authorization', admin).send({ password: 'super-secret' });

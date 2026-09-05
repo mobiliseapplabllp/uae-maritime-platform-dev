@@ -17,5 +17,6 @@ export * from './telemetry';
 export * from './cache';
 export * from './search';
 export * from './settings-client';
+export * from './lookups';
 export * from './kit.module';
 export * from './app';

@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, STREAM_PREFIX, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { KIT_BUS, KIT_ENV, KIT_POOL, enqueue, eventFromContext, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, enqueue, eventFromContext, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { requestToApi, type RequestRow } from './repo';
 
@@ -45,7 +45,7 @@ export async function cacheRuleSet(c: PoolClient, d: Record<string, unknown>): P
 export class WorkflowConsumers implements OnModuleInit, OnModuleDestroy {
   private sub?: Subscription;
   constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env) {}
-  async onModuleInit() { this.sub = await this.bus.subscribe('workflow-consumers', [subjectFor(EVENTS.scheduler.sweepSla), subjectFor(EVENTS.instruments.issued), subjectFor(EVENTS.rules.published), `${STREAM_PREFIX}.${EVENTS.scheduler.slaBreached}`], (e) => this.handle(e)); }
+  async onModuleInit() { this.sub = await this.bus.subscribe('workflow-consumers', [subjectFor(EVENTS.scheduler.sweepSla), subjectFor(EVENTS.instruments.issued), subjectFor(EVENTS.rules.published), `${STREAM_PREFIX}.${EVENTS.scheduler.slaBreached}`, ...LOOKUP_SUBJECTS], (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
   async handle(event: EventEnvelope) {
     const d = (event.data ?? {}) as Record<string, unknown>;
@@ -53,6 +53,7 @@ export class WorkflowConsumers implements OnModuleInit, OnModuleDestroy {
       if (event.type === EVENTS.scheduler.sweepSla) await sweepSla(c, this.env.SERVICE_NAME);
       else if (event.type === EVENTS.instruments.issued) await linkInstrument(c, this.env.SERVICE_NAME, d);
       else if (event.type === EVENTS.rules.published) await cacheRuleSet(c, d);
+      else if (event.type === EVENTS.mdm.lookupChanged) await applyLookupEvent(c, event); // the masters a select validates against
     });
   }
 }

@@ -1,12 +1,12 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
-import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
+import { EVENTS, typeAllowedFor, type PageQuery } from '@maritime/contracts';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
 import { COMPANY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, COMPANY_CATEGORIES, COMPANY_STATUS, OBLIGATION_KINDS, auditApi, canChangeStatus, companyApi, obligationApi, ratingFrom,
+  AUDIT_RESULTS, COMPANY_STATUS, auditApi, canChangeStatus, companyApi, obligationApi, ratingFrom,
   publishCompany, publishCompanyDeleted, type CompanyRow,
 } from './directory';
 import { auditsFor, fullCompany, instrumentsFor, loadCompany, obligationsFor } from './read';
@@ -22,7 +22,7 @@ import { clearObligation, raiseObligation, recordAudit, renewalWorkList } from '
 const text = (max: number) => z.string().trim().max(max);
 const body = z.object({
   id: text(80).optional(), code: text(20).min(2), name: text(160).min(2), nameAr: text(160).nullish(),
-  category: z.enum(COMPANY_CATEGORIES), types: z.array(text(60)).max(20).default([]),
+  category: text(60).min(1), types: z.array(text(60)).max(20).default([]),
   contactName: text(120).default(''), contactEmail: text(200).default(''), contactPhone: text(40).default(''),
   taxId: text(60).default(''), registrationNo: text(60).default(''), address: text(300).default(''), city: text(120).default(''),
   status: z.enum(COMPANY_STATUS).optional(), rating: z.coerce.number().min(0).max(5).optional(),
@@ -34,9 +34,11 @@ const auditBody = z.object({
   date: z.union([text(40), z.null()]).optional(), auditor: text(120).default(''), auditorId: text(80).nullish(),
   result: z.enum(AUDIT_RESULTS), scope: text(200).default(''), remarks: text(2000).default(''), instrumentId: text(80).nullish(), instrumentNo: text(60).default(''),
 });
-const obligationBody = z.object({ kind: z.enum(OBLIGATION_KINDS), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
+const obligationBody = z.object({ kind: text(40).min(1), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
 const clearBody = z.object({ note: text(600).default('') });
 
+/** What a company is licensed for is a list of instrument types; the register of those is the contract's, since each carries its own numbering and survey regime. */
+const assertTypes = (types: string[]) => { const bad = types.filter((t) => !typeAllowedFor('COMPANY', t)); if (bad.length) throw badRequest(`Unknown company instrument type(s): ${bad.join(', ')}`, { allowed: 'GET /licenses/meta' }); };
 const SORT: Record<string, string> = { code: 'code', name: 'name', category: 'category', status: 'status', rating: 'rating', onboardedAt: 'onboarded_at', createdAt: 'created_at', updatedAt: 'updated_at' };
 
 @Controller('facilities/companies')
@@ -95,6 +97,8 @@ export class CompaniesController {
   @RequirePerm('facilities.manage') @Post()
   async create(@Body(zod(body)) b: z.infer<typeof body>, @CurrentUser() user?: Principal) {
     return withTx(this.pool, async (c) => {
+      await assertLookup(c, 'companyCategory', b.category, 'Category');
+      assertTypes(b.types);
       const dupe = await c.query('SELECT id FROM companies WHERE upper(code) = upper($1)', [b.code]);
       if (dupe.rowCount) throw conflict(`A company with code ${b.code.toUpperCase()} is already on the directory`);
       if (b.id) { const clash = await c.query('SELECT id FROM companies WHERE id = $1', [b.id]); if (clash.rowCount) throw conflict('That company is already on the directory'); }
@@ -115,6 +119,8 @@ export class CompaniesController {
   async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const before = await loadCompany(c, id, user.scope, true);
+      if (b.category !== undefined) await assertLookup(c, 'companyCategory', b.category, 'Category');
+      if (b.types !== undefined) assertTypes(b.types);
       if (b.status && b.status !== before.status) throw conflict('A company\'s standing is changed through its status endpoint, with the reason it was changed for');
       if (b.code && b.code.toUpperCase() !== before.code.toUpperCase()) {
         const dupe = await c.query('SELECT id FROM companies WHERE upper(code) = upper($1) AND id <> $2', [b.code, before.id]);
@@ -182,6 +188,7 @@ export class CompaniesController {
   async raise(@Param('id') id: string, @Body(zod(obligationBody)) b: z.infer<typeof obligationBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const company = await loadCompany(c, id, user.scope, true);
+      await assertLookup(c, 'obligationKind', b.kind, 'Obligation kind');
       const row = await raiseObligation(c, this.env, this.audit, { kind: 'COMPANY', id: company.id, name: company.name }, b, user);
       return obligationApi(row);
     });

@@ -15,6 +15,8 @@ export const optionSchema = z.union([z.string().max(200), z.object({ value: z.st
 export const fieldSchema = z.object({
   key: z.string().regex(IDENT, 'field keys are identifiers'), label: z.string().min(1).max(200), labelAr: ar,
   type: z.enum(FIELD_TYPES).default('text'), required: z.boolean().default(false), options: z.array(optionSchema).default([]),
+  /** A select's options come from a Data Studio master rather than an inline list: the category key. The runtime validates against its mirror and the catalogue resolves the labels. */
+  lookup: z.string().regex(/^[a-z][A-Za-z0-9]*$/, 'lookup names a master category').max(60).optional().nullable(),
   validation: z.object({ min: z.number().optional(), max: z.number().optional(), minLength: z.number().int().optional(), maxLength: z.number().int().optional(), pattern: z.string().max(200).optional() }).default({}),
   visibleWhen: expr.optional(), section: z.string().max(80).default('Application'), help: z.string().max(500).default(''), helpAr: ar, multiline: z.boolean().default(false), entityKind: z.string().max(40).optional().nullable(),
 });
@@ -56,7 +58,9 @@ export function validateContent(c: DefinitionContent, opts: { maxDepth?: number 
   c.form.fields.forEach((f, i) => {
     const at = `form.fields[${i}]`;
     if (fieldKeys.has(f.key)) err(at, `duplicate field key "${f.key}"`); fieldKeys.add(f.key);
-    if ((f.type === 'select' || f.type === 'multiselect') && !f.options.length) err(at, `field "${f.key}" needs options`);
+    if ((f.type === 'select' || f.type === 'multiselect') && !f.options.length && !f.lookup) err(at, `field "${f.key}" needs options or a lookup`);
+    if (f.lookup && f.type !== 'select' && f.type !== 'multiselect') warn(at, `field "${f.key}": lookup is only read by select and multiselect fields`);
+    if (f.lookup && f.options.length) warn(at, `field "${f.key}": both a lookup and inline options are declared; the lookup is used`);
     if (f.type === 'entity' && !f.entityKind) warn(at, `field "${f.key}" has no entityKind`);
     checkExpr(f.visibleWhen, `${at}.visibleWhen`);
   });

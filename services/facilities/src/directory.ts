@@ -22,7 +22,9 @@ export const iso = (v: Date | string | null | undefined): string | null => (v ==
 export const dateOnly = (v: Date | string | null | undefined): string | null => (v == null ? null : new Date(v).toISOString().slice(0, 10));
 export const num = (v: unknown): number | null => (v == null || v === '' ? null : Number(v));
 
-export const COMPANY_CATEGORIES = ['AGENCY', 'TERMINAL_OPERATOR', 'SERVICE_PROVIDER', 'SUPPLIER', 'INSTITUTE'] as const;
+/* Company categories, facility types, capabilities, visit types and obligation kinds are Data Studio masters
+ * (`companyCategory`, `facilityType`, `facilityCapability`, `visitType`, `obligationKind`): the controllers
+ * validate against this service's mirror of them, so a clerk can add one without a release. */
 export const COMPANY_STATUS = ['ACTIVE', 'SUSPENDED', 'BLACKLISTED', 'INACTIVE'] as const;
 export type CompanyStatus = (typeof COMPANY_STATUS)[number];
 /* Standing moves one step at a time and every step away from good standing carries a reason.
@@ -43,12 +45,10 @@ export const classLabel = (k: string | null | undefined) => { const c = k || 'LI
 export const AUDIT_RESULTS = ['SATISFACTORY', 'OBSERVATIONS', 'NON_CONFORMITY'] as const;
 export type AuditResult = (typeof AUDIT_RESULTS)[number];
 export const SUBJECT_KINDS = ['COMPANY', 'FACILITY'] as const;
-export const FACILITY_TYPES = ['BERTH', 'TERMINAL', 'JETTY', 'YARD', 'SPM', 'ANCHORAGE'] as const;
 export const FACILITY_STATUS = ['OPERATIONAL', 'MAINTENANCE', 'CLOSED'] as const;
 /* ISPS standing of a port facility: a Statement of Compliance in force, an interim one, one that has
  * run out, one withdrawn by the administration, or a facility the Code does not reach. */
 export const ISPS_STATUS = ['COMPLIANT', 'PROVISIONAL', 'EXPIRED', 'SUSPENDED', 'NOT_APPLICABLE'] as const;
-export const OBLIGATION_KINDS = ['AUDIT_FINDING', 'RENEWAL', 'CONDITION', 'DOCUMENT'] as const;
 export const OBLIGATION_STATUS = ['OPEN', 'CLEARED'] as const;
 
 export interface CompanyRow {

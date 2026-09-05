@@ -23,7 +23,7 @@ export default function MastersHub() {
   const groups = [...new Set([...MASTERS, ...DEDICATED].map((m) => m.group))];
   return (
     <>
-      <PageHeader icon={HubRoundedIcon} iconColor="#5A6B78" title="Data Studio" sub="Every configuration master behind the platform — geography, commercial, marine, assets, organisation and compliance reference data" />
+      <PageHeader icon={HubRoundedIcon} iconColor="#5A6B78" title="Data Studio" sub={`Every vocabulary the platform reads from data rather than code — ${MASTERS.length} masters across geography, marine, registry, seafarers, legislation, industry and compliance`} />
       {groups.map((g) => (
         <Box key={g} sx={{ mb: 3 }}>
           <Typography component="h2" sx={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'text.secondary', mb: 1.25 }}>{g}</Typography>

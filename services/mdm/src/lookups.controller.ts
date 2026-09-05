@@ -14,6 +14,14 @@ const SORT: Record<string, string> = { code: 'code', label: 'label', category: '
 export class LookupsController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient, private readonly audit: AuditClient) {}
 
+  /* What every mirror needs to apply the change without calling back: the entry itself, and the category's
+   * live count for the read models. A consumer that only knew the code would have to ask for the rest, and
+   * a master edit would then fan out into as many HTTP calls as there are services. */
+  private async changed(c: Pool | import('pg').PoolClient, row: Row, change: 'created' | 'updated' | 'deactivated' | 'deleted') {
+    const count = await c.query<{ n: string }>('SELECT count(*) AS n FROM lookups WHERE category = $1 AND active', [row.category]);
+    return { category: row.category, code: row.code, change, count: Number(count.rows[0]?.n ?? 0), lookup: { category: row.category, code: row.code, label: row.label, labelAr: row.label_ar, meta: row.meta, active: row.active } };
+  }
+
   @RequirePerm('masters.view') @Get('categories')
   async categories() {
     const counts = await this.pool.query<{ category: string; n: string }>('SELECT category, count(*) AS n FROM lookups GROUP BY category');
@@ -41,7 +49,7 @@ export class LookupsController {
     return withTx(this.pool, async (c) => {
       const r = await c.query<Row>('INSERT INTO lookups(category, code, label, label_ar, meta, active) VALUES ($1, upper($2), $3, $4, $5, $6) RETURNING *', [body.category, body.code, body.label, body.labelAr ?? null, JSON.stringify(body.meta ?? {}), body.active]);
       await this.audit.record(c, { action: 'CREATE', entity: 'Lookup', entityId: r.rows[0].id, entityLabel: `${body.category}/${r.rows[0].code}`, after: toApi(r.rows[0]) });
-      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, { category: body.category, code: r.rows[0].code, change: 'created' }));
+      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, await this.changed(c, r.rows[0], 'created')));
       return toApi(r.rows[0]);
     });
   }
@@ -53,7 +61,7 @@ export class LookupsController {
       const r = await c.query<Row>('UPDATE lookups SET label = $1, label_ar = $2, meta = $3, active = $4, code = upper($5), updated_at = now() WHERE id = $6 RETURNING *',
         [body.label ?? b.label, body.labelAr === undefined ? b.label_ar : body.labelAr, JSON.stringify(body.meta ?? b.meta), body.active ?? b.active, body.code ?? b.code, id]);
       await this.audit.record(c, { action: 'UPDATE', entity: 'Lookup', entityId: id, entityLabel: `${b.category}/${r.rows[0].code}`, before: toApi(b), after: toApi(r.rows[0]) });
-      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, { category: b.category, code: r.rows[0].code, change: 'updated' }));
+      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, await this.changed(c, r.rows[0], 'updated')));
       return toApi(r.rows[0]);
     });
   }
@@ -65,7 +73,7 @@ export class LookupsController {
       if (masters.allowHardDelete) await c.query('DELETE FROM lookups WHERE id = $1', [id]);
       else await c.query('UPDATE lookups SET active = false, updated_at = now() WHERE id = $1', [id]);
       await this.audit.record(c, { action: masters.allowHardDelete ? 'DELETE' : 'DEACTIVATE', entity: 'Lookup', entityId: id, entityLabel: `${before.rows[0].category}/${before.rows[0].code}`, before: toApi(before.rows[0]) });
-      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, { category: before.rows[0].category, code: before.rows[0].code, change: masters.allowHardDelete ? 'deleted' : 'deactivated' }));
+      await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.mdm.lookupChanged, await this.changed(c, { ...before.rows[0], active: false }, masters.allowHardDelete ? 'deleted' : 'deactivated')));
       return { deleted: true, softDelete: !masters.allowHardDelete };
     });
   }

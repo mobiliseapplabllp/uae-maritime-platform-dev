@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { buildWorld, type World, type WorldServiceDefinition, type WorldServiceRequest } from '@maritime/world';
 import { getJurisdiction, instrumentClassOf, validityMonthsOf } from '@maritime/contracts';
-import { createDb, runMigrations, withTx } from '@maritime/service-kit';
+import { createDb, runMigrations, seedLookupMirror, withTx } from '@maritime/service-kit';
 import { env } from './env';
 import { parseContent, validateContent, type DefinitionContent, type FieldType } from './schema';
 import { defaultWorkflow, CATEGORY_AR, OWNER_MODULE_BY_DOMAIN } from './defaults';
@@ -15,7 +15,7 @@ const eligibilityFor = (d: WorldServiceDefinition) => (d.category === 'Registrat
 export function contentFor(d: WorldServiceDefinition, currency: string): DefinitionContent {
   const stage = Object.fromEntries(d.stages.map((s) => [s.key, s.slaDays]));
   return parseContent({
-    form: { fields: d.formFields.map((f) => ({ key: f.key, label: f.label, labelAr: f.labelAr ?? null, type: FIELD_TYPE[f.type] ?? 'text', required: f.required, options: f.options, help: f.help, multiline: f.type === 'textarea', section: 'Application' })), sections: [{ key: 'Application', label: 'Application details', labelAr: 'بيانات الطلب' }] },
+    form: { fields: d.formFields.map((f) => ({ key: f.key, label: f.label, labelAr: f.labelAr ?? null, type: FIELD_TYPE[f.type] ?? 'text', required: f.required, options: f.options, lookup: f.lookup ?? null, help: f.help, multiline: f.type === 'textarea', section: 'Application' })), sections: [{ key: 'Application', label: 'Application details', labelAr: 'بيانات الطلب' }] },
     documents: d.requiredDocuments.map((x) => ({ code: x.key, label: x.label, labelAr: x.labelAr ?? null, required: x.mandatory, docType: 'PDF', acceptedFormats: x.acceptedFormats })),
     fees: { ruleSetKey: d.feeLines.length ? `fee.${d.key}` : null, lines: d.feeLines.map((l) => ({ code: l.code, description: l.label, descriptionAr: l.labelAr ?? null, amount: l.amount, taxable: true })), currency },
     sla: { days: d.slaDays, ruleSetKey: null },
@@ -44,6 +44,8 @@ export async function seedWorkflow(databaseUrl: string, profile?: string) {
   const publishedAt = new Date(new Date(world.histStart).getTime() + 30 * D);
   const counts = await withTx(pool, async (c) => {
     let definitions = 0; let versions = 0; let drafts = 0; let requests = 0; let ruleSets = 0;
+    // the masters the runtime validates selects against, usable before the first mdm event arrives
+    const lookups = await seedLookupMirror(c, world.lookups);
     const idByCode = new Map<string, string>();
     for (const d of world.serviceDefinitions) {
       const content = contentFor(d, currency);

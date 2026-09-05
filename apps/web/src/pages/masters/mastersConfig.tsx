@@ -1,4 +1,7 @@
-/* One registry drives the whole Data Studio: every configuration master with its icon, columns, form and meta mapping. */
+/* One registry drives the whole Data Studio. The masters themselves — their keys, labels, groups and the meta
+ * fields each one carries — come from the contract, which is what the mdm service serves and validates; this
+ * file only adds what a screen needs and a service does not: an icon and a colour per master. A category the
+ * contract gains is a card here on the next build, with a working editor, without a line of screen code. */
 import type { SvgIconComponent } from '@mui/icons-material';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import MapRoundedIcon from '@mui/icons-material/MapRounded';
@@ -19,34 +22,52 @@ import AnchorRoundedIcon from '@mui/icons-material/AnchorRounded';
 import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
 import RuleRoundedIcon from '@mui/icons-material/RuleRounded';
 import GppMaybeRoundedIcon from '@mui/icons-material/GppMaybeRounded';
+import GavelRoundedIcon from '@mui/icons-material/GavelRounded';
+import CorporateFareRoundedIcon from '@mui/icons-material/CorporateFareRounded';
+import WorkspacePremiumRoundedIcon from '@mui/icons-material/WorkspacePremiumRounded';
+import SchoolRoundedIcon from '@mui/icons-material/SchoolRounded';
+import AssignmentIndRoundedIcon from '@mui/icons-material/AssignmentIndRounded';
+import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
+import ExploreRoundedIcon from '@mui/icons-material/ExploreRounded';
+import RssFeedRoundedIcon from '@mui/icons-material/RssFeedRounded';
+import ListAltRoundedIcon from '@mui/icons-material/ListAltRounded';
+import { LOOKUP_CATEGORIES, type LookupMetaField } from '@maritime/contracts';
 import type { Column, FieldSpec } from '../../types';
 
 export interface LookupRow { id: string; category: string; code: string; label: string; labelAr?: string | null; meta?: Record<string, any>; active: boolean }
-export interface MasterDef { key: string; name: string; icon: SvgIconComponent; color: string; desc: string; group: string; extraColumns?: Column<LookupRow>[]; metaFields?: FieldSpec[] }
-const metaCol = (label: string, path: string): Column<LookupRow> => ({ key: `meta.${path}`, label, render: (r) => r.meta?.[path] ?? '—', exportValue: (r) => r.meta?.[path] ?? '' });
-const sel = (values: string[]) => values.map((v) => ({ value: v, label: v }));
+export interface MasterDef { key: string; name: string; nameAr?: string; icon: SvgIconComponent; color: string; desc: string; group: string; system?: boolean; extraColumns?: Column<LookupRow>[]; metaFields?: FieldSpec[] }
 
-export const MASTERS: MasterDef[] = [
-  { key: 'country', name: 'Countries', icon: PublicRoundedIcon, color: '#0B74B0', desc: 'Trade-lane and registry countries', group: 'Geography' },
-  { key: 'state', name: 'Emirates / States', icon: MapRoundedIcon, color: '#0B74B0', desc: 'Administrative regions in the operational footprint', group: 'Geography', extraColumns: [metaCol('Country', 'country')], metaFields: [{ name: 'country', label: 'Country code', placeholder: 'AE' }] },
-  { key: 'city', name: 'Cities', icon: LocationCityRoundedIcon, color: '#0B74B0', desc: 'Cities used across addresses and offices', group: 'Geography', extraColumns: [metaCol('Region', 'state'), metaCol('Country', 'country')], metaFields: [{ name: 'state', label: 'Region code', placeholder: 'DXB' }, { name: 'country', label: 'Country code', placeholder: 'AE' }] },
-  { key: 'port', name: 'Ports (UN/LOCODE)', icon: AnchorRoundedIcon, color: '#06737E', desc: 'Trade-lane ports with UN/LOCODEs', group: 'Geography', extraColumns: [metaCol('Country', 'country')], metaFields: [{ name: 'country', label: 'Country' }] },
-  { key: 'uom', name: 'Units of Measure', icon: StraightenRoundedIcon, color: '#5A6B78', desc: 'Quantity units used in cargo, tariffs and services', group: 'Commercial' },
-  { key: 'currency', name: 'Currencies', icon: PaymentsRoundedIcon, color: '#BD3861', desc: 'Billing currencies', group: 'Commercial', extraColumns: [metaCol('Symbol', 'symbol')], metaFields: [{ name: 'symbol', label: 'Symbol', placeholder: 'AED' }] },
-  { key: 'agent', name: 'Shipping Agents', icon: SupportAgentRoundedIcon, color: '#2C6E52', desc: 'Licensed boarding agents with tax registration', group: 'Commercial', extraColumns: [metaCol('Address', 'address'), metaCol('Tax id', 'taxId')], metaFields: [{ name: 'address', label: 'Address', cols: 12 }, { name: 'taxId', label: 'Tax registration (sample)' }] },
-  { key: 'vesselType', name: 'Vessel Types', icon: DirectionsBoatFilledRoundedIcon, color: '#3B6FB6', desc: 'Registry vessel classifications', group: 'Marine' },
-  { key: 'cargoType', name: 'Cargo Types', icon: Inventory2RoundedIcon, color: '#8A5810', desc: 'Commodity groups with units and MT factors', group: 'Marine', extraColumns: [metaCol('Group', 'group'), metaCol('Unit', 'unit'), metaCol('MT factor', 'mtFactor')],
-    metaFields: [{ name: 'group', label: 'Statistical group', type: 'select', options: sel(['container', 'dryBulk', 'liquid', 'breakBulk', 'roro']) }, { name: 'unit', label: 'Unit', placeholder: 'MT / TEU / UNITS' }, { name: 'mtFactor', label: 'MT factor', type: 'number' }] },
-  { key: 'equipmentType', name: 'Equipment Types', icon: PrecisionManufacturingRoundedIcon, color: '#75479C', desc: 'Classes of cargo-handling and response equipment', group: 'Assets' },
-  { key: 'equipment', name: 'Equipment & Assets', icon: ConstructionRoundedIcon, color: '#75479C', desc: 'The asset register — cranes, conveyors, response kit', group: 'Assets', extraColumns: [metaCol('Type', 'type'), metaCol('Terminal', 'terminal'), metaCol('Status', 'status'), metaCol('Make', 'make')],
-    metaFields: [{ name: 'type', label: 'Equipment type code', placeholder: 'STS' }, { name: 'terminal', label: 'Terminal / location' }, { name: 'status', label: 'Status', type: 'select', options: sel(['OPERATIONAL', 'MAINTENANCE', 'OUT_OF_SERVICE']) }, { name: 'make', label: 'Make / model' }] },
-  { key: 'department', name: 'Departments', icon: ApartmentRoundedIcon, color: '#0A2239', desc: 'Organisation departments', group: 'Organisation' },
-  { key: 'designation', name: 'Designations', icon: BadgeRoundedIcon, color: '#0A2239', desc: 'Designations mapped to departments', group: 'Organisation', extraColumns: [metaCol('Department', 'department')], metaFields: [{ name: 'department', label: 'Department' }] },
-  { key: 'shift', name: 'Shifts', icon: ScheduleRoundedIcon, color: '#0A2239', desc: 'Working shifts for terminal and marine crews', group: 'Organisation', extraColumns: [metaCol('Start', 'start'), metaCol('End', 'end')], metaFields: [{ name: 'start', label: 'Start (HH:MM)' }, { name: 'end', label: 'End (HH:MM)' }] },
-  { key: 'documentType', name: 'Document Types', icon: FolderRoundedIcon, color: '#8A5A2B', desc: 'Attachment classes for incidents and compliance', group: 'Compliance' },
-  { key: 'incidentArea', name: 'Incident Locations', icon: PlaceRoundedIcon, color: '#B3452E', desc: 'Named areas used when logging incidents', group: 'Compliance' },
-  { key: 'deficiencyCode', name: 'Deficiency Codes', icon: RuleRoundedIcon, color: '#8A5810', desc: 'PSC deficiency codes with categories', group: 'Compliance', extraColumns: [metaCol('Category', 'category')], metaFields: [{ name: 'category', label: 'Category' }] },
-  { key: 'actionCode', name: 'PSC Action Codes', icon: GppMaybeRoundedIcon, color: '#8A5810', desc: 'Action codes applied to survey findings', group: 'Compliance' },
-  { key: 'holiday', name: 'Holiday Calendar', icon: EventRoundedIcon, color: '#2C6E52', desc: 'Gazetted holidays — marine operations stay 24×365', group: 'Organisation', extraColumns: [metaCol('Date', 'date')], metaFields: [{ name: 'date', label: 'Date', type: 'date' }, { name: 'working', label: 'Working note', cols: 12 }] },
-];
+type Look = { icon: SvgIconComponent; color: string };
+const BY_KEY: Record<string, Look> = {
+  country: { icon: PublicRoundedIcon, color: '#0B74B0' }, state: { icon: MapRoundedIcon, color: '#0B74B0' }, city: { icon: LocationCityRoundedIcon, color: '#0B74B0' }, port: { icon: AnchorRoundedIcon, color: '#06737E' },
+  uom: { icon: StraightenRoundedIcon, color: '#5A6B78' }, currency: { icon: PaymentsRoundedIcon, color: '#BD3861' }, agent: { icon: SupportAgentRoundedIcon, color: '#2C6E52' },
+  vesselType: { icon: DirectionsBoatFilledRoundedIcon, color: '#3B6FB6' }, cargoType: { icon: Inventory2RoundedIcon, color: '#8A5810' }, recognisedOrganisation: { icon: WorkspacePremiumRoundedIcon, color: '#3B6FB6' }, voyageArea: { icon: ExploreRoundedIcon, color: '#3B6FB6' },
+  equipmentType: { icon: PrecisionManufacturingRoundedIcon, color: '#75479C' }, equipment: { icon: ConstructionRoundedIcon, color: '#75479C' },
+  department: { icon: ApartmentRoundedIcon, color: '#0A2239' }, designation: { icon: BadgeRoundedIcon, color: '#0A2239' }, shift: { icon: ScheduleRoundedIcon, color: '#0A2239' }, holiday: { icon: EventRoundedIcon, color: '#2C6E52' },
+  documentType: { icon: FolderRoundedIcon, color: '#8A5A2B' }, incidentArea: { icon: PlaceRoundedIcon, color: '#B3452E' }, deficiencyCode: { icon: RuleRoundedIcon, color: '#8A5810' }, actionCode: { icon: GppMaybeRoundedIcon, color: '#8A5810' }, inspectionRegime: { icon: FactCheckRoundedIcon, color: '#8A5810' },
+  accreditationCategory: { icon: WorkspacePremiumRoundedIcon, color: '#2C6E52' }, visitType: { icon: FactCheckRoundedIcon, color: '#2C6E52' }, companyCategory: { icon: CorporateFareRoundedIcon, color: '#2C6E52' },
+  seafarerRank: { icon: AssignmentIndRoundedIcon, color: '#75479C' }, metProgramme: { icon: SchoolRoundedIcon, color: '#75479C' }, metInstitutionType: { icon: SchoolRoundedIcon, color: '#75479C' }, imoSource: { icon: RssFeedRoundedIcon, color: '#5A6B78' },
+};
+const BY_GROUP: Record<string, Look> = {
+  Geography: { icon: PublicRoundedIcon, color: '#0B74B0' }, Commercial: { icon: PaymentsRoundedIcon, color: '#BD3861' }, Marine: { icon: DirectionsBoatFilledRoundedIcon, color: '#3B6FB6' },
+  'Ship Registry': { icon: AnchorRoundedIcon, color: '#06737E' }, 'Seafarers & MET': { icon: BadgeRoundedIcon, color: '#75479C' }, Legislation: { icon: GavelRoundedIcon, color: '#5A6B78' },
+  Industry: { icon: CorporateFareRoundedIcon, color: '#2C6E52' }, Compliance: { icon: RuleRoundedIcon, color: '#8A5810' }, Assets: { icon: ConstructionRoundedIcon, color: '#75479C' }, Organisation: { icon: ApartmentRoundedIcon, color: '#0A2239' },
+};
+const FALLBACK: Look = { icon: ListAltRoundedIcon, color: '#5A6B78' };
+
+const show = (v: unknown) => (typeof v === 'boolean' ? (v ? 'Yes' : 'No') : v == null || v === '' ? '—' : String(v));
+const metaCol = (label: string, path: string): Column<LookupRow> => ({ key: `meta.${path}`, label, render: (r) => show(r.meta?.[path]), exportValue: (r) => (r.meta?.[path] == null ? '' : String(r.meta?.[path])) });
+const WIDE = new Set(['address', 'working', 'url', 'reminderDays']);
+const toField = (m: LookupMetaField): FieldSpec => ({
+  name: m.key, label: m.label, placeholder: m.placeholder, cols: WIDE.has(m.key) ? 12 : undefined,
+  type: m.type === 'boolean' ? 'switch' : m.type === 'select' ? 'select' : m.type === 'number' ? 'number' : m.type === 'date' ? 'date' : 'text',
+  options: m.type === 'select' ? (m.options ?? []).map((v) => ({ value: v, label: v })) : undefined,
+});
+
+export const MASTERS: MasterDef[] = LOOKUP_CATEGORIES.map((c) => ({
+  key: c.key, name: c.label, nameAr: c.labelAr, desc: c.desc ?? '', group: c.group, system: c.system,
+  ...(BY_KEY[c.key] ?? BY_GROUP[c.group] ?? FALLBACK),
+  extraColumns: (c.metaFields ?? []).slice(0, 4).map((m) => metaCol(m.label, m.key)),
+  metaFields: (c.metaFields ?? []).map(toField),
+}));
 export const masterByKey = (key?: string) => MASTERS.find((m) => m.key === key);

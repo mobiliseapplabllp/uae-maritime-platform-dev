@@ -1,11 +1,11 @@
-import { Controller, Get, Inject } from '@nestjs/common';
+import { Controller, Get, Inject, Param } from '@nestjs/common';
 import type { Pool, QueryResultRow } from 'pg';
 import { REQUEST_OPEN_STATUS, getJurisdiction } from '@maritime/contracts';
-import { KIT_ENV, KIT_POOL, RequirePerm, getContext } from '@maritime/service-kit';
+import { KIT_ENV, KIT_POOL, RequirePerm, getContext, lookupOptions, notFound } from '@maritime/service-kit';
 import type { Env } from './env';
 import { CATEGORY_AR, CATEGORY_ORDER } from './defaults';
-import type { DefinitionContent } from './schema';
-import type { DefinitionRow } from './repo';
+import type { DefinitionContent, FormField } from './schema';
+import { contentOf, definitionToApi, loadDefinition, loadPublished, type DefinitionRow } from './repo';
 
 export const D = 86_400_000;
 export type Tone = 'default' | 'success' | 'warning' | 'error' | 'info';
@@ -62,6 +62,23 @@ export class CatalogueController {
       })),
     }));
     return { total: r.rows.length, autoApprovable: r.rows.filter((d) => d.auto_approvable).length, environment: this.env.RUNTIME_ENVIRONMENT, currency: j.currency.code, categories };
+  }
+  /* One service as an applicant's screen renders it: the live version's form with every master-backed select
+   * resolved to its options from the runtime's own mirror, the document checklist, the fee lines and the SLA.
+   * Options come back in both languages so the client picks, rather than the server guessing the reader. */
+  @RequirePerm('services.view') @Get('catalogue/:key')
+  async entry(@Param('key') key: string) {
+    const d = await loadDefinition(this.pool, key);
+    const v = await loadPublished(this.pool, d.id, this.env.RUNTIME_ENVIRONMENT);
+    if (!v || d.status !== 'PUBLISHED') throw notFound(`Service ${key} is not published in ${this.env.RUNTIME_ENVIRONMENT}`);
+    const content = contentOf(v);
+    const fields = await Promise.all(content.form.fields.map((f) => this.resolveField(f)));
+    return { ...definitionToApi(d), version: v.version, environment: v.environment, form: { ...content.form, fields }, documents: content.documents, fees: content.fees, sla: content.sla, outputs: content.outputs };
+  }
+  private async resolveField(f: FormField) {
+    if (!f.lookup) return f;
+    const options = (await lookupOptions(this.pool, f.lookup)).map((o) => ({ value: o.code, label: o.label, labelAr: o.labelAr ?? null }));
+    return { ...f, options, optionsFrom: f.lookup };
   }
   @RequirePerm('services.view') @Get('dashboard')
   async dashboard() {

@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { inspectionApi, publishInspection, type FindingRow, type InspectionRow, type Row } from './inspections';
 import { findingApi } from './inspections';
@@ -22,6 +22,7 @@ async function findingsOf(c: PoolClient, id: string) {
 }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
+  if (await applyLookupEvent(c, event)) return; // deficiency codes, action codes and regimes
   const relevant = await projectSnapshot(c, event);
   if (!relevant) return;
   const d = (event.data ?? {}) as Row;
@@ -49,7 +50,7 @@ export async function snapshotOf(c: PoolClient, id: string) {
 }
 
 export const SUBJECTS = [
-  subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.vesselUpserted),
+  subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.vesselUpserted), ...LOOKUP_SUBJECTS,
 ];
 
 @Injectable()

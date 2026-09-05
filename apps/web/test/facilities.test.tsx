@@ -99,6 +99,12 @@ const cards = [
   { label: 'Audits logged', value: 128, sub: 'annual safety audits', tone: 'default' },
 ];
 const registerRoutes = { '/stats/facilities': ok({ cards }), '/licenses': ok([issued, application], { total: 2 }), '/licenses/meta': ok(meta) };
+/* The company categories as Data Studio serves them: the directory's column, filter and form read this master rather than a list in the screen. */
+const categoryMaster = ok([
+  { id: 'k1', category: 'companyCategory', code: 'AGENCY', label: 'Shipping agency', labelAr: 'وكالة ملاحية', active: true },
+  { id: 'k2', category: 'companyCategory', code: 'SUPPLIER', label: 'Supplier', labelAr: 'مورّد', active: true },
+  { id: 'k3', category: 'companyCategory', code: 'RETIRED', label: 'Retired category', labelAr: null, active: false },
+]);
 const facilityAt = (id: string) => wrap(<Routes><Route path="/facilities/:id" element={<FacilityDetail />} /></Routes>, `/facilities/${id}`);
 
 describe('Port companies directory', () => {
@@ -106,14 +112,14 @@ describe('Port companies directory', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('lists the directory with the jurisdiction tax label on the column', async () => {
-    mockGet({ '/stats/facilities': ok({ cards }), '/companies': ok([agency, supplier], { total: 2 }) });
+    mockGet({ '/stats/facilities': ok({ cards }), '/companies': ok([agency, supplier], { total: 2 }), '/lookups': categoryMaster });
     wrap(<CompaniesPage />);
     expect(await screen.findByText('Gulf Coast Agencies (sample)')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Port companies' })).toBeInTheDocument();
     const table = screen.getByRole('table');
     expect(within(table).getByText('TRN')).toBeInTheDocument();
     expect(within(table).getByText('100123456700003')).toBeInTheDocument();
-    expect(within(table).getByText('Shipping agency')).toBeInTheDocument();
+    expect(within(table).getByText('Shipping agency')).toBeInTheDocument(); // the category column, labelled from the master
     expect(within(table).getByText('Supplier')).toBeInTheDocument();
     expect(within(table).getByText('Active')).toBeInTheDocument();
     expect(within(table).getByText('Suspended')).toBeInTheDocument();
@@ -122,11 +128,13 @@ describe('Port companies directory', () => {
   });
 
   it('filters the directory to one category', async () => {
-    const get = mockGet({ '/stats/facilities': ok({ cards }), '/companies': ok([agency, supplier], { total: 2 }) });
+    const get = mockGet({ '/stats/facilities': ok({ cards }), '/companies': ok([agency, supplier], { total: 2 }), '/lookups': categoryMaster });
     wrap(<CompaniesPage />);
     await screen.findByText('Gulf Coast Agencies (sample)');
     fireEvent.mouseDown(screen.getByLabelText('Category'));
     fireEvent.click(await screen.findByRole('option', { name: 'Shipping agency' }));
+    // an inactive entry of the master is not offered
+    expect(screen.queryByRole('option', { name: 'Retired category' })).toBeNull();
     await waitFor(() => expect(get).toHaveBeenCalledWith('/companies', { params: expect.objectContaining({ category: 'AGENCY', page: 1 }) }));
   });
 
@@ -281,7 +289,7 @@ describe('instrument lifecycle helpers', () => {
     expect(subjectPath('COMPANY', null)).toBeNull();
   });
   it('names a category and builds the public verification path', () => {
-    expect(categoryLabel('TERMINAL_OPERATOR')).toBe('Terminal operator');
+    expect(categoryLabel('TERMINAL_OPERATOR')).toBe('Terminal Operator');
     expect(categoryLabel('SOMETHING_ELSE')).toBe('Something Else');
     expect(verifyPath('LIC-2026-0041')).toBe('/verify/LIC-2026-0041');
   });

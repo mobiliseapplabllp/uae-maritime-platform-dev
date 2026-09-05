@@ -23,15 +23,9 @@ export async function upsertPortCall(c: Queryable, p: Row) {
       eta = EXCLUDED.eta, atb = EXCLUDED.atb, atd = EXCLUDED.atd, scope_port = EXCLUDED.scope_port, updated_at = now()`,
     [String(p.id), p.vcn ?? '', String(p.vesselId ?? ''), p.status ?? 'ANNOUNCED', p.berthCode ?? null, p.eta ?? null, p.atb ?? null, p.atd ?? null, p.scopePort ?? '']);
 }
-export async function upsertLookup(c: Queryable, l: Row) {
-  await c.query(`INSERT INTO lookups(id, category, code, label, meta) VALUES ($1,$2,$3,$4,$5)
-    ON CONFLICT (id) DO UPDATE SET category = EXCLUDED.category, code = EXCLUDED.code, label = EXCLUDED.label, meta = EXCLUDED.meta, updated_at = now()`,
-    [String(l.id), l.category ?? '', l.code ?? '', l.label ?? '', JSON.stringify(l.meta ?? {})]);
-}
-
 /** The deficiency master, so a finding carries the label and category the register knows the code by. */
 export async function deficiencyMaster(c: Queryable, code: string): Promise<{ label: string; category: string } | null> {
-  const r = await c.query<{ label: string; meta: Row }>(`SELECT label, meta FROM lookups WHERE category = 'deficiencyCode' AND code = $1 LIMIT 1`, [code]);
+  const r = await c.query<{ label: string; meta: Row }>(`SELECT label, meta FROM lookup_mirror WHERE category = 'deficiencyCode' AND code = $1 AND active LIMIT 1`, [code]);
   const row = r.rows[0];
   return row ? { label: row.label, category: String(row.meta?.category ?? '') } : null;
 }

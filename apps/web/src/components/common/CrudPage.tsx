@@ -13,6 +13,7 @@ import type { ExportColumn } from '../../utils/exportUtils';
 import PageHeader, { type Crumb } from './PageHeader';
 import DataTable from './DataTable';
 import FormFields from './FormFields';
+import { useLookupOptions } from '../../hooks/useLookups';
 import ConfirmDialog from './ConfirmDialog';
 import FormDrawer from './FormDrawer';
 import PageStats from './PageStats';
@@ -23,7 +24,7 @@ export interface CrudConfig<R extends Record<string, any> = any> {
   endpoint: string; entityName?: string; addLabel?: string; columns: Column<R>[];
   formFields: FieldSpec[] | ((editing: R | Record<string, never> | null) => FieldSpec[]);
   defaults?: Record<string, unknown>; permBase?: string; perms?: { create: string; edit: string; del: string };
-  filters?: { name: string; label: string; options: Option[] }[]; staticParams?: Record<string, unknown>; defaultSort?: string;
+  /** A filter lists inline options or names a Data Studio master. */ filters?: { name: string; label: string; options?: Option[]; lookup?: string }[]; staticParams?: Record<string, unknown>; defaultSort?: string;
   transformOut?: (values: Record<string, any>, editing: R | Record<string, never> | null) => unknown; toForm?: (row: R) => Record<string, any>;
   rowActionsExtra?: (row: R, reload: () => void) => ReactNode; onRowClick?: (row: R) => void; searchPlaceholder?: string;
   drawerWidth?: number | string; headerActions?: ReactNode; beforeTable?: ReactNode; statsScope?: string; exportName?: string; exportColumns?: ExportColumn[];
@@ -33,6 +34,18 @@ export interface CrudConfig<R extends Record<string, any> = any> {
 interface ListState<R> { rows: R[]; total: number; page: number; limit: number; q: string; sort: string; loading: boolean }
 
 /** Full server-side CRUD page driven by config. */
+/** One toolbar filter: inline options, or a Data Studio master resolved through the shared lookup cache. */
+function FilterSelect({ filter, value, onChange }: { filter: { name: string; label: string; options?: Option[]; lookup?: string }; value: string; onChange: (v: string) => void }) {
+  const fromMaster = useLookupOptions(filter.options ? null : filter.lookup);
+  const options = filter.options ?? fromMaster;
+  return (
+    <TextField select size="small" label={filter.label} sx={{ minWidth: 150 }} value={value} onChange={(e) => onChange(e.target.value)}>
+      <MenuItem value="">All</MenuItem>
+      {options.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
+    </TextField>
+  );
+}
+
 export default function CrudPage<R extends Record<string, any>>(cfg: CrudConfig<R>) {
   const dispatch = useAppDispatch();
   const user = useUser();
@@ -116,11 +129,7 @@ export default function CrudPage<R extends Record<string, any>>(cfg: CrudConfig<
         search={state.q} onSearch={(q) => setState((x) => ({ ...x, q, page: 1 }))} searchPlaceholder={cfg.searchPlaceholder}
         sort={state.sort} onSort={(sort) => setState((x) => ({ ...x, sort }))} onRowClick={cfg.onRowClick}
         toolbar={(cfg.filters || []).map((f) => (
-          <TextField key={f.name} select size="small" label={f.label} sx={{ minWidth: 150 }} value={filterVals[f.name] ?? ''}
-            onChange={(e) => { setFilterVals((v) => ({ ...v, [f.name]: e.target.value })); setState((x) => ({ ...x, page: 1 })); }}>
-            <MenuItem value="">All</MenuItem>
-            {f.options.map((o) => <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>)}
-          </TextField>
+          <FilterSelect key={f.name} filter={f} value={filterVals[f.name] ?? ''} onChange={(value) => { setFilterVals((v) => ({ ...v, [f.name]: value })); setState((x) => ({ ...x, page: 1 })); }} />
         ))} />
       <FormDrawer open={!!editing} busy={busy} width={cfg.drawerWidth || '75vw'} title={idOf(editing) ? `Edit ${cfg.entityName || ''}` : `New ${cfg.entityName || ''}`} subtitle={cfg.sub}
         onClose={() => setEditing(null)} onSubmit={save} submitLabel={idOf(editing) ? 'Save changes' : 'Create'}>

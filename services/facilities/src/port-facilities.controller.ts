@@ -2,11 +2,11 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, assertLookups, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
 import { FACILITY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, FACILITY_STATUS, FACILITY_TYPES, ISPS_STATUS, OBLIGATION_KINDS, auditApi, facilityApi, obligationApi,
+  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, auditApi, facilityApi, obligationApi,
   publishFacility, ratingFrom, type FacilityRow,
 } from './directory';
 import { auditsFor, fullFacility, loadFacility } from './read';
@@ -23,7 +23,7 @@ import { clearObligation, raiseObligation, recordAudit, renewalWorkList } from '
 const text = (max: number) => z.string().trim().max(max);
 const body = z.object({
   id: text(80).optional(), code: text(30).optional(), name: text(160).min(2), nameAr: text(160).nullish(),
-  facilityType: z.enum(FACILITY_TYPES).default('BERTH'), terminal: text(160).default(''), berthType: text(40).default(''),
+  facilityType: text(40).default('BERTH'), terminal: text(160).default(''), berthType: text(40).default(''),
   operatorId: text(80).nullish(), operatorName: text(160).default(''),
   capabilities: z.array(text(60)).max(30).default([]), loaMax: z.coerce.number().min(0).max(1000).nullish(), draftMax: z.coerce.number().min(0).max(100).nullish(),
   capacity: z.coerce.number().min(0).nullish(), capacityUnit: text(20).default(''),
@@ -39,7 +39,7 @@ const auditBody = z.object({
   date: z.union([text(40), z.null()]).optional(), auditor: text(120).default(''), auditorId: text(80).nullish(),
   result: z.enum(AUDIT_RESULTS), scope: text(200).default(''), remarks: text(2000).default(''), instrumentId: text(80).nullish(), instrumentNo: text(60).default(''),
 });
-const obligationBody = z.object({ kind: z.enum(OBLIGATION_KINDS), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
+const obligationBody = z.object({ kind: text(40).min(1), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
 const clearBody = z.object({ note: text(600).default('') });
 
 const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType: 'facility_type', terminal: 'terminal', operatorName: 'operator_name', ispsStatus: 'isps_status', status: 'status', createdAt: 'created_at', updatedAt: 'updated_at' };
@@ -85,6 +85,8 @@ export class PortFacilitiesController {
   @RequirePerm('facilities.manage') @Post()
   async create(@Body(zod(body)) b: z.infer<typeof body>) {
     return withTx(this.pool, async (c) => {
+      await assertLookup(c, 'facilityType', b.facilityType, 'Facility type');
+      await assertLookups(c, 'facilityCapability', b.capabilities, 'Capability');
       const code = b.code?.trim() || await nextNumber(c, `${this.env.FACILITY_PREFIX}-code`, `${this.env.FACILITY_PREFIX}-`, 4);
       const dupe = await c.query('SELECT id FROM port_facilities WHERE upper(code) = upper($1)', [code]);
       if (dupe.rowCount) throw conflict(`A facility with code ${code.toUpperCase()} is already on the register`);
@@ -104,6 +106,8 @@ export class PortFacilitiesController {
   @RequirePerm('facilities.manage') @Put(':id')
   async update(@Param('id') id: string, @Body(zod(patch)) b: Partial<z.infer<typeof body>>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
+      if (b.facilityType !== undefined) await assertLookup(c, 'facilityType', b.facilityType, 'Facility type');
+      if (b.capabilities !== undefined) await assertLookups(c, 'facilityCapability', b.capabilities, 'Capability');
       const before = await loadFacility(c, id, user.scope, true);
       if (b.code && b.code.toUpperCase() !== before.code.toUpperCase()) {
         const dupe = await c.query('SELECT id FROM port_facilities WHERE upper(code) = upper($1) AND id <> $2', [b.code, before.id]);
@@ -161,6 +165,7 @@ export class PortFacilitiesController {
   async raise(@Param('id') id: string, @Body(zod(obligationBody)) b: z.infer<typeof obligationBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const facility = await loadFacility(c, id, user.scope, true);
+      await assertLookup(c, 'obligationKind', b.kind, 'Obligation kind');
       return obligationApi(await raiseObligation(c, this.env, this.audit, { kind: 'FACILITY', id: facility.id, name: facility.name }, b, user));
     });
   }

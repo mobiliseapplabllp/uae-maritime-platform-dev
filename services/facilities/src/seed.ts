@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { STATUTORY_TYPES, buildWorld, stableId, type WorldBerth, type WorldCompany, type WorldLicence } from '@maritime/world';
-import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
+import { createDb, runMigrations, seedLookupMirror, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
 import { classLabel, type Row } from './directory';
 import { upsertInstrument } from './subjects';
@@ -57,6 +57,8 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
   const security = world.users.filter((u) => u.roleName === 'Security Officer' && u.active);
 
   const counts = await withTx(pool, async (c) => {
+    // the masters this desk validates against — categories, facility types, visit types, obligation kinds
+    const lookups = await seedLookupMirror(c, world.lookups);
     /* The overlay carries master data's identity fields so the directory renders from one database; the
      * rating is the standing the administration recorded, and moves from here on when an audit is taken. */
     for (const co of world.companies) {
@@ -172,7 +174,7 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
     const isps = await c.query<{ n: string }>(`SELECT count(*) AS n FROM port_facilities WHERE isps_status = 'COMPLIANT'`);
     const rated = await c.query<{ n: string }>('SELECT count(*) AS n FROM companies WHERE rating > 0');
     return {
-      profile: world.profile, companies: world.companies.length, facilities: world.berths.length, instruments: held.length,
+      profile: world.profile, lookups, companies: world.companies.length, facilities: world.berths.length, instruments: held.length,
       audits, obligations, series: series.size, ispsCompliant: Number(isps.rows[0].n), rated: Number(rated.rows[0].n),
       operators: new Set(world.berths.map((b) => operatorFor(world.companies, b)?.code).filter(Boolean)).size,
     };

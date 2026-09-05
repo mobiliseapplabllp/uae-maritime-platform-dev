@@ -16,7 +16,8 @@ import { fmtD } from '../../utils/format';
 import { MONO } from '../../theme';
 import { useProfile } from '../../config/runtime';
 import ApplicationDialog from './ApplicationDialog';
-import { COMPANY_STATUS_META, categoryLabel, licLabel } from './shared';
+import { useLookups } from '../../hooks/useLookups';
+import { COMPANY_STATUS_META, licLabel } from './shared';
 import type { Company, LicenceDetail } from './types';
 
 /* One port company — who they are, how they perform, and every instrument this administration has issued to them. */
@@ -37,6 +38,7 @@ export default function CompanyDetail() {
   const [c, setC] = useState<Company | null>(null);
   const [licences, setLicences] = useState<LicenceDetail[] | null>(null);
   const [applyOpen, setApplyOpen] = useState(false);
+  const categories = useLookups('companyCategory');
 
   const load = useCallback(() => {
     api.get<Company>(`/companies/${id}`).then((r) => setC(r.data)).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
@@ -46,7 +48,7 @@ export default function CompanyDetail() {
 
   if (!c) return <Skeleton variant="rounded" height={420} />;
   const held = licences || [];
-  const types = (c.types || []).map(licLabel).join(', ') || categoryLabel(c.category);
+  const types = (c.types || []).map(licLabel).join(', ') || categories.label(c.category);
 
   return (
     <>
@@ -62,7 +64,7 @@ export default function CompanyDetail() {
           <Grid item xs={6} md={3}><Item label={t('facilities.onboarded')} value={fmtD(c.onboardedAt)} /></Grid>
           <Grid item xs={12} md={6}><Item label={t('facilities.address')} value={c.address || '—'} /></Grid>
           <Grid item xs={6} md={3}><Item label={t('facilities.performance')} value={c.rating ? <Rating value={c.rating} precision={0.5} size="small" readOnly /> : t('facilities.notRated')} /></Grid>
-          <Grid item xs={6} md={3}><Item label={t('facilities.licensedFor')} value={c.types?.length ? <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>{c.types.map((x) => <Chip key={x} size="small" variant="outlined" label={licLabel(x)} sx={{ height: 20, fontSize: 10.5 }} />)}</Stack> : categoryLabel(c.category)} /></Grid>
+          <Grid item xs={6} md={3}><Item label={t('facilities.licensedFor')} value={c.types?.length ? <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>{c.types.map((x) => <Chip key={x} size="small" variant="outlined" label={licLabel(x)} sx={{ height: 20, fontSize: 10.5 }} />)}</Stack> : categories.label(c.category)} /></Grid>
           {c.nameAr && <Grid item xs={12} md={6}><Item label={t('facilities.companyNameAr')} value={<span dir="rtl">{c.nameAr}</span>} /></Grid>}
         </Grid>
       </Card>

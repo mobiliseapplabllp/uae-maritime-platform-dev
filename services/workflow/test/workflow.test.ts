@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
-import { createApp, loadEnv, signHS256, StaticPrincipalResolver, PRINCIPAL_RESOLVER, KIT_BUS, MemoryBus, withTx, ApiError } from '@maritime/service-kit';
+import { createApp, loadEnv, signHS256, StaticPrincipalResolver, PRINCIPAL_RESOLVER, KIT_BUS, MemoryBus, withTx, withInbox, applyLookupEvent, ApiError } from '@maritime/service-kit';
 import { EVENTS, makeEvent, subjectFor } from '@maritime/contracts';
 import { buildWorld } from '@maritime/world';
 import { envSchema } from '../src/env';
@@ -14,6 +14,7 @@ import { normaliseDefinition } from '../src/rules/engine';
 import { defaultWorkflow } from '../src/defaults';
 import { parseContent, validateContent, diffContent } from '../src/schema';
 import { cacheRuleSet, linkInstrument, sweepSla } from '../src/consumers';
+import { validateFormData } from '../src/requests.controller';
 
 const NOW = new Date('2026-09-02T09:00:00Z'); const D = 86_400_000;
 const SETS: Record<string, CachedRuleSet> = {
@@ -198,8 +199,29 @@ describe('workflow API', () => {
     const one = await get(`/services/requests/${all.body.data[0].id}`, registrar); expect(one.body.data.definition.states.length).toBeGreaterThan(5); expect(one.body.data.timeline.length).toBeGreaterThan(0);
     const foreign = ag.body.data[0].id; expect((await get(`/services/requests/${foreign}`, other)).status).toBe(404); expect((await get(`/services/requests/${foreign}`, agent)).status).toBe(200);
   });
+  it('reads a select\'s options from the runtime\'s own mirror of the master, and follows the master as it changes', async () => {
+    // the catalogue entry resolves the master into options, in both languages, and says which master they came from
+    const entry = await get('/services/catalogue/vessel.nav.lic'); expect(entry.status).toBe(200);
+    const area = entry.body.data.form.fields.find((f: { key: string }) => f.key === 'voyageArea');
+    expect(area.optionsFrom).toBe('voyageArea'); expect(area.options.map((o: { value: string }) => o.value)).toContain('COASTAL'); expect(area.options.find((o: { value: string }) => o.value === 'COASTAL').labelAr).toBe('ساحلي');
+    expect((await get('/services/catalogue/nope.nothing')).status).toBe(404);
+    // validation is against the mirror: a code the master does not hold is refused, one it gains is accepted as soon as the event lands
+    const body = { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: vessel.name, subject: { imo: vessel.imo, grt: vessel.grt }, formData: { voyageArea: 'ORBITAL', startDate: '2026-10-01T00:00:00Z' }, documents: [{ code: 'doc1', name: 'registry.pdf' }, { code: 'doc2', name: 'insurance.pdf' }] };
+    expect((await post('/services/requests', body, agent)).body.message).toMatch(/ORBITAL.*not one of the options/);
+    await withInbox(pool, makeEvent({ type: EVENTS.mdm.lookupChanged, source: 'mdm', data: { category: 'voyageArea', code: 'ORBITAL', change: 'created', count: 5, lookup: { category: 'voyageArea', code: 'ORBITAL', label: 'Orbital', labelAr: 'مداري', meta: {}, active: true } } }), (c) => applyLookupEvent(c, { type: EVENTS.mdm.lookupChanged, data: { category: 'voyageArea', code: 'ORBITAL', change: 'created', lookup: { category: 'voyageArea', code: 'ORBITAL', label: 'Orbital', active: true } } } as never).then(() => undefined));
+    expect((await post('/services/requests', body, agent)).status).toBe(201);
+    await withInbox(pool, makeEvent({ type: EVENTS.mdm.lookupChanged, source: 'mdm', data: { category: 'voyageArea', code: 'ORBITAL', change: 'deactivated' } }), (c) => applyLookupEvent(c, { type: EVENTS.mdm.lookupChanged, data: { category: 'voyageArea', code: 'ORBITAL', change: 'deactivated', lookup: { category: 'voyageArea', code: 'ORBITAL', label: 'Orbital', active: false } } } as never).then(() => undefined));
+    expect((await post('/services/requests', body, agent)).status).toBe(400);
+    // a definition may still carry inline options, and a master-backed select with no entries refuses rather than accepts anything
+    const inline = parseContent({ form: { fields: [{ key: 'k', label: 'Kind', type: 'select', options: ['A', 'B'] }, { key: 'm', label: 'Master', type: 'select', lookup: 'emptyMaster' }] }, workflow: defaultWorkflow({ issuesInstrument: null, eligibilityRuleSetKey: null, stageDays: {} }) });
+    expect(validateContent(inline).filter((x) => x.severity === 'ERROR')).toEqual([]);
+    const resolver = async (category: string) => (category === 'emptyMaster' ? [] : null);
+    expect(await validateFormData(inline, { k: 'A', m: 'X' }, async () => true, resolver)).toEqual(['Master: the emptyMaster master has no active entries to validate against']);
+    expect(await validateFormData(inline, { k: 'C' }, async () => true, resolver)).toEqual(['Kind: "C" is not one of the options']);
+    expect(validateContent(parseContent({ form: { fields: [{ key: 'k', label: 'Kind', type: 'select' }] }, workflow: defaultWorkflow({ issuesInstrument: null, eligibilityRuleSetKey: null, stageDays: {} }) })).map((x) => x.message)).toContain('field "k" needs options or a lookup');
+  });
   it('lodges, assesses, approves and issues an application end to end with audit, events and notes', async () => {
-    const body = { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: `${vessel.name} (IMO ${vessel.imo})`, subject: { imo: vessel.imo, grt: vessel.grt }, formData: { voyageArea: 'Coastal', startDate: '2026-10-01T00:00:00Z' }, documents: [{ code: 'doc1', name: 'registry.pdf' }, { code: 'doc2' }, { code: 'doc3' }] };
+    const body = { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: `${vessel.name} (IMO ${vessel.imo})`, subject: { imo: vessel.imo, grt: vessel.grt }, formData: { voyageArea: 'COASTAL', startDate: '2026-10-01T00:00:00Z' }, documents: [{ code: 'doc1', name: 'registry.pdf' }, { code: 'doc2' }, { code: 'doc3' }] };
     expect((await post('/services/requests', body, viewer)).status).toBe(403);
     expect((await post('/services/requests', { ...body, formData: { startDate: 'not a date' } }, agent)).status).toBe(400);
     expect((await post('/services/requests', { ...body, formData: { ...body.formData, voyageArea: 'Mars' } }, agent)).body.message).toMatch(/not one of the options/);
@@ -301,7 +323,7 @@ describe('workflow API', () => {
     await bus.publish(subjectFor(EVENTS.rules.published), makeEvent({ type: EVENTS.rules.published, source: 'rules', data: { key: 'fee.vessel.nav.lic', kind: 'FEE', version: 2, definition: { lines: [{ code: 'APP', description: 'Application fee', amount: 3000, taxable: true }] }, parameters: { currency: 'AED' } } })); await bus.drain();
     const cached = await pool.query<{ version: number; definition: { lines: { amount: number }[] } }>("SELECT version, definition FROM rule_set_cache WHERE key = 'fee.vessel.nav.lic'"); expect(cached.rows[0].version).toBe(2); expect(cached.rows[0].definition.lines[0].amount).toBe(3000);
     expect(await withTx(pool, (c) => cacheRuleSet(c, { key: 'x' }))).toBe(false);
-    const again = await post('/services/requests', { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: vessel.name, formData: { voyageArea: 'Coastal', startDate: '2026-10-01T00:00:00Z' } }, agent);
+    const again = await post('/services/requests', { definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: vessel.name, formData: { voyageArea: 'COASTAL', startDate: '2026-10-01T00:00:00Z' } }, agent);
     expect(again.body.data.fees).toMatchObject({ subtotal: 3000, total: 3150, ruleSetVersion: 2 });
   });
 });
@@ -357,7 +379,7 @@ describe('workflow — tenancy', () => {
     const r = await post('/services/requests', {
       definitionKey: 'vessel.nav.lic', subjectId: vessel.id, subjectName: `${vessel.name} (IMO ${vessel.imo})`,
       subject: { imo: vessel.imo, grt: vessel.grt }, draft: true,
-      formData: { voyageArea: 'Coastal', startDate: '2026-10-01T00:00:00Z' },
+      formData: { voyageArea: 'COASTAL', startDate: '2026-10-01T00:00:00Z' },
       documents: [{ code: 'doc1', name: 'registry.pdf' }, { code: 'doc2' }, { code: 'doc3' }],
       applicant: { name: 'Impersonator', organisation: 'Oceanic Agencies FZE', organisationCode: 'OAP' },
     }, gssOne);

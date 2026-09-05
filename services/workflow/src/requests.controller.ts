@@ -2,7 +2,7 @@ import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, REQUEST_OPEN_STATUS, hasPerm, type PageQuery } from '@maritime/contracts';
-import { scopeOfRecord, scopeWhere, visibleTo, KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, withTx, enqueue, eventFromContext, nextNumber, type Principal } from '@maritime/service-kit';
+import { scopeOfRecord, scopeWhere, visibleTo, KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, conflict, withTx, enqueue, eventFromContext, nextNumber, lookupCodes, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import type { DefinitionContent, FormField } from './schema';
 import { WORKFLOW_ENGINE, WorkflowEngine, type EngineActor, type RequestDocument, type RequestState, type TransitionResult } from './engine';
@@ -28,8 +28,13 @@ const isStaff = (u: Principal) => hasPerm(u.perms, 'services.assess') || hasPerm
 const actorOf = (u: Principal): EngineActor => ({ id: u.id, name: u.name, email: u.email, perms: u.perms, kind: u.kind });
 const OPTION_VALUE = (o: string | { value: string }) => (typeof o === 'string' ? o : o.value);
 
-/** Validates submitted form data against the version's form: required fields (respecting visibility), types, options and declared constraints. */
-export async function validateFormData(content: DefinitionContent, data: Record<string, unknown>, visible: (f: FormField) => Promise<boolean>): Promise<string[]> {
+/** Where a select's allowed values come from when the field names a master: the mirror's active codes, or null when the master is unknown. */
+export type LookupResolver = (category: string) => Promise<string[] | null>;
+const NO_LOOKUPS: LookupResolver = async () => null;
+
+/** Validates submitted form data against the version's form: required fields (respecting visibility), types, options and declared constraints.
+ *  A select backed by a master is checked against the runtime's own mirror of it — and an empty mirror refuses the value rather than waving it through. */
+export async function validateFormData(content: DefinitionContent, data: Record<string, unknown>, visible: (f: FormField) => Promise<boolean>, lookups: LookupResolver = NO_LOOKUPS): Promise<string[]> {
   const problems: string[] = [];
   for (const f of content.form.fields) {
     const v = data[f.key]; const present = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length);
@@ -40,8 +45,17 @@ export async function validateFormData(content: DefinitionContent, data: Record<
     if (f.type === 'number') { if (typeof v !== 'number' || !Number.isFinite(v)) problems.push(`${f.label} must be a number`); else { if (c.min !== undefined && v < c.min) problems.push(`${f.label} must be at least ${c.min}`); if (c.max !== undefined && v > c.max) problems.push(`${f.label} must be at most ${c.max}`); } }
     else if (f.type === 'date') { if (typeof v !== 'string' || Number.isNaN(Date.parse(v))) problems.push(`${f.label} must be a date`); }
     else if (f.type === 'boolean') { if (typeof v !== 'boolean') problems.push(`${f.label} must be true or false`); }
-    else if (f.type === 'select') { if (f.options.length && !f.options.some((o) => OPTION_VALUE(o) === String(v))) problems.push(`${f.label}: "${String(v)}" is not one of the options`); }
-    else if (f.type === 'multiselect') { if (!Array.isArray(v)) problems.push(`${f.label} must be a list`); else for (const x of v) if (f.options.length && !f.options.some((o) => OPTION_VALUE(o) === String(x))) problems.push(`${f.label}: "${String(x)}" is not one of the options`); }
+    else if (f.type === 'select' || f.type === 'multiselect') {
+      const values = f.type === 'select' ? [v] : Array.isArray(v) ? v : null;
+      if (!values) { problems.push(`${f.label} must be a list`); continue; }
+      let allowed: string[] | null = f.options.length ? f.options.map(OPTION_VALUE) : null;
+      if (f.lookup) {
+        const codes = await lookups(f.lookup);
+        if (!codes?.length) { problems.push(`${f.label}: the ${f.lookup} master has no active entries to validate against`); continue; }
+        allowed = codes;
+      }
+      if (allowed) for (const x of values) if (!allowed.includes(String(x))) problems.push(`${f.label}: "${String(x)}" is not one of the options`);
+    }
     else if (typeof v === 'string') { if (c.minLength !== undefined && v.length < c.minLength) problems.push(`${f.label} must be at least ${c.minLength} characters`); if (c.maxLength !== undefined && v.length > c.maxLength) problems.push(`${f.label} must be at most ${c.maxLength} characters`); if (c.pattern && !new RegExp(c.pattern).test(v)) problems.push(`${f.label} has an invalid format`); }
   }
   return problems;
@@ -122,7 +136,7 @@ export class RequestsController {
     const content = contentOf(ver);
     if (def.subject_kind !== 'NONE' && !b.subjectId) throw badRequest(`This service must be lodged against a ${def.subject_kind.replace(/_/g, ' ').toLowerCase()}`);
     const visCtx = { form: b.formData, subject: { kind: def.subject_kind, id: b.subjectId ?? null, name: b.subjectName ?? '', ...b.subject }, applicant: b.applicant };
-    const problems = await validateFormData(content, b.formData, async (f) => f.visibleWhen === undefined || !!(await this.engine.evaluateExpr(f.visibleWhen, visCtx)));
+    const problems = await validateFormData(content, b.formData, async (f) => f.visibleWhen === undefined || !!(await this.engine.evaluateExpr(f.visibleWhen, visCtx)), (category) => lookupCodes(this.pool, category));
     if (problems.length) throw badRequest(`Required information missing: ${problems.join('; ')}`, { problems });
     const unknown = b.documents.filter((d) => !content.documents.some((x) => x.code === d.code)).map((d) => d.code);
     if (unknown.length) throw badRequest(`Unknown document codes: ${unknown.join(', ')}`);

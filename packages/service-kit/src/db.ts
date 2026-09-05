@@ -44,6 +44,18 @@ CREATE TABLE IF NOT EXISTS processed_events (
   processed_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS numbering_series (series text PRIMARY KEY, last_value bigint NOT NULL DEFAULT 0);
+-- the local copy of Data Studio's masters (see lookups.ts): every service validates against its own mirror, never a call
+CREATE TABLE IF NOT EXISTS lookup_mirror (
+  id text PRIMARY KEY,
+  category text NOT NULL,
+  code text NOT NULL,
+  label text NOT NULL DEFAULT '',
+  label_ar text,
+  meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+  active boolean NOT NULL DEFAULT true,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS lookup_mirror_category_idx ON lookup_mirror(category, active, code);
 `;
 
 /** Applies `*.sql` files from a directory in name order, once each, each inside its own transaction. */

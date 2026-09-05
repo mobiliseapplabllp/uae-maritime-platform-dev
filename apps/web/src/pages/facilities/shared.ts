@@ -4,11 +4,8 @@ import type { Option } from '../../types';
 import type { StatusMeta } from '../../utils/status';
 import { titleCase } from '../../utils/format';
 
-export const CATEGORIES: Option[] = [
-  { value: 'AGENCY', label: 'Shipping agency' }, { value: 'TERMINAL_OPERATOR', label: 'Terminal operator' }, { value: 'SERVICE_PROVIDER', label: 'Service provider' },
-  { value: 'SUPPLIER', label: 'Supplier' }, { value: 'INSTITUTE', label: 'Institute' },
-];
-export const categoryLabel = (c: string) => CATEGORIES.find((x) => x.value === c)?.label || titleCase(c);
+/** Company categories are the `companyCategory` master; screens read it through `useLookups`. This is the print-form fallback for a code the master does not know. */
+export const categoryLabel = (c: string) => titleCase(c);
 export const COMPANY_STATUS_META: StatusMeta = { ACTIVE: { label: 'Active', color: 'success' }, SUSPENDED: { label: 'Suspended', color: 'warning' }, BLACKLISTED: { label: 'Blacklisted', color: 'error' }, INACTIVE: { label: 'Inactive', color: 'default' } };
 export const COMPANY_STATUS_OPTIONS: Option[] = Object.entries(COMPANY_STATUS_META).map(([value, m]) => ({ value, label: m.label }));
 export const SUBJECT_KIND_LABEL: Record<string, string> = { COMPANY: 'Company', VESSEL: 'Vessel', SEAFARER: 'Seafarer', PORT_FACILITY: 'Port facility', MET_INSTITUTION: 'MET institution' };

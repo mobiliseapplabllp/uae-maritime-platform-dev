@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { LOOKUP_CATEGORIES } from '@maritime/contracts';
 import { buildWorld, isRealLiner, imoCheck, forceState, certStatus, type World } from '../src';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -22,8 +23,18 @@ describe('world', () => {
     // the second pair of eyes on a model, without which no version can be approved and none can be deployed
     expect(w.users.find((u) => u.email === 'aigov@maritime.example')?.roleName).toBe('AI Governance');
   });
-  it('covers all nineteen lookup categories, 24 berths, 20 companies and 31 vessels', () => {
-    expect(new Set(w.lookups.map((l) => l.category)).size).toBe(19);
+  it('covers every declared master, 24 berths, 20 companies and 31 vessels', () => {
+    const categories = new Set(w.lookups.map((l) => l.category));
+    expect(categories.size).toBe(LOOKUP_CATEGORIES.length);
+    // every master the contract declares has entries, and no entry belongs to a master the contract does not know
+    for (const c of LOOKUP_CATEGORIES) expect(categories.has(c.key), c.key).toBe(true);
+    for (const cat of categories) expect(LOOKUP_CATEGORIES.some((c) => c.key === cat), cat).toBe(true);
+    // one row per (category, code): the mirrors key on it
+    expect(new Set(w.lookups.map((l) => `${l.category}:${l.code}`)).size).toBe(w.lookups.length);
+    // the six RFP accreditation schemes, each with a cycle
+    const schemes = w.lookups.filter((l) => l.category === 'accreditationCategory');
+    expect(schemes.map((s) => s.code).sort()).toEqual(['COMPASS_CALIBRATION', 'FFA_SERVICING', 'LSA_SERVICING', 'PEST_CONTROL', 'SMALL_VESSEL_SURVEY', 'TOWAGE_CERTIFICATION']);
+    for (const s of schemes) expect(s.meta).toMatchObject({ cycleMonths: 12, visitsPerCycle: 1 });
     expect(w.berths).toHaveLength(24); expect(w.companies).toHaveLength(20); expect(w.vessels).toHaveLength(31);
     expect(w.vessels.filter((v) => v.real)).toHaveLength(8);
     for (const v of w.vessels) expect(imoCheck(v.imo.slice(0, 6))).toBe(v.imo[6]);
