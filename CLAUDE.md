@@ -39,7 +39,8 @@ Eight domain services (`ships`, `seafarers`, `legislation`, `maritime-centre`, `
 (`ai-tool-gateway`, `ai-agents`, `ai-assistant`, `ai-platform`). Each service owns its
 PostgreSQL schema, publishes CloudEvents-style domain events through a transactional outbox to
 NATS JetStream, consumes through an idempotent inbox, exposes an OpenAPI contract generated from
-code, validates Keycloak JWTs itself, and writes audit entries for every mutation. Service
+code, validates the identity service's tokens itself (Keycloak's when that mode is on), and
+writes audit entries for every mutation. Service
 definitions (forms, workflow, rules, fees, documents, templates, notifications, agent behaviour)
 are versioned JSON interpreted by one runtime; the Service Studio in `apps/web` is their design
 surface. Tenancy scopes (national, port, zone, facility) and bilingual fields exist from the first

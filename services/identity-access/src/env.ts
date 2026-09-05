@@ -11,6 +11,10 @@ export const envSchema = baseEnvSchema.extend({
   LOGIN_MAX_ATTEMPTS: z.coerce.number().default(10),
   LOGIN_WINDOW_MIN: z.coerce.number().default(15),
   BCRYPT_ROUNDS: z.coerce.number().default(10),
+  /** Key material for the authenticator secrets at rest; the JWT secret stands in when unset. */
+  MFA_KEY: z.string().optional(),
+  /** The issuer name an authenticator app shows beside the account. */
+  MFA_ISSUER: z.string().default('Maritime Platform'),
 });
 export type Env = z.infer<typeof envSchema>;
 export const env = () => loadEnv(envSchema);

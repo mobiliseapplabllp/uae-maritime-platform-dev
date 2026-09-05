@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Box, Card, TextField, Button, Typography, Alert, Stack, InputAdornment, IconButton, ButtonBase, Divider, Chip, CircularProgress } from '@mui/material';
+import QRCode from 'qrcode';
 import AnchorRoundedIcon from '@mui/icons-material/AnchorRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import Visibility from '@mui/icons-material/Visibility';
@@ -13,7 +14,7 @@ import PortScene from '../components/PortScene';
 import PlatformWordmark from '../components/brand/PlatformWordmark';
 import MobiliseMark from '../components/brand/MobiliseMark';
 import { useProfile } from '../config/runtime';
-import type { Session } from '../types';
+import type { LoginOutcome, Session } from '../types';
 
 const DEMO_PASSWORD = 'Demo@2026';
 const ROLES = [
@@ -37,11 +38,83 @@ export default function Login() {
   const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busyAs, setBusyAs] = useState('');
+  /* The second step. A password that is right may stop here: an enrolled account answers its authenticator, and an
+   * account whose role requires one — past the policy's deadline — enrols on the spot. */
+  type Step = 'password' | 'code' | 'recovery' | 'enrol' | 'codes';
+  const [step, setStep] = useState<Step>('password');
+  const [mfaToken, setMfaToken] = useState('');
+  const [code, setCode] = useState('');
+  const [enrol, setEnrol] = useState<{ secret: string; otpauthUri: string; qr: string } | null>(null);
+  const [pending, setPending] = useState<Session | null>(null);
+  const [recoveryCodes, setRecoveryCodes] = useState<string[]>([]);
+  const [dueAt, setDueAt] = useState('');
+  useEffect(() => { if (step === 'password') { setCode(''); setEnrol(null); } }, [step]);
 
+  const outcome = (r: LoginOutcome) => {
+    if ('mfaRequired' in r) { setMfaToken(r.mfaToken); setStep('code'); setBusyAs(''); return; }
+    if ('mfaEnrolmentRequired' in r) {
+      setMfaToken(r.mfaToken); setDueAt(r.dueAt);
+      api.post<{ secret: string; otpauthUri: string }>('/auth/mfa/setup', { mfaToken: r.mfaToken })
+        .then(async (s) => { const qr = await QRCode.toDataURL(s.data.otpauthUri, { margin: 1, width: 196 }).catch(() => ''); setEnrol({ ...s.data, qr }); setStep('enrol'); })
+        .catch((err: Error) => setError(err.message)).finally(() => setBusyAs(''));
+      return;
+    }
+    dispatch(setSession(r));
+  };
   const signIn = (mail: string, pass: string) => {
     setBusyAs(mail); setError('');
-    api.post<Session>('/auth/login', { email: mail, password: pass }).then((r) => dispatch(setSession(r.data))).catch((err: Error) => { setError(err.message); setBusyAs(''); });
+    api.post<LoginOutcome>('/auth/login', { email: mail, password: pass }).then((r) => outcome(r.data)).catch((err: Error) => { setError(err.message); setBusyAs(''); });
   };
+  const verify = () => {
+    setBusyAs('mfa'); setError('');
+    api.post<Session>('/auth/mfa/verify', { mfaToken, code: code.trim() }).then((r) => dispatch(setSession(r.data))).catch((err: Error) => { setError(err.message); setBusyAs(''); });
+  };
+  const activate = () => {
+    setBusyAs('mfa'); setError('');
+    api.post<Session & { recoveryCodes: string[] }>('/auth/mfa/activate', { mfaToken, code: code.trim() })
+      .then((r) => { setRecoveryCodes(r.data.recoveryCodes); setPending(r.data); setStep('codes'); })
+      .catch((err: Error) => setError(err.message)).finally(() => setBusyAs(''));
+  };
+  const secondStep = step !== 'password' && (
+    <Card sx={{ p: 2.5 }} data-testid="mfa-step">
+      {(step === 'code' || step === 'recovery') && (
+        <form onSubmit={(e) => { e.preventDefault(); verify(); }}>
+          <Stack spacing={1.5}>
+            <Typography variant="h6" component="h3" sx={{ fontSize: 16 }}>{t('login.mfaTitle')}</Typography>
+            <Typography variant="body2" color="text.secondary">{t('login.mfaHint')}</Typography>
+            <TextField autoFocus size="small" label={step === 'code' ? t('login.mfaCode') : t('login.mfaRecoveryCode')} value={code} onChange={(e) => setCode(e.target.value)} fullWidth autoComplete="one-time-code" inputProps={{ 'data-testid': 'mfa-code', inputMode: step === 'code' ? 'numeric' : 'text' }} />
+            <Button type="submit" variant="contained" disabled={!!busyAs || code.trim().length < 6} data-testid="mfa-verify">{t('login.mfaVerify')}</Button>
+            <Stack direction="row" justifyContent="space-between">
+              <Button size="small" onClick={() => setStep(step === 'code' ? 'recovery' : 'code')}>{step === 'code' ? t('login.mfaUseRecovery') : t('login.mfaUseApp')}</Button>
+              <Button size="small" color="inherit" onClick={() => { setStep('password'); setError(''); }}>{t('login.mfaBack')}</Button>
+            </Stack>
+          </Stack>
+        </form>
+      )}
+      {step === 'enrol' && enrol && (
+        <form onSubmit={(e) => { e.preventDefault(); activate(); }}>
+          <Stack spacing={1.5}>
+            <Typography variant="h6" component="h3" sx={{ fontSize: 16 }}>{t('login.mfaEnrolTitle')}</Typography>
+            <Typography variant="body2" color="text.secondary">{t('login.mfaEnrolHint')}{dueAt ? ` (${t('login.mfaDue', { date: dueAt.slice(0, 10) })})` : ''}</Typography>
+            {enrol.qr && <Box component="img" src={enrol.qr} alt={t('login.mfaQrAlt')} sx={{ width: 196, height: 196, alignSelf: 'center', borderRadius: 1, border: 1, borderColor: 'divider' }} />}
+            <Typography variant="caption" color="text.secondary">{t('login.mfaSecret')}</Typography>
+            <Typography sx={{ fontFamily: MONO, fontSize: 13, letterSpacing: '0.08em', wordBreak: 'break-all' }} data-testid="mfa-secret">{enrol.secret}</Typography>
+            <TextField autoFocus size="small" label={t('login.mfaCode')} value={code} onChange={(e) => setCode(e.target.value)} fullWidth autoComplete="one-time-code" inputProps={{ 'data-testid': 'mfa-code', inputMode: 'numeric' }} />
+            <Button type="submit" variant="contained" disabled={!!busyAs || code.trim().length !== 6} data-testid="mfa-activate">{t('login.mfaActivate')}</Button>
+            <Button size="small" color="inherit" onClick={() => { setStep('password'); setError(''); }}>{t('login.mfaBack')}</Button>
+          </Stack>
+        </form>
+      )}
+      {step === 'codes' && (
+        <Stack spacing={1.5}>
+          <Typography variant="h6" component="h3" sx={{ fontSize: 16 }}>{t('login.mfaRecoveryTitle')}</Typography>
+          <Typography variant="body2" color="text.secondary">{t('login.mfaRecoveryHint')}</Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2.5, columns: 2, fontFamily: MONO, fontSize: 14 }} data-testid="recovery-codes">{recoveryCodes.map((c) => <li key={c}>{c}</li>)}</Box>
+          <Button variant="contained" onClick={() => pending && dispatch(setSession(pending))} data-testid="mfa-continue">{t('login.mfaContinue')}</Button>
+        </Stack>
+      )}
+    </Card>
+  );
 
   return (
     <Box sx={{ minHeight: '100vh', display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1.15fr 1fr' } }}>
@@ -88,7 +161,8 @@ export default function Login() {
           <Typography variant="h5" id="login-title" component="h2">{t('login.welcome')}</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 2.5 }}>{t('login.pickRole')}</Typography>
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          <Stack spacing={1}>
+          {secondStep}
+          {step === 'password' && <Stack spacing={1}>
             {ROLES.map((r) => (
               <ButtonBase key={r.email} disabled={!!busyAs} onClick={() => signIn(r.email, DEMO_PASSWORD)} data-testid={`login-${r.role.replace(/\s+/g, '-').toLowerCase()}`}
                 sx={{ borderRadius: 2.5, textAlign: 'left', justifyContent: 'flex-start', border: 1, borderColor: 'divider', bgcolor: 'background.paper', p: 1.5, pl: 1.75, gap: 1.5, display: 'flex', alignItems: 'center', width: '100%', transition: 'all .15s', '&:hover': { borderColor: 'primary.main', transform: 'translateX(2px)' } }}>
@@ -97,9 +171,9 @@ export default function Login() {
                 {busyAs === r.email ? <CircularProgress size={18} /> : <ArrowForwardRoundedIcon sx={{ color: 'text.secondary', fontSize: 19 }} />}
               </ButtonBase>
             ))}
-          </Stack>
-          <Divider sx={{ my: 2.5 }}><Typography variant="caption" color="text.secondary">{t('login.or')}</Typography></Divider>
-          <Card sx={{ p: 2 }}>
+          </Stack>}
+          {step === 'password' && <Divider sx={{ my: 2.5 }}><Typography variant="caption" color="text.secondary">{t('login.or')}</Typography></Divider>}
+          {step === 'password' && <Card sx={{ p: 2 }}>
             <form onSubmit={(e) => { e.preventDefault(); signIn(email, password); }}>
               <Stack spacing={1.5}>
                 <TextField label={t('login.email')} size="small" value={email} onChange={(e) => setEmail(e.target.value)} fullWidth autoComplete="username" inputProps={{ 'data-testid': 'login-email' }} />
@@ -108,7 +182,7 @@ export default function Login() {
                 <Button type="submit" variant="contained" disabled={!!busyAs || !email || !password} data-testid="login-submit">{t('login.signIn')}</Button>
               </Stack>
             </form>
-          </Card>
+          </Card>}
           <Stack direction="row" spacing={1} sx={{ mt: 2 }} alignItems="center" justifyContent="space-between">
             <Stack direction="row" spacing={1} alignItems="center">
               <Chip size="small" variant="outlined" color="warning" label="DEMO" sx={{ fontSize: 10, fontWeight: 700 }} />

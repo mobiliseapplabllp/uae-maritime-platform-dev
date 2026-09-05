@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Grid, Box, Typography, Skeleton, Button, TextField, MenuItem, Switch, FormControlLabel, Chip, Stack } from '@mui/material';
+import { Card, Grid, Box, Typography, Skeleton, Button, TextField, MenuItem, Switch, FormControlLabel, Chip, Stack, Autocomplete } from '@mui/material';
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
 import SettingsSuggestRoundedIcon from '@mui/icons-material/SettingsSuggestRounded';
@@ -14,7 +14,7 @@ import { StatePage } from '../components/common/StatePage';
 import { useProfile } from '../config/runtime';
 
 /* Every module carries its own settings page; values loop straight back into that module's behaviour. */
-interface F { k: string; label: string; type?: 'number' | 'switch' | 'select' | 'text'; help?: string; options?: string[]; cols?: number }
+interface F { k: string; label: string; type?: 'number' | 'switch' | 'select' | 'text' | 'multiselect'; help?: string; options?: string[]; /** Options drawn from the permission catalogue rather than an inline list. */ optionsFrom?: 'permissions'; cols?: number }
 const FIELDS: Record<string, F[]> = {
   ops: [
     { k: 'vcnPrefix', label: 'VCN prefix', help: 'Applied to every NEW vessel call number' },
@@ -49,7 +49,20 @@ const FIELDS: Record<string, F[]> = {
   mis: [{ k: 'defaultPeriodMonths', label: 'Default report period (months)', type: 'number' }, { k: 'exportFooter', label: 'Export footer text', cols: 8 }],
   masters: [{ k: 'allowHardDelete', label: 'Allow hard delete of master entries', type: 'switch' }],
   agents: [{ k: 'defaultAutonomy', label: 'Default autonomy level', type: 'select', options: ['ASSIST', 'SUPERVISED', 'AUTONOMOUS'] }, { k: 'escalationHours', label: 'Escalate unreviewed decisions after (hours)', type: 'number' }, { k: 'suspensionNoticeHours', label: 'Suspension notice (hours)', type: 'number' }],
-  admin: [{ k: 'sessionTimeoutMin', label: 'Session timeout (minutes)', type: 'number' }, { k: 'passwordMinLength', label: 'Password minimum length', type: 'number' }, { k: 'auditRetentionDays', label: 'Audit log retention (days)', type: 'number' }, { k: 'mfaRequiredForStaff', label: 'Multi-factor authentication required for staff', type: 'switch' }],
+  // Users & security: read by the identity service at the moment each one matters, never captured at boot
+  admin: [
+    { k: 'accessTokenMinutes', label: 'Access token lifetime (minutes)', type: 'number', help: 'Short-lived; refreshed silently while the person is active' },
+    { k: 'refreshTokenHours', label: 'Session lifetime (hours)', type: 'number', help: 'The longest a session lasts, active or not' },
+    { k: 'idleTimeoutMinutes', label: 'Idle timeout (minutes)', type: 'number', help: 'Signed out after this long without activity' },
+    { k: 'passwordMinLength', label: 'Password minimum length', type: 'number', help: 'The platform floor is 12; this can only raise it' },
+    { k: 'mfaRequiredFrom', label: 'Two-step verification required from (YYYY-MM-DD)', help: 'Empty encourages enrolment; a date enforces it for roles that require it' },
+    { k: 'mfaGraceDays', label: 'Enrolment grace (days)', type: 'number', help: 'Days a person may keep signing in before enrolment is demanded' },
+    { k: 'dormantAfterDays', label: 'Dormant after (days without sign-in)', type: 'number' },
+    { k: 'dormantAction', label: 'Dormant accounts are', type: 'select', options: ['FLAG', 'DEACTIVATE'], help: 'Flagged for the next review, or deactivated by the daily sweep' },
+    { k: 'accessReviewDays', label: 'Access review cadence (days)', type: 'number' },
+    { k: 'auditRetentionDays', label: 'Audit log retention (days)', type: 'number' },
+    { k: 'fourEyesPermissions', label: 'Privileged permissions (four-eyes)', type: 'multiselect', optionsFrom: 'permissions', cols: 12, help: 'Granting a role that holds any of these, or editing such a role, waits for a second administrator' },
+  ],
 };
 
 export default function ModuleSettingsPage() {
@@ -63,6 +76,11 @@ export default function ModuleSettingsPage() {
   const [vals, setVals] = useState<Record<string, any> | null>(null);
   const [defaults, setDefaults] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
+  const [permOptions, setPermOptions] = useState<string[]>([]);
+  useEffect(() => {
+    if (!fields?.some((f) => f.optionsFrom === 'permissions')) return;
+    api.get<{ permissionGroups: { module: string; actions: string[] }[] }>('/meta', { headers: { 'X-Quiet': '1' } }).then((m) => setPermOptions(['*', ...m.data.permissionGroups.flatMap((g) => g.actions.map((a) => `${g.module}.${a}`))])).catch(() => {});
+  }, [fields]);
 
   useEffect(() => {
     if (!fields) return;
@@ -96,6 +114,9 @@ export default function ModuleSettingsPage() {
             <Grid item xs={12} sm={6} md={f.cols || 4} key={f.k} sx={f.type === 'switch' ? { display: 'flex', alignItems: 'center' } : undefined}>
               {f.type === 'switch' ? (
                 <FormControlLabel control={<Switch checked={!!vals[f.k]} disabled={!canManage} onChange={(e) => setField(f.k, e.target.checked)} />} label={f.label} />
+              ) : f.type === 'multiselect' ? (
+                <Autocomplete multiple size="small" disabled={!canManage} options={f.optionsFrom === 'permissions' ? permOptions : (f.options ?? [])} value={Array.isArray(vals[f.k]) ? (vals[f.k] as string[]) : []}
+                  onChange={(_, v) => setField(f.k, v)} renderInput={(params) => <TextField {...params} label={f.label} helperText={f.help} />} />
               ) : f.type === 'select' ? (
                 <TextField select fullWidth size="small" label={f.label} value={vals[f.k] ?? ''} disabled={!canManage} helperText={f.help} onChange={(e) => setField(f.k, e.target.value)}>
                   {f.options!.map((o) => <MenuItem key={o} value={o}>{o}</MenuItem>)}

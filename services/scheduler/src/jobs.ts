@@ -28,6 +28,9 @@ export const SEED_JOBS: JobDefinition[] = [
   { key: 'accreditation-renewal-sweep', name: 'Accreditation renewal sweep', nameAr: 'مسح تجديد الاعتمادات', cron: '15 7 * * *', eventType: EVENTS.scheduler.sweepAccreditations, payload: {}, owner: 'facilities' },
   { key: 'imo-source-poll', name: 'IMO source monitoring', nameAr: 'رصد مصادر المنظمة البحرية الدولية', cron: '30 */6 * * *', eventType: EVENTS.scheduler.pollImoSources, payload: {}, owner: 'legislation' },
   { key: 'finding-overdue-sweep', name: 'Overdue deficiency sweep', nameAr: 'مسح أوجه القصور المتأخرة', cron: '0 6 * * *', eventType: EVENTS.scheduler.sweepFindings, owner: 'inspection' },
+  // accounts: who still holds what, every quarter; and a daily look for accounts nobody has used
+  { key: 'access-review-open', name: 'Access review — open the quarterly cycle', nameAr: 'مراجعة الصلاحيات — فتح الدورة الفصلية', cron: '0 6 1 */3 *', eventType: EVENTS.scheduler.openAccessReview, owner: 'identity-access' },
+  { key: 'dormant-account-sweep', name: 'Dormant account sweep', nameAr: 'مسح الحسابات الخاملة', cron: '20 5 * * *', eventType: EVENTS.scheduler.sweepDormant, owner: 'identity-access' },
 ];
 
 export function validateSchedule(cron: string, timezone: string): void {

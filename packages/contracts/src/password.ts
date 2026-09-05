@@ -40,10 +40,12 @@ export interface PasswordSubject {
  * An empty array means it passes. Callers should report all of them at once rather than one per
  * round trip.
  */
-export function passwordProblems(password: unknown, subject: PasswordSubject = {}): string[] {
+export function passwordProblems(password: unknown, subject: PasswordSubject = {}, opts: { minLength?: number } = {}): string[] {
   const problems: string[] = [];
+  // The platform floor is twelve; a setting may raise it, never lower it.
+  const min = Math.max(PASSWORD_MIN, Math.floor(Number(opts.minLength) || 0));
   if (typeof password !== 'string' || password.length === 0) return ['A password is required'];
-  if (password.length < PASSWORD_MIN) problems.push(`Password must be at least ${PASSWORD_MIN} characters`);
+  if (password.length < min) problems.push(`Password must be at least ${min} characters`);
   if (password.length > PASSWORD_MAX) problems.push(`Password must be at most ${PASSWORD_MAX} characters`);
   if (!/[a-z]/.test(password)) problems.push('Password must contain a lower-case letter');
   if (!/[A-Z]/.test(password)) problems.push('Password must contain an upper-case letter');
@@ -63,8 +65,8 @@ export function passwordProblems(password: unknown, subject: PasswordSubject = {
 }
 
 /** True when the password is acceptable — the form's own gate, using the same rules as the API. */
-export const passwordAcceptable = (password: unknown, subject: PasswordSubject = {}): boolean =>
-  passwordProblems(password, subject).length === 0;
+export const passwordAcceptable = (password: unknown, subject: PasswordSubject = {}, opts: { minLength?: number } = {}): boolean =>
+  passwordProblems(password, subject, opts).length === 0;
 
 /** Any run of five or more consecutive characters from `run`, forwards or backwards. */
 function runOf(run: string, lower: string): boolean {

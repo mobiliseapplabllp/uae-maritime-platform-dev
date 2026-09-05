@@ -39,7 +39,8 @@ export class AuthGuard implements CanActivate {
     if (!token) throw new UnauthorizedException('Authentication required');
     let claims;
     try { claims = await this.verifier.verify(token); } catch (e) { throw new UnauthorizedException((e as Error).message || 'Invalid token'); }
-    if (claims.typ === 'refresh') throw new UnauthorizedException('Refresh token cannot be used for access');
+    // a refresh token or a half-finished sign-in is never a session
+    if (claims.typ === 'refresh' || claims.typ === 'mfa') throw new UnauthorizedException(claims.typ === 'mfa' ? 'Complete the sign-in first' : 'Refresh token cannot be used for access');
     const principal = await this.resolver.resolve(claims, token);
     if (!principal || !principal.active) throw new UnauthorizedException('Session no longer valid');
     req.user = principal;

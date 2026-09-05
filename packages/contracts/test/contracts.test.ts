@@ -14,12 +14,15 @@ describe('permission catalogue', () => {
     expect(ALL_PERMISSIONS).toHaveLength(66);
     expect(new Set(ALL_PERMISSIONS).size).toBe(66);
   });
-  it('seeds seventeen roles whose permissions are all known, eleven of them system roles', () => {
-    expect(ROLE_CATALOGUE).toHaveLength(17);
-    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(11);
+  it('seeds eighteen roles whose permissions are all known, twelve of them system roles', () => {
+    expect(ROLE_CATALOGUE).toHaveLength(18);
+    // the second administrator: manages accounts and roles, never holds the wildcard, so a privileged grant always has a second pair of eyes
+    expect(ROLE_CATALOGUE.find((r) => r.code === 'IA')?.permissions).toEqual(expect.arrayContaining(['users.manage', 'roles.manage']));
+    expect(ROLE_CATALOGUE.filter((r) => r.mfaRequired === false).map((r) => r.code).sort()).toEqual(['AG', 'MA']);
+    expect(ROLE_CATALOGUE.filter((r) => r.system)).toHaveLength(12);
     for (const r of ROLE_CATALOGUE) for (const p of r.permissions) expect(isKnownPermission(p), `${r.name}: ${p}`).toBe(true);
     const counts = Object.fromEntries(ROLE_CATALOGUE.map((r) => [r.code, r.permissions.length]));
-    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 17, AIG: 8 });
+    expect(counts).toMatchObject({ HM: 27, MS: 26, FO: 16, AG: 12, MA: 10, ND: 14, TS: 8, HO: 9, BC: 7, SO: 6, PP: 5, LO: 11, AP: 10, RS: 23, MV: 17, AIG: 8, IA: 9 });
   });
 
   it('lets somebody other than the administrator approve a model version', () => {

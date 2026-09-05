@@ -87,6 +87,7 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/auth', service: 'identity-access' },
   { prefix: '/api/users', service: 'identity-access' },
   { prefix: '/api/roles', service: 'identity-access' },
+  { prefix: '/api/access-reviews', service: 'identity-access' },
   { prefix: '/api/meta', service: 'identity-access' },
   { prefix: '/api/internal', service: 'identity-access', blocked: true },
   // mdm

@@ -144,6 +144,7 @@ export const MODULES: ModuleDef[] = [
     nav: [{ header: 'Administration', items: [
       { to: '/admin/users', label: 'Users', icon: GroupRoundedIcon, perm: 'users.view' },
       { to: '/admin/roles', label: 'Roles & Permissions', icon: AdminPanelSettingsRoundedIcon, perm: 'roles.view' },
+      { to: '/admin/access-reviews', label: 'Access Reviews', icon: FactCheckRoundedIcon, perm: 'users.view' },
       { to: '/admin/audit', label: 'Audit Log', icon: HistoryRoundedIcon, perm: 'audit.view' },
       { to: '/admin/settings', label: 'Settings', icon: SettingsRoundedIcon, perm: 'settings.view' },
     ] }] },

@@ -23,7 +23,7 @@ export function GlobalProgress() {
 /** Branded centre loader used by Suspense route fallbacks and module switches. */
 export function PageLoader({ label = 'Loading module…' }: { label?: string }) {
   return (
-    <Box sx={{ minHeight: '55vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }} role="status" aria-live="polite">
+    <Box sx={{ minHeight: '55vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2 }} role="status" aria-live="polite" data-testid="page-loader">
       <Box sx={{ position: 'relative', width: 64, height: 64 }}>
         <Box sx={{ position: 'absolute', inset: 0, borderRadius: '50%', background: 'conic-gradient(from 0deg, #0B74B0, #75479C, #BD3861, transparent 78%)', animation: `${spin} 0.9s linear infinite`, WebkitMask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))', mask: 'radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px))' }} />
         <Box sx={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', animation: `${pulse} 1.6s ease-in-out infinite` }}><AnchorRoundedIcon sx={{ color: 'primary.main', fontSize: 26 }} /></Box>

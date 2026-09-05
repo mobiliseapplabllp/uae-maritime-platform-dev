@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Grid, Card, Box, Typography, List, ListItem, ListItemButton, ListItemText, Button, Checkbox, Table, TableHead, TableRow, TableCell, TableBody, Chip, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Skeleton, Divider, IconButton } from '@mui/material';
+import { Grid, Card, Box, Typography, List, ListItem, ListItemButton, ListItemText, Button, Checkbox, Table, TableHead, TableRow, TableCell, TableBody, Chip, TextField, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Skeleton, Divider, IconButton, Switch, FormControlLabel } from '@mui/material';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
@@ -10,7 +10,7 @@ import { hasPerm } from '../../utils/perms';
 import PageHeader from '../../components/common/PageHeader';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 
-interface Role { id: string; name: string; description: string; permissions: string[]; system: boolean; usersCount: number }
+interface Role { id: string; name: string; description: string; permissions: string[]; system: boolean; usersCount: number; mfaRequired: boolean; pendingChange?: { id: string; kind: string } | null }
 interface Group { module: string; label: string; actions: string[] }
 const COLS = ['view', 'create', 'edit', 'delete', 'manage', 'transition', 'close', 'issue', 'pay', 'approve', 'apply', 'assess', 'grant', 'use', 'configure', 'review'];
 
@@ -21,6 +21,7 @@ export default function RolesPage() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [selected, setSelected] = useState<Role | null>(null);
   const [perms, setPerms] = useState<string[]>([]);
+  const [mfaRequired, setMfaRequired] = useState(true);
   const [dirty, setDirty] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newVals, setNewVals] = useState({ name: '', description: '' });
@@ -31,7 +32,7 @@ export default function RolesPage() {
 
   const load = useCallback((keepId?: string) => Promise.all([api.get<Role[]>('/roles'), api.get<{ permissionGroups: Group[] }>('/meta')]).then(([r, m]) => {
     setRoles(r.data); setGroups(m.data.permissionGroups);
-    setSelected((prev) => { const pick = r.data.find((x) => x.id === (keepId || prev?.id)) || r.data[0]; setPerms(pick?.permissions || []); setDirty(false); return pick; });
+    setSelected((prev) => { const pick = r.data.find((x) => x.id === (keepId || prev?.id)) || r.data[0]; setPerms(pick?.permissions || []); setMfaRequired(pick?.mfaRequired ?? true); setDirty(false); return pick; });
   }).catch(err), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
@@ -44,7 +45,7 @@ export default function RolesPage() {
 
   return (
     <>
-      <PageHeader icon={AdminPanelSettingsRoundedIcon} iconColor="#0A2239" title="Roles & permissions" sub="What each role can see and do — changes apply on the user's next request"
+      <PageHeader icon={AdminPanelSettingsRoundedIcon} iconColor="#0A2239" title="Roles & permissions" sub="What each role can see and do — changes apply at once; a change to a privileged role waits for a second administrator"
         actions={canManage && <Button variant="contained" startIcon={<AddRoundedIcon />} onClick={() => { setNewVals({ name: '', description: '' }); setCreating(true); }}>New role</Button>} />
       <Grid container spacing={2}>
         <Grid item xs={12} md={3.5}>
@@ -52,8 +53,8 @@ export default function RolesPage() {
             <List dense disablePadding aria-label="Roles">
               {roles.map((r) => (
                 <ListItem key={r.id} disablePadding secondaryAction={canManage && !r.system ? <IconButton size="small" color="error" edge="end" aria-label={`Delete ${r.name}`} onClick={() => setDeleting(r)}><DeleteOutlineRoundedIcon fontSize="small" /></IconButton> : undefined}>
-                  <ListItemButton selected={selected?.id === r.id} onClick={() => { setSelected(r); setPerms(r.permissions); setDirty(false); }}>
-                    <ListItemText primary={<Stack direction="row" spacing={1} alignItems="center"><span style={{ fontWeight: 600 }}>{r.name}</span>{r.system && <Chip size="small" variant="outlined" label="system" sx={{ height: 18, fontSize: 10 }} />}</Stack>}
+                  <ListItemButton selected={selected?.id === r.id} onClick={() => { setSelected(r); setPerms(r.permissions); setMfaRequired(r.mfaRequired ?? true); setDirty(false); }}>
+                    <ListItemText primary={<Stack direction="row" spacing={1} alignItems="center"><span style={{ fontWeight: 600 }}>{r.name}</span>{r.system && <Chip size="small" variant="outlined" label="system" sx={{ height: 18, fontSize: 10 }} />}{r.pendingChange && <Chip size="small" color="warning" label="awaiting approval" sx={{ height: 18, fontSize: 10 }} />}</Stack>}
                       secondary={`${r.usersCount} user(s) · ${r.permissions.includes('*') ? 'all permissions' : `${r.permissions.length} permissions`}`} />
                   </ListItemButton>
                 </ListItem>
@@ -66,7 +67,8 @@ export default function RolesPage() {
             <Box sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
               <Box sx={{ flex: 1, minWidth: 220 }}><Typography variant="h6" sx={{ fontSize: 15 }}>{selected?.name}</Typography><Typography variant="caption" color="text.secondary">{selected?.description}</Typography></Box>
               {isSuper && <Chip color="primary" size="small" label="Full access — not editable" />}
-              {editable && dirty && <Button variant="contained" size="small" disabled={busy} onClick={() => { if (!selected) return; setBusy(true); api.put(`/roles/${selected.id}`, { permissions: perms }).then(() => { dispatch(notify('Permissions saved')); load(selected.id); }).catch(err).finally(() => setBusy(false)); }}>Save changes</Button>}
+              <FormControlLabel control={<Switch size="small" checked={isSuper || mfaRequired} disabled={!editable} onChange={(e) => { setMfaRequired(e.target.checked); setDirty(true); }} inputProps={{ 'aria-label': 'Two-step verification required' }} />} label={<Typography variant="body2">Two-step verification required</Typography>} />
+              {editable && dirty && <Button variant="contained" size="small" disabled={busy} onClick={() => { if (!selected) return; setBusy(true); api.put<Role>(`/roles/${selected.id}`, { permissions: perms, mfaRequired }).then((r) => { dispatch(notify(r.data.pendingChange ? 'Sent for approval — a second administrator must approve a change to a privileged role' : 'Permissions saved')); load(selected.id); }).catch(err).finally(() => setBusy(false)); }}>Save changes</Button>}
             </Box>
             <Divider />
             <Box sx={{ overflowX: 'auto' }}>

@@ -1,5 +1,7 @@
-/** The seventeen roles delivered with the platform. Eleven are system roles guaranteed by the seeder. */
-export interface RoleDefinition { code: string; name: string; description: string; system: boolean; permissions: string[] }
+/** The eighteen roles delivered with the platform. Twelve are system roles guaranteed by the seeder. */
+/** `mfaRequired` absent means required: the administration's own staff always carry a second factor; only the two external
+ * tenants are exempt by default, and an administrator can change either on the Roles screen. */
+export interface RoleDefinition { code: string; name: string; description: string; system: boolean; permissions: string[]; mfaRequired?: boolean }
 
 const P = (...ps: string[]) => ps;
 
@@ -21,13 +23,13 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
     permissions: P('dashboard.view','portcalls.view','vessels.view','invoices.view','invoices.create',
       'invoices.issue','invoices.pay','invoices.delete','tariffs.view','tariffs.manage','masters.view',
       'legislation.view','facilities.view','ai.use','reports.view','incidents.view') },
-  { code: 'AG', name: 'Shipping Agent', description: 'External agent — announce calls, track invoices', system: true,
+  { code: 'AG', name: 'Shipping Agent', description: 'External agent — announce calls, track invoices', system: true, mfaRequired: false,
     // facilities.view opens the company directory and the licence register. For an agent that is their own
     // entry and their own licences: the tenancy predicate on those registers is ownership, so the permission
     // grants a view of themselves, not of the industry.
     permissions: P('dashboard.view','vessels.view','portcalls.view','portcalls.create','invoices.view','legislation.view','ai.use',
       'registry.view','registry.apply','services.view','services.apply','facilities.view') },
-  { code: 'MA', name: 'Manning Agent', description: 'Licensed recruitment and placement service — its own seafarers', system: true,
+  { code: 'MA', name: 'Manning Agent', description: 'Licensed recruitment and placement service — its own seafarers', system: true, mfaRequired: false,
     // A manning agency is licensed under MLC 2006 Regulation 1.4 and answers to the administration for the
     // seafarers it places. It reads and maintains its own placements — the register partitions on the agent
     // named on each seafarer — and nothing of any other agency's crew.
@@ -71,6 +73,15 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
    * register, issue an instrument or raise an invoice. */
   { code: 'AIG', name: 'AI Governance', description: 'Approves, deploys and retires model versions; reads the assurance record', system: true,
     permissions: P('dashboard.view','models.view','models.manage','models.deploy','agents.view','ai.use','reports.view','audit.view') },
+  /* The second administrator.
+   *
+   * A grant of a privileged role — one holding the wildcard, or the right to manage users or roles — is applied only
+   * when a second administrator approves it, and the person who asked cannot be the person who approves. With one
+   * administrator that control could never be satisfied, so the platform ships with a role that can manage accounts and
+   * roles without holding the wildcard: it can approve what the Super Admin asks for, and the Super Admin can approve
+   * what it asks for, and neither can approve their own. */
+  { code: 'IA', name: 'Identity Administrator', description: 'Manages accounts, roles, approvals and access reviews — the second pair of eyes on a privileged grant', system: true,
+    permissions: P('dashboard.view','users.view','users.manage','roles.view','roles.manage','audit.view','settings.view','reports.view','ai.use') },
   { code: 'MV', name: 'Management Viewer', description: 'Read-only management view across modules', system: false,
     permissions: P('dashboard.view','portcalls.view','vessels.view','incidents.view','inspections.view','invoices.view','legislation.view','facilities.view','reports.view','nmc.view','risk.view','seafarers.view','ai.use',
       'registry.view','services.view','agents.view','models.view') },

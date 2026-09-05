@@ -15,8 +15,13 @@ describe('world', () => {
     for (const s of SECTIONS) { const rows = w[s] as { id: string }[]; expect(rows.length, s).toBeGreaterThan(0); for (const r of rows) expect(r.id, s).toMatch(UUID); expect(ids(rows).size, s).toBe(rows.length); }
   });
   it('is deterministic — two builds are deep-equal', () => { expect(buildWorld({ profile: 'AE', now })).toEqual(w); });
-  it('seeds the nine login accounts, staff and a directory of about 130 users with unique emails', () => {
-    expect(w.users.filter((u) => u.login)).toHaveLength(9);
+  it('seeds the twelve login accounts, staff and a directory of about 130 users with unique emails', () => {
+    expect(w.users.filter((u) => u.login)).toHaveLength(12);
+    // the second administrator, and the two containment scopes the registers enforce but nobody exercised before
+    expect(w.users.find((u) => u.email === 'idadmin@maritime.example')?.roleName).toBe('Identity Administrator');
+    expect(w.users.find((u) => u.email === 'portofficer@maritime.example')?.scope).toEqual({ level: 'PORT', ports: ['AEFJR'] });
+    expect(w.users.find((u) => u.email === 'terminal@maritime.example')?.scope).toEqual({ level: 'FACILITY', facilities: ['CT3-1'], ports: ['AEAUH'] });
+    expect(buildWorld({ profile: 'IN', now }).users.find((u) => u.email === 'portofficer@maritime.example')?.scope).toEqual({ level: 'PORT', ports: ['INMRM'] });
     expect(w.users.length).toBeGreaterThanOrEqual(125);
     expect(new Set(w.users.map((u) => u.email)).size).toBe(w.users.length);
     expect(w.users.find((u) => u.email === 'admin@maritime.example')?.roleName).toBe('Super Admin');

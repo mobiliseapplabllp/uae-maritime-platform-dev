@@ -7,6 +7,13 @@ export interface Subscription { stop(): Promise<void> }
 export interface EventBus {
   publish(subject: string, event: EventEnvelope): Promise<void>;
   subscribe(name: string, subjects: string[], handler: EventHandler): Promise<Subscription>;
+  /**
+   * A watch is the other kind of subscription: every running instance receives every matching event from now on, nothing
+   * is replayed and nothing is acknowledged. It is for signals a process keeps in memory — a cache to drop, a setting to
+   * re-read — where a durable consumer would be wrong twice over: it would hand each event to one instance only, and it
+   * would replay history into a fresh cache that has nothing to drop.
+   */
+  watch(subjects: string[], handler: EventHandler): Promise<Subscription>;
   close(): Promise<void>;
 }
 
@@ -33,6 +40,7 @@ export class MemoryBus implements EventBus {
     this.subs.push(sub);
     return { stop: async () => { this.subs = this.subs.filter((s) => s !== sub); } };
   }
+  async watch(subjects: string[], handler: EventHandler): Promise<Subscription> { return this.subscribe(`watch-${this.subs.length}`, subjects, handler); }
   async drain() { await Promise.all(this.subs.map((s) => s.queue)); }
   async close() { this.subs = []; }
 }
@@ -74,6 +82,20 @@ export class NatsBus implements EventBus {
       }
     })().catch((e) => this.log?.error({ err: e }, 'consumer loop ended'));
     return { stop: async () => { stopped = true; messages.stop(); } };
+  }
+  async watch(subjects: string[], handler: EventHandler): Promise<Subscription> {
+    // Core NATS subscriptions: JetStream publishes on the plain subject, so a core subscriber sees the same message the
+    // stream captured, on every instance, with no consumer state anywhere.
+    const subs = subjects.map((subject) => this.nc.subscribe(subject));
+    for (const sub of subs) {
+      (async () => {
+        for await (const m of sub) {
+          try { await handler(JSONCodec<EventEnvelope>().decode(m.data), m.subject); }
+          catch (e) { this.log?.warn({ err: e, subject: m.subject }, 'watch handler failed'); }
+        }
+      })().catch((e) => this.log?.error({ err: e }, 'watch loop ended'));
+    }
+    return { stop: async () => { for (const sub of subs) sub.unsubscribe(); } };
   }
   async close() { await this.nc.drain(); }
 }

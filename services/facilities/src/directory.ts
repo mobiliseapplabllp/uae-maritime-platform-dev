@@ -235,7 +235,10 @@ export function ratingFrom(entries: RatingEntry[], now = new Date()): number | n
     weighted += value * w;
     weight += w;
   }
-  return Math.round((weighted / weight) * 10) / 10;
+  // Half-up to one decimal. A lone entry scored 55 is exactly 2.75, and the weighted division lands a few
+  // ulps under it once the recency weight is fractionally below 1 — the nudge keeps that a 2.8, not a 2.7
+  // that depends on the time of day.
+  return Math.round((weighted / weight) * 10 + 1e-9) / 10;
 }
 /** The rating with its working shown: every entry that went in, and what each one contributed. */
 export function ratingBreakdown(entries: RatingEntry[], now = new Date()) {

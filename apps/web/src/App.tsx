@@ -12,6 +12,7 @@ import { clearSnackbar } from './store/uiSlice';
 import { setProfile, type Profile } from './config/runtime';
 import api from './api/client';
 import AppShell from './components/shell/AppShell';
+import IdleWatch from './components/shell/IdleWatch';
 import { PageLoader } from './components/common/Loaders';
 import { StatePage } from './components/common/StatePage';
 import { Guard, ROUTES, PUBLIC_ROUTES } from './routes';
@@ -40,7 +41,7 @@ export default function App() {
         <Suspense fallback={<PageLoader />}>
           <Routes>
             {PUBLIC_ROUTES.map((r) => <Route key={r.path} path={r.path} element={r.path === '/login' && user ? <Navigate to="/" replace /> : r.element} />)}
-            <Route element={user ? <AppShell /> : <Navigate to="/login" replace state={{ from: location }} />}>
+            <Route element={user ? <><IdleWatch /><AppShell /></> : <Navigate to="/login" replace state={{ from: location }} />}>
               {ROUTES.map((r) => <Route key={r.path} path={r.path} element={r.redirect ? <Navigate to={r.redirect} replace /> : <Guard perm={r.perm}>{r.element}</Guard>} />)}
               <Route path="*" element={<StatePage code="404" title={t('common.notFound')} message={t('common.notFoundMsg')} />} />
             </Route>

@@ -382,6 +382,70 @@ async function main() {
     const unknown = await http('/public/legislation/NO-SUCH-1%2F2099');
     return unknown.status === 404 ? null : `an unknown reference answered ${unknown.status}`;
   });
+  // ---------------------------------------------------------------- Access controls (A07 identification and authentication, A01 access control)
+  await probe('a half-finished sign-in is not a session: the second-step token opens nothing', 'A07', 'high', async () => {
+    // the sign-in of an account past its enrolment deadline stops with an enrolment token; that token must open nothing
+    const s = await login('surveyor@maritime.example');
+    const claims = JSON.parse(Buffer.from(s.token.split('.')[1], 'base64url').toString('utf8'));
+    const forged = tamper(s.token, () => ({ ...claims, typ: 'mfa', purpose: 'enrol' }));
+    const me = await http('/auth/me', { token: forged });
+    if (me.status !== 401) return `a token retyped as a second-step token answered ${me.status}`;
+    const verify = await http('/auth/mfa/verify', { method: 'POST', body: JSON.stringify({ mfaToken: s.token, code: '000000' }) });
+    return verify.status === 401 ? null : `an access token was accepted as a second-step token (${verify.status})`;
+  });
+  await probe('a revoked session cannot refresh, and its access token stops answering', 'A07', 'high', async () => {
+    const s = await login('surveyor@maritime.example');
+    const ended = await http('/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken: s.refreshToken }), token: s.token });
+    if (ended.status >= 400) return `sign-out answered ${ended.status}`;
+    const again = await http('/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: s.refreshToken }) });
+    if (again.status !== 401) return `a refresh token from an ended session answered ${again.status}`;
+    const me = await http('/auth/me', { token: s.token });
+    return me.status === 401 ? null : `an access token from an ended session still answered ${me.status}`;
+  });
+  await probe('a privileged grant is not applied by the administrator who asks for it', 'A01', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const roles = await http('/roles', { token: admin.token });
+    const ia = (roles.body?.data ?? []).find((r: any) => r.code === 'IA');
+    const pilots = await http('/users?role=Port%20Pilot&active=true&limit=50', { token: admin.token });
+    const pilot = (pilots.body?.data ?? [])[0];
+    if (!ia || !pilot) return 'SKIP: no Identity Administrator role or no pilot to test with';
+    const ask = await http(`/users/${pilot.id}`, { method: 'PUT', body: JSON.stringify({ roleId: ia.id, reason: 'dynamic probe' }), token: admin.token });
+    const pending = ask.body?.data?.pendingChange;
+    try {
+      if (ask.status !== 200 || !pending) return `the grant was applied at once (${ask.status}, role now ${ask.body?.data?.role?.name})`;
+      const self = await http(`/users/changes/${pending.id}/approve`, { method: 'POST', body: '{}', token: admin.token });
+      if (self.status !== 403) return `the requester could approve their own request (${self.status})`;
+      const after = await http(`/users/${pilot.id}`, { token: admin.token });
+      return after.body?.data?.role?.name === 'Port Pilot' ? null : `the role changed without approval to ${after.body?.data?.role?.name}`;
+    } finally { if (pending) await http(`/users/changes/${pending.id}/cancel`, { method: 'POST', body: '{}', token: admin.token }); }
+  });
+  await probe('an administrator cannot change their own role or scope, and the last one cannot be switched off', 'A01', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const roles = await http('/roles', { token: admin.token });
+    const pp = (roles.body?.data ?? []).find((r: any) => r.code === 'PP');
+    const demote = await http(`/users/${admin.user.id}`, { method: 'PUT', body: JSON.stringify({ roleId: pp?.id }), token: admin.token });
+    if (demote.status !== 403) return `an administrator could change their own role (${demote.status})`;
+    const scope = await http(`/users/${admin.user.id}`, { method: 'PUT', body: JSON.stringify({ scope: { level: 'PORT', ports: ['AEFJR'] } }), token: admin.token });
+    if (scope.status !== 403) return `an administrator could change their own scope (${scope.status})`;
+    const second = await login('idadmin@maritime.example').catch(() => null);
+    if (!second) return 'SKIP: no second administrator to try with';
+    const off = await http(`/users/${admin.user.id}`, { method: 'PUT', body: JSON.stringify({ active: false }), token: second.token });
+    return off.status === 409 ? null : `the last account holding every permission could be switched off (${off.status})`;
+  });
+  await probe('a port-scoped account reads its port, not the nation; a facility account is contained to its port', 'A01', 'high', async () => {
+    const officer = await login('portofficer@maritime.example').catch(() => null);
+    const terminal = await login('terminal@maritime.example').catch(() => null);
+    const admin = await login('admin@maritime.example');
+    if (!officer || !terminal) return 'SKIP: the port and facility accounts are not seeded';
+    const all = await http('/port-calls?limit=1', { token: admin.token });
+    const mine = await http('/port-calls?limit=1', { token: officer.token });
+    if (mine.status !== 200) return `the port officer cannot read the call register (${mine.status})`;
+    const nAll = Number(all.body?.meta?.total ?? 0); const nMine = Number(mine.body?.meta?.total ?? 0);
+    if (!(nMine < nAll)) return `the port officer at ${officer.user.scope?.ports?.join(',')} sees ${nMine} of ${nAll} calls — not contained to their port`;
+    const contained = await http('/port-calls?limit=1', { token: terminal.token });
+    return contained.status === 200 ? null : `the facility account cannot read the call register of its own port (${contained.status})`;
+  });
+
   await probe('the public feed and sitemap publish addresses, not identifiers', 'A01', 'medium', async () => {
     const feed = await http('/public/legislation/feed?days=3650');
     if (feed.status !== 200) return `the feed answered ${feed.status}`;

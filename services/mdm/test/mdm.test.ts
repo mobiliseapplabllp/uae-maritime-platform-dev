@@ -112,4 +112,13 @@ describe('the company directory and the company file', () => {
     const carrying = rows.filter((c: { taxId?: string }) => 'taxId' in c).map((c: { code: string }) => c.code);
     expect(carrying, 'the list handed over more than the reader owns').toEqual(['GSS']);
   });
+
+  it('re-seeds without undoing an operator choice, drops a retired key and raises a password floor below the platform minimum', async () => {
+    const pool = new Pool({ connectionString: URL });
+    await pool.query(`UPDATE settings SET value = value || '{"accessReviewDays": 45, "sessionTimeoutMin": 60, "passwordMinLength": 8}'::jsonb WHERE key = 'module:admin'`);
+    await seedMdm(URL, 'AE');
+    const { rows } = await pool.query("SELECT value FROM settings WHERE key = 'module:admin'"); await pool.end();
+    expect(rows[0].value).toMatchObject({ accessReviewDays: 45, passwordMinLength: 12, mfaGraceDays: 14 });
+    expect(rows[0].value).not.toHaveProperty('sessionTimeoutMin');
+  });
 });

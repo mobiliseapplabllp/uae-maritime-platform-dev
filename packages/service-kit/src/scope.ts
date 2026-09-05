@@ -52,13 +52,33 @@ export interface ScopeOptions {
   alias?: string;
 }
 
-/** The keys a scope holds at its own level. A scope is a claim about one level; its other lists do not widen it. */
+/** The keys a scope holds at one partition, deduplicated and without blanks. */
+export function keysAt(scope: TenancyScope | undefined, partition: ScopePartition): string[] {
+  if (!scope) return [];
+  const lists: Record<ScopePartition, readonly string[] | undefined> = { port: scope.ports, zone: scope.zones, facility: scope.facilities, company: scope.companies };
+  return [...new Set((lists[partition] ?? []).map((k) => String(k)).filter(Boolean))];
+}
+/** The keys a scope holds at its own level. A scope is a claim about one level; its other lists never widen it. */
 export function keysOf(scope: TenancyScope | undefined): string[] {
   if (!scope) return [];
-  const lists: Record<ScopeLevel, readonly string[] | undefined> = {
-    NATIONAL: undefined, PORT: scope.ports, ZONE: scope.zones, FACILITY: scope.facilities, COMPANY: scope.companies,
-  };
-  return [...new Set((lists[scope.level] ?? []).map((k) => String(k)).filter(Boolean))];
+  const partition = PARTITION_OF[scope.level];
+  return partition ? keysAt(scope, partition) : [];
+}
+/**
+ * Containment is a hierarchy: a facility sits inside a port, a zone sits inside a port. A register partitioned by port
+ * but not by facility still contains a facility-scoped reader — to the port their facility is in — provided the scope
+ * says which port that is. The broader lists can only narrow: a facility reader with no port named on their scope reads
+ * a port-partitioned register in full, exactly as before, because the platform has nothing to narrow it to.
+ */
+const CONTAINMENT_CHAIN: Record<ScopePartition, ScopePartition[]> = { port: ['port'], zone: ['zone', 'port'], facility: ['facility', 'zone', 'port'], company: ['company'] };
+function containment(scope: TenancyScope, partition: ScopePartition, columns: readonly ScopePartition[]): { partition: ScopePartition; keys: string[] } | null {
+  for (const p of CONTAINMENT_CHAIN[partition]) {
+    if (!columns.includes(p)) continue;
+    if (p === partition) return { partition: p, keys: keysAt(scope, p) };
+    const keys = keysAt(scope, p);
+    if (keys.length) return { partition: p, keys };
+  }
+  return null;
 }
 
 /** True when this principal is unrestricted. An absent or unrecognised scope is never treated as national. */
@@ -91,11 +111,12 @@ export function scopeWhere(scope: TenancyScope | undefined, where: string[], arg
 
   // Containment: a register that is not partitioned this way is not restricted this way either — a port
   // officer sees the whole ship register, because the ship register belongs to the administration, not to
-  // a port.
-  if (!has) return false;
-  const col = `${p}${scopeColumn(partition)}`;
-  if (!keys.length) { where.push(`${col} = ''`); return true; }
-  args.push(keys);
+  // a port. A facility or zone reader is contained to their port on a port-partitioned register.
+  const c = containment(scope!, partition, opts.columns);
+  if (!c) return false;
+  const col = `${p}${scopeColumn(c.partition)}`;
+  if (!c.keys.length) { where.push(`${col} = ''`); return true; }
+  args.push(c.keys);
   where.push(`(${col} = '' OR ${col} = ANY($${args.length}))`);
   return true;
 }
@@ -129,9 +150,10 @@ export function visibleTo(scope: TenancyScope | undefined, record: ScopeRef | un
     const owner = keyOn(record, partition);
     return owner !== '' && keys.includes(owner);
   }
-  if (!has) return true;
-  const key = keyOn(record, partition);
-  return key === '' || keys.includes(key);
+  const c = containment(scope!, partition, opts.columns);
+  if (!c) return true;
+  const key = keyOn(record, c.partition);
+  return key === '' || c.keys.includes(key);
 }
 
 /**

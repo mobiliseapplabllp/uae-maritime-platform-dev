@@ -4,7 +4,7 @@ import { buildWorld, DEMO_PASSWORD } from '@maritime/world';
 import { createDb, runMigrations, withTx } from '@maritime/service-kit';
 import { env } from './env';
 
-/** Seeds the fifteen roles and the fictional staff directory. Idempotent: rows are upserted by name/email. */
+/** Seeds the roles and the fictional staff directory. Idempotent: rows are upserted by name/email. */
 export async function seedIdentity(databaseUrl: string, profile?: string) {
   const { pool } = createDb(databaseUrl);
   await runMigrations(pool, join(__dirname, '..', 'migrations'));
@@ -14,8 +14,9 @@ export async function seedIdentity(databaseUrl: string, profile?: string) {
     const roleIds = new Map<string, string>();
     for (const r of world.roles) {
       const row = await c.query<{ id: string }>(
-        'INSERT INTO roles(code, name, description, permissions, system) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (name) DO UPDATE SET code = EXCLUDED.code, description = EXCLUDED.description, permissions = EXCLUDED.permissions, system = EXCLUDED.system, updated_at = now() RETURNING id',
-        [r.code, r.name, r.description, r.permissions, r.system]);
+        `INSERT INTO roles(code, name, description, permissions, system, mfa_required) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (name) DO UPDATE SET code = EXCLUDED.code, description = EXCLUDED.description, permissions = EXCLUDED.permissions, system = EXCLUDED.system, mfa_required = EXCLUDED.mfa_required RETURNING id`,
+        [r.code, r.name, r.description, r.permissions, r.system, r.mfaRequired !== false]);
       roleIds.set(r.name, row.rows[0].id);
     }
     for (const u of world.users) {

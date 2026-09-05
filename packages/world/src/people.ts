@@ -18,6 +18,14 @@ const ACCOUNT_SCOPES: Record<string, TenancyScope> = {
   // disjoint registers, which is what makes the partition worth demonstrating with two accounts rather than one.
   'crewing@maritime.example': { level: 'COMPANY', companies: ['MCA'] },
 };
+/* The administration's own containment scopes, which are a property of the jurisdiction: a second port's harbour
+ * master reads that port's calls and the whole ship register; a terminal supervisor reads one facility, contained to
+ * the port it stands in. Neither existed before, so the port and facility levels were enforced but never exercised. */
+const CONTAINMENT_SCOPES: Record<string, Record<string, TenancyScope>> = {
+  AE: { 'portofficer@maritime.example': { level: 'PORT', ports: ['AEFJR'] }, 'terminal@maritime.example': { level: 'FACILITY', facilities: ['CT3-1'], ports: ['AEAUH'] } },
+  IN: { 'portofficer@maritime.example': { level: 'PORT', ports: ['INMRM'] }, 'terminal@maritime.example': { level: 'FACILITY', facilities: ['CT3-1'], ports: ['INNSA'] } },
+};
+const scopeFor = (email: string, profile: string): TenancyScope | undefined => ACCOUNT_SCOPES[email] ?? CONTAINMENT_SCOPES[profile]?.[email] ?? CONTAINMENT_SCOPES.AE[email];
 
 const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
   AE: [
@@ -33,6 +41,10 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     // has to be able to approve one. Without this account the gate is unsatisfiable and no new model
     // version can ever reach production.
     ['Dr. Hessa Al Suwaidi', 'aigov@maritime.example', 'AI Governance', 'Chair — AI Governance Committee'],
+    // The second administrator: approves the privileged grants the Super Admin asks for, and vice versa.
+    ['Noora Al Ketbi', 'idadmin@maritime.example', 'Identity Administrator', 'Identity & Access Administrator'],
+    ['Capt. Salem Al Dhanhani', 'portofficer@maritime.example', 'Harbour Master', 'Harbour Master — Fujairah'],
+    ['Mohammed Al Blooshi', 'terminal@maritime.example', 'Terminal Supervisor', 'Shift Supervisor — Container Terminal 3'],
   ],
   IN: [
     ['Ashish Sharma', 'admin@maritime.example', 'Super Admin', 'Port Administrator'],
@@ -44,6 +56,9 @@ const LOGIN_USERS: Record<string, [string, string, string, string][]> = {
     ['Vinod Menon', 'ops2@maritime.example', 'Harbour Master', 'Dy. Harbour Master'],
     ['Lt. Aditi Rathore', 'nmc@maritime.example', 'NMC Duty Officer', 'Duty Officer — Surveillance Centre'],
     ['Dr. Anjali Deshmukh', 'aigov@maritime.example', 'AI Governance', 'Chair — AI Governance Committee'],
+    ['Priya Raghavan', 'idadmin@maritime.example', 'Identity Administrator', 'Identity & Access Administrator'],
+    ['Capt. Vikram Sardesai', 'portofficer@maritime.example', 'Harbour Master', 'Harbour Master — Mormugao'],
+    ['Prakash Salunkhe', 'terminal@maritime.example', 'Terminal Supervisor', 'Shift Supervisor — Container Terminal 3'],
   ],
 };
 const STAFF: Record<string, [string, string, string][]> = {
@@ -103,7 +118,7 @@ const DEPTS: [string, [string, string][], number][] = [
 ];
 const emailOf = (n: string) => `${n.toLowerCase().replace(/\(.*\)/, '').replace(/^(capt|cdr|lt|dr)\.? /, '').trim().replace(/[^a-z]+/g, '.').replace(/^\.|\.$/g, '')}@maritime.example`;
 const phoneOf = (profile: string, i: number) => profile === 'AE' ? `+971 5${String(0 + (i % 9))} ${String(1000000 + i * 3517).slice(0, 3)} ${String(1000000 + i * 3517).slice(3, 7)}` : `+91 98${String(79210000 + i * 3517).slice(0, 8)}`;
-const deptOfRole = (role: string) => ({ 'Harbour Master': 'Marine Operations', 'NMC Duty Officer': 'Marine Operations', 'Marine Surveyor': 'Surveys & Compliance', 'Legal Officer': 'Legal & Regulatory', Approver: 'Legal & Regulatory', 'Finance Officer': 'Finance & Billing', 'Registrar of Ships': 'Ship Registry', 'Super Admin': 'IT & Systems', 'Shipping Agent': 'External' } as Record<string, string>)[role] ?? 'General';
+const deptOfRole = (role: string) => ({ 'Harbour Master': 'Marine Operations', 'NMC Duty Officer': 'Marine Operations', 'Marine Surveyor': 'Surveys & Compliance', 'Legal Officer': 'Legal & Regulatory', Approver: 'Legal & Regulatory', 'Finance Officer': 'Finance & Billing', 'Registrar of Ships': 'Ship Registry', 'Super Admin': 'IT & Systems', 'Identity Administrator': 'IT & Systems', 'Terminal Supervisor': 'Terminal Operations', 'Shipping Agent': 'External', 'Manning Agent': 'External' } as Record<string, string>)[role] ?? 'General';
 
 /** The profile name pools, shared with every generator that names a person (crew, craft masters, contacts). */
 export const NAME_POOLS: Record<string, { first: string[]; last: string[] }> = { AE: { first: FIRST.AE, last: LAST.AE }, IN: { first: FIRST.IN, last: LAST.IN } };
@@ -116,7 +131,7 @@ export function buildPeople(rng: Prng, profile: string, now: Date): WorldUser[] 
   const out: WorldUser[] = [];
   const used = new Set<string>();
   const push = (u: Omit<WorldUser, 'id'>) => { if (used.has(u.email)) return; used.add(u.email); out.push({ id: stableId('user', u.email), ...u }); };
-  LOGIN_USERS[p].forEach(([name, email, roleName, designation], i) => push({ name, email, roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i), login: true, active: true, scope: ACCOUNT_SCOPES[email], lastLoginAt: new Date(now.getTime() - rng.int(1, 40) * H).toISOString() }));
+  LOGIN_USERS[p].forEach(([name, email, roleName, designation], i) => push({ name, email, roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i), login: true, active: true, scope: scopeFor(email, p), lastLoginAt: new Date(now.getTime() - rng.int(1, 40) * H).toISOString() }));
   STAFF[p].forEach(([name, designation, roleName], i) => push({ name, email: emailOf(name), roleName, designation, department: deptOfRole(roleName), phone: phoneOf(p, i + 10), login: false, active: true, lastLoginAt: rng.chance(0.9) ? new Date(now.getTime() - rng.int(1, 900) * H).toISOString() : null }));
   let gi = 0;
   for (const [dept, desigs, count] of DEPTS) {
