@@ -1,7 +1,7 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { projectSnapshot, republishVessel } from './subjects';
 
@@ -16,6 +16,7 @@ import { projectSnapshot, republishVessel } from './subjects';
 export interface Deps { env: Env; audit: AuditClient }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
+  if (await applyLookupEvent(c, event)) return; // the registration variants, transaction types, amendment types and closure grounds
   const vesselId = await projectSnapshot(c, deps.env, event);
   if (!vesselId) return;
   const e = (event.data ?? {}) as Record<string, any>;
@@ -31,6 +32,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
 export const SUBJECTS = [
   subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted),
   subjectFor(EVENTS.mdm.companyUpserted), subjectFor(EVENTS.maritimeCentre.positionUpdated),
+  ...LOOKUP_SUBJECTS,
 ];
 
 @Injectable()

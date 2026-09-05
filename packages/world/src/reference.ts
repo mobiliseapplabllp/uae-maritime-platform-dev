@@ -1,4 +1,5 @@
 import { getJurisdiction } from '@maritime/contracts';
+import { EVIDENCE } from './registry';
 
 export interface WorldLookup { category: string; code: string; label: string; labelAr?: string; meta: Record<string, unknown>; active: boolean }
 const lk = (category: string, code: string, label: string, meta: Record<string, unknown> = {}, labelAr?: string): WorldLookup => ({ category, code, label, labelAr, meta, active: true });
@@ -117,30 +118,46 @@ export function buildLookups(profile: string): WorldLookup[] {
   push('recognisedOrganisation', [['TASNEEF', 'TASNEEF', 'تصنيف', { iacs: true }], ['LR', 'Lloyd\'s Register', 'لويدز ريجستر', { iacs: true }], ['DNV', 'DNV', 'دي إن في', { iacs: true }], ['BV', 'Bureau Veritas', 'بيرو فيريتاس', { iacs: true }],
     ['NK', 'ClassNK', 'كلاس إن كيه', { iacs: true }], ['ABS', 'American Bureau of Shipping', 'المكتب الأمريكي للشحن', { iacs: true }], ['RINA', 'RINA', 'رينا', { iacs: true }], ['CCS', 'China Classification Society', 'جمعية التصنيف الصينية', { iacs: true }],
     ['KR', 'Korean Register', 'السجل الكوري', { iacs: true }], ['IRS', 'Indian Register of Shipping', 'السجل الهندي للشحن', { iacs: true }]]);
+  /* The registration variants. Everything the registrar's runtime needs about a variant is here: the family it belongs to
+   * (opens an entry, alters it, suspends it for a bareboat charter out, closes it, or issues a document against it), its SLA,
+   * the validity of what it issues, the certificate series, the state the ship enters on grant, the fee, and the evidence. */
+  type KindMeta = { family: string; slaDays: number; validityMonths: number | null; issuesCertificate: boolean; closesRegistry: boolean; registryState: string | null; series: string; transactionType: string | null; carving: boolean; fee: number; order: number };
+  const kind = (code: string, label: string, labelAr: string, m: KindMeta): [string, string, string, Record<string, unknown>] => [code, label, labelAr, { ...m, evidence: EVIDENCE[code] ?? [] }];
+  const f = (aed: number, inr: number) => (ae ? aed : inr);
   push('registrationKind', [
-    ['PROVISIONAL', 'Provisional registration', 'تسجيل مؤقت', { slaDays: 7, validityMonths: 6, issuesCertificate: true, closesRegistry: false, order: 1 }],
-    ['PERMANENT', 'Permanent registration', 'تسجيل دائم', { slaDays: 30, validityMonths: null, issuesCertificate: true, closesRegistry: false, order: 2 }],
-    ['BAREBOAT_IN', 'Bareboat charter registration (in)', 'تسجيل بعقد إيجار عاري (وارد)', { slaDays: 21, validityMonths: 24, issuesCertificate: true, closesRegistry: false, order: 3 }],
-    ['BAREBOAT_OUT', 'Bareboat charter registration (out)', 'تسجيل بعقد إيجار عاري (صادر)', { slaDays: 21, validityMonths: 24, issuesCertificate: false, closesRegistry: false, order: 4 }],
-    ['UNDER_CONSTRUCTION', 'Registration of a ship under construction', 'تسجيل سفينة قيد الإنشاء', { slaDays: 21, validityMonths: 24, issuesCertificate: true, closesRegistry: false, order: 5 }],
-    ['TEMPORARY_PASS', 'Temporary pass for a single voyage', 'تصريح مؤقت لرحلة واحدة', { slaDays: 3, validityMonths: 1, issuesCertificate: true, closesRegistry: false, order: 6 }],
-    ['AMENDMENT', 'Amendment of registry particulars', 'تعديل بيانات التسجيل', { slaDays: 15, validityMonths: null, issuesCertificate: false, closesRegistry: false, order: 7 }],
-    ['RE_REGISTRATION', 'Re-registration', 'إعادة التسجيل', { slaDays: 30, validityMonths: null, issuesCertificate: true, closesRegistry: false, order: 8 }],
-    ['DELETION', 'Closure of registry', 'إغلاق التسجيل', { slaDays: 15, validityMonths: null, issuesCertificate: false, closesRegistry: true, order: 9 }]]);
+    kind('PROVISIONAL', 'Provisional registration', 'تسجيل مؤقت', { family: 'FIRST', slaDays: 7, validityMonths: j.registry.provisionalValidityMonths.value, issuesCertificate: true, closesRegistry: false, registryState: 'PROVISIONAL', series: 'PCR', transactionType: 'REGISTRATION', carving: false, fee: f(1500, 15000), order: 1 }),
+    kind('PERMANENT', 'Permanent registration', 'تسجيل دائم', { family: 'FIRST', slaDays: 30, validityMonths: null, issuesCertificate: true, closesRegistry: false, registryState: 'REGISTERED', series: 'CR', transactionType: 'REGISTRATION', carving: true, fee: f(5000, 50000), order: 2 }),
+    kind('BAREBOAT_IN', 'Bareboat charter registration (in)', 'تسجيل بعقد إيجار عاري (وارد)', { family: 'FIRST', slaDays: 21, validityMonths: 24, issuesCertificate: true, closesRegistry: false, registryState: 'BAREBOAT_IN', series: 'BCR', transactionType: 'BAREBOAT_IN', carving: false, fee: f(3000, 30000), order: 3 }),
+    kind('BAREBOAT_OUT', 'Bareboat charter registration (out)', 'تسجيل بعقد إيجار عاري (صادر)', { family: 'OUT', slaDays: 21, validityMonths: 24, issuesCertificate: false, closesRegistry: false, registryState: 'BAREBOAT_OUT', series: 'BBO', transactionType: 'BAREBOAT_OUT', carving: false, fee: f(3000, 30000), order: 4 }),
+    kind('UNDER_CONSTRUCTION', 'Registration of a ship under construction', 'تسجيل سفينة قيد الإنشاء', { family: 'FIRST', slaDays: 21, validityMonths: 24, issuesCertificate: true, closesRegistry: false, registryState: 'PROVISIONAL', series: 'UCR', transactionType: 'REGISTRATION', carving: false, fee: f(2000, 20000), order: 5 }),
+    kind('TEMPORARY_PASS', 'Temporary pass for a single voyage', 'تصريح مؤقت لرحلة واحدة', { family: 'DOCUMENT', slaDays: 3, validityMonths: 1, issuesCertificate: true, closesRegistry: false, registryState: null, series: 'TP', transactionType: 'TEMPORARY_PASS', carving: false, fee: f(500, 5000), order: 6 }),
+    kind('AMENDMENT', 'Amendment of registry particulars', 'تعديل بيانات التسجيل', { family: 'ALTER', slaDays: 15, validityMonths: null, issuesCertificate: true, closesRegistry: false, registryState: null, series: 'CR', transactionType: null, carving: false, fee: f(1000, 10000), order: 7 }),
+    kind('RE_REGISTRATION', 'Re-registration', 'إعادة التسجيل', { family: 'FIRST', slaDays: 30, validityMonths: null, issuesCertificate: true, closesRegistry: false, registryState: 'REGISTERED', series: 'CR', transactionType: 'RE_REGISTRATION', carving: false, fee: f(2500, 25000), order: 8 }),
+    kind('DELETION', 'Closure of registry', 'إغلاق التسجيل', { family: 'CLOSE', slaDays: 15, validityMonths: null, issuesCertificate: true, closesRegistry: true, registryState: 'CLOSED', series: 'DEL', transactionType: 'CLOSURE', carving: false, fee: f(500, 5000), order: 9 })]);
+  /* What can be recorded against an entry. `direct` transactions are recorded on the register by the registrar without an
+   * application; the rest arrive through a registration journey and are written when it is granted. */
   push('registryTransactionType', [
-    ['MORTGAGE_REGISTRATION', 'Registration of a mortgage', 'تسجيل رهن', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-MORTGAGE', order: 1 }],
-    ['MORTGAGE_DISCHARGE', 'Discharge of a mortgage', 'فك رهن', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-MORTGAGE', order: 2 }],
-    ['MORTGAGE_TRANSFER', 'Transfer of a mortgage', 'نقل رهن', { affectsTitle: false, requiresConsent: true, feeCode: 'REG-MORTGAGE', order: 3 }],
-    ['TRANSFER_OF_OWNERSHIP', 'Transfer of ownership', 'نقل الملكية', { affectsTitle: true, requiresConsent: true, feeCode: 'REG-AMENDMENT', order: 4 }],
-    ['CHANGE_OF_NAME', 'Change of name', 'تغيير الاسم', { affectsTitle: false, requiresConsent: true, feeCode: 'REG-AMENDMENT', order: 5 }],
-    ['CHANGE_OF_PORT', 'Change of port of registry', 'تغيير ميناء التسجيل', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-AMENDMENT', order: 6 }],
-    ['CHANGE_OF_MANAGER', 'Change of manager', 'تغيير المدير', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-AMENDMENT', order: 7 }],
-    ['CHANGE_OF_TONNAGE', 'Change of tonnage or particulars', 'تغيير الحمولة أو البيانات', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-AMENDMENT', order: 8 }],
-    ['CAVEAT', 'Caveat lodged', 'تسجيل اعتراض', { affectsTitle: true, requiresConsent: false, feeCode: '', order: 9 }],
-    ['CAVEAT_WITHDRAWAL', 'Caveat withdrawn', 'سحب الاعتراض', { affectsTitle: true, requiresConsent: false, feeCode: '', order: 10 }],
-    ['TRANSCRIPT', 'Transcript of registry issued', 'إصدار مستخرج من السجل', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-TRANSCRIPT', order: 11 }],
-    ['CERTIFICATE_REISSUE', 'Certificate of registry reissued', 'إعادة إصدار شهادة التسجيل', { affectsTitle: false, requiresConsent: false, feeCode: 'REG-REISSUE', order: 12 }]]);
-  push('amendmentType', [['NAME', 'Name', 'الاسم'], ['OWNERSHIP', 'Ownership', 'الملكية'], ['PORT_OF_REGISTRY', 'Port of registry', 'ميناء التسجيل'], ['TONNAGE', 'Tonnage', 'الحمولة'], ['ALTERATION', 'Alteration of the ship', 'تعديل في السفينة'], ['MANAGER', 'Manager', 'المدير'], ['MORTGAGE', 'Mortgage', 'الرهن']]);
+    ['REGISTRATION', 'Ship registered', 'تسجيل السفينة', { affectsTitle: true, requiresConsent: false, direct: false, feeCode: '', order: 1 }],
+    ['RE_REGISTRATION', 'Ship re-registered', 'إعادة تسجيل السفينة', { affectsTitle: true, requiresConsent: false, direct: false, feeCode: '', order: 2 }],
+    ['BAREBOAT_IN', 'Bareboat charter registered in', 'تسجيل إيجار عارٍ وارد', { affectsTitle: false, requiresConsent: true, direct: false, feeCode: '', order: 3 }],
+    ['BAREBOAT_OUT', 'Bareboat charter registered out', 'تسجيل إيجار عارٍ صادر', { affectsTitle: false, requiresConsent: true, direct: false, feeCode: '', order: 4 }],
+    ['TEMPORARY_PASS', 'Temporary pass issued', 'إصدار تصريح مؤقت', { affectsTitle: false, requiresConsent: false, direct: false, feeCode: '', order: 5 }],
+    ['CLOSURE', 'Registry closed', 'إغلاق التسجيل', { affectsTitle: true, requiresConsent: true, direct: false, feeCode: '', order: 6 }],
+    ['MORTGAGE_REGISTRATION', 'Registration of a mortgage', 'تسجيل رهن', { affectsTitle: false, requiresConsent: false, direct: true, feeCode: 'REG-MORTGAGE', order: 7 }],
+    ['MORTGAGE_DISCHARGE', 'Discharge of a mortgage', 'فك رهن', { affectsTitle: false, requiresConsent: false, direct: true, feeCode: 'REG-MORTGAGE', order: 8 }],
+    ['MORTGAGE_TRANSFER', 'Transfer of a mortgage', 'نقل رهن', { affectsTitle: false, requiresConsent: true, direct: true, feeCode: 'REG-MORTGAGE', order: 9 }],
+    ['TRANSFER_OF_OWNERSHIP', 'Transfer of ownership', 'نقل الملكية', { affectsTitle: true, requiresConsent: true, direct: false, feeCode: 'REG-AMENDMENT', order: 10 }],
+    ['CHANGE_OF_NAME', 'Change of name', 'تغيير الاسم', { affectsTitle: false, requiresConsent: true, direct: false, feeCode: 'REG-AMENDMENT', order: 11 }],
+    ['CHANGE_OF_PORT', 'Change of port of registry', 'تغيير ميناء التسجيل', { affectsTitle: false, requiresConsent: false, direct: false, feeCode: 'REG-AMENDMENT', order: 12 }],
+    ['CHANGE_OF_MANAGER', 'Change of manager', 'تغيير المدير', { affectsTitle: false, requiresConsent: false, direct: true, feeCode: 'REG-AMENDMENT', order: 13 }],
+    ['CHANGE_OF_TONNAGE', 'Change of tonnage or particulars', 'تغيير الحمولة أو البيانات', { affectsTitle: false, requiresConsent: false, direct: false, feeCode: 'REG-AMENDMENT', order: 14 }],
+    ['ALTERATION', 'Alteration of the ship recorded', 'تسجيل تعديل في السفينة', { affectsTitle: false, requiresConsent: false, direct: false, feeCode: 'REG-AMENDMENT', order: 15 }],
+    ['CAVEAT', 'Caveat lodged', 'تسجيل اعتراض', { affectsTitle: true, requiresConsent: false, direct: true, feeCode: '', order: 16 }],
+    ['CAVEAT_WITHDRAWAL', 'Caveat withdrawn', 'سحب الاعتراض', { affectsTitle: true, requiresConsent: false, direct: true, feeCode: '', order: 17 }],
+    ['TRANSCRIPT', 'Transcript of registry issued', 'إصدار مستخرج من السجل', { affectsTitle: false, requiresConsent: false, direct: true, feeCode: 'REG-TRANSCRIPT', order: 18 }],
+    ['CERTIFICATE_REISSUE', 'Certificate of registry reissued', 'إعادة إصدار شهادة التسجيل', { affectsTitle: false, requiresConsent: false, direct: true, feeCode: 'REG-REISSUE', order: 19 }]]);
+  push('amendmentType', [['NAME', 'Name', 'الاسم', { transactionType: 'CHANGE_OF_NAME', needsApproval: true }], ['OWNERSHIP', 'Ownership', 'الملكية', { transactionType: 'TRANSFER_OF_OWNERSHIP', needsApproval: false }], ['PORT_OF_REGISTRY', 'Port of registry', 'ميناء التسجيل', { transactionType: 'CHANGE_OF_PORT', needsApproval: false }],
+    ['TONNAGE', 'Tonnage', 'الحمولة', { transactionType: 'CHANGE_OF_TONNAGE', needsApproval: false }], ['ALTERATION', 'Alteration of the ship', 'تعديل في السفينة', { transactionType: 'ALTERATION', needsApproval: false }], ['MANAGER', 'Manager', 'المدير', { transactionType: 'CHANGE_OF_MANAGER', needsApproval: false }], ['MORTGAGE', 'Mortgage', 'الرهن', { transactionType: 'MORTGAGE_REGISTRATION', needsApproval: false }]]);
   push('deletionReason', [['SOLD_FOREIGN', 'Sold to a foreign owner', 'بيعت لمالك أجنبي'], ['TRANSFER_OF_REGISTRY', 'Transfer to another registry', 'نقل إلى سجل آخر'], ['BROKEN_UP', 'Broken up', 'تفكيك'], ['TOTAL_LOSS', 'Total loss', 'خسارة كلية'], ['MISSING', 'Missing', 'مفقودة'], ['CEASED_TO_QUALIFY', 'Ceased to qualify', 'لم تعد مؤهلة']]);
   const ranks: [string, string, string, string, boolean, number][] = [ // code, label, Arabic, department, officer, order
     ['MASTER', 'Master', 'الربان', 'DECK', true, 1], ['CHIEF_OFFICER', 'Chief Officer', 'الضابط الأول', 'DECK', true, 2], ['SECOND_OFFICER', 'Second Officer', 'الضابط الثاني', 'DECK', true, 3], ['THIRD_OFFICER', 'Third Officer', 'الضابط الثالث', 'DECK', true, 4],

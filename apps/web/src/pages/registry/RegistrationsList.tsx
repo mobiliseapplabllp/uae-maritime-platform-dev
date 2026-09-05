@@ -12,10 +12,11 @@ import DataTable from '../../components/common/DataTable';
 import StatusChip from '../../components/common/StatusChip';
 import { fmtD } from '../../utils/format';
 import type { Option } from '../../types';
-import { KIND_META, KindChip, REG_STATUS_META } from './shared';
+import { useLookups } from '../../hooks/useLookups';
+import { KindChip, REG_STATUS_META } from './shared';
 import type { Registration, RegistryReference } from './types';
 
-/* The register itself: every transaction against every ship, whatever journey it belongs to. The four journeys sit in one list because a registrar works a single queue, not four. */
+/* The register itself: every application against every ship, whatever variant it belongs to. The variants — as many as the master declares — sit in one list because a registrar works a single queue. */
 interface State { rows: Registration[]; total: number; page: number; limit: number; q: string; sort: string; loading: boolean }
 
 export default function RegistrationsList() {
@@ -25,6 +26,7 @@ export default function RegistrationsList() {
   const [state, setState] = useState<State>({ rows: [], total: 0, page: 1, limit: 20, q: '', sort: '-createdAt', loading: true });
   const [filters, setFilters] = useState({ status: '', kind: '', portOfRegistry: '' });
   const [ref, setRef] = useState<RegistryReference | null>(null);
+  const kinds = useLookups('registrationKind');
 
   useEffect(() => { api.get<RegistryReference>('/registrations/reference').then((r) => setRef(r.data)).catch(() => {}); }, []);
   useEffect(() => {
@@ -55,7 +57,7 @@ export default function RegistrationsList() {
         emptyMessage="No registry transactions match those filters"
         toolbar={(
           <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-            {sel('kind', 'Transaction', Object.entries(KIND_META).map(([value, m]) => ({ value, label: m.label })))}
+            {sel('kind', 'Transaction', kinds.options)}
             {sel('status', 'Status', Object.entries(REG_STATUS_META).map(([value, m]) => ({ value, label: m.label })))}
             {sel('portOfRegistry', 'Port of registry', (ref?.portsOfRegistry || []).map((p) => ({ value: p.code, label: p.name })))}
           </Box>

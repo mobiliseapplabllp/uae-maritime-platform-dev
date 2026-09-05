@@ -2,8 +2,8 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { NATIONAL_SCOPE, AMENDMENT_TYPES, DELETION_REASONS, EVENTS, REGISTRATION_TRANSITIONS, canTransition, getJurisdiction, type PageQuery, type RegistrationStatus } from '@maritime/contracts';
-import { scopeWhere, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, nextNumber, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { NATIONAL_SCOPE, EVENTS, REGISTRATION_TRANSITIONS, canTransition, getJurisdiction, livesOnRegister, type PageQuery, type RegistrationStatus } from '@maritime/contracts';
+import { scopeWhere, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookups, badRequest, conflict, escapeLike, lookupByCode, notFound, nextNumber, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
 import { REGISTRATION_SCOPE } from './scope';
 import type { Env } from './env';
 import { findVessel, publishVessel, vesselApi, type Row, type VesselRow } from './vessels';
@@ -11,10 +11,8 @@ import {
   CLOSED_STATUSES, OPEN_STATUSES, findRegistration, lockRegistration, nextApplicationNo, nextOfficialNumber, publishRegistration,
   publishRegistrationDeleted, registrationApi, registrationDetail, registryDashboard, updateRegistration, type RegistrationRow,
 } from './registrations';
-import {
-  CERT_SERIES, REGISTRATION_KINDS_SUPPORTED, SLA_DAYS, blocking, feesFor, isKnownPort, kindLabel, portName, reference,
-  registrationChecks, type Check, type RegistrationKind,
-} from './registry';
+import { blocking, isKnownPort, kindLabel, kindRules, portName, reference, registrationChecks, type Check, type KindRule } from './registry';
+import { encumbrancesFor, liveCaveats, recordTransaction, registerEncumbrance } from './transactions';
 
 /* The Registrar of Ships, as a service.
  *
@@ -31,21 +29,24 @@ const ownerSchema = z.object({
 });
 const tonnageSchema = z.object({ gross: z.coerce.number().min(0).nullable().optional(), net: z.coerce.number().min(0).nullable().optional(), measuredBy: text(120).default(''), certificateNo: text(80).default(''), measuredOn: z.string().nullable().optional() });
 const applySchema = z.object({
-  kind: z.enum(REGISTRATION_KINDS_SUPPORTED), vesselId: z.string().min(1), draft: z.boolean().optional(),
+  kind: text(40).min(1), vesselId: z.string().min(1), draft: z.boolean().optional(),
+  /** Variant-specific particulars: the charter (charterer, registry, charterEnds) for a bareboat in or out, the voyage (voyageFrom, voyageTo, validTo) for a temporary pass, the yard and hull for a ship under construction. */
+  particulars: z.record(z.unknown()).optional(),
   portOfRegistry: text(10).optional(), vesselName: text(160).optional(),
   applicantName: text(200).optional(), applicantEmail: text(200).optional(), applicantPhone: text(60).optional(), capacity: text(80).optional(),
   owners: z.array(ownerSchema).max(64).optional(), tonnage: tonnageSchema.optional(),
   previousFlag: text(120).optional(), previousRegistry: text(200).optional(), previousOfficialNumber: text(80).optional(),
   evidence: z.array(z.object({ key: text(80).min(1), label: text(200).optional(), reference: text(120).optional(), issuedBy: text(200).optional(), issuedOn: z.string().nullable().optional(), fileName: text(200).optional() })).max(40).optional(),
   encumbrances: z.array(z.object({ kind: z.enum(['MORTGAGE', 'LIEN', 'CHARGE']).default('MORTGAGE'), holder: text(200).min(1), amount: z.coerce.number().min(0).default(0), currency: text(8).optional(), registeredOn: z.string().nullable().optional(), reference: text(120).optional() })).max(40).optional(),
-  amendment: z.object({ types: z.array(z.enum(AMENDMENT_TYPES)).max(8), before: z.record(z.unknown()).optional(), after: z.record(z.unknown()).optional(), approvalReference: text(120).optional() }).optional(),
-  deletion: z.object({ reason: z.enum(DELETION_REASONS), newFlag: text(120).optional(), effectiveOn: z.string().nullable().optional() }).optional(),
+  amendment: z.object({ types: z.array(text(40)).max(8), before: z.record(z.unknown()).optional(), after: z.record(z.unknown()).optional(), approvalReference: text(120).optional() }).optional(),
+  deletion: z.object({ reason: text(40), newFlag: text(120).optional(), effectiveOn: z.string().nullable().optional() }).optional(),
 });
 const updateSchema = z.object({
   owners: z.array(ownerSchema).max(64).optional(), tonnage: tonnageSchema.optional(), portOfRegistry: text(10).optional(), vesselName: text(160).optional(),
   previousFlag: text(120).optional(), previousRegistry: text(200).optional(), previousOfficialNumber: text(80).optional(),
-  amendment: z.object({ types: z.array(z.enum(AMENDMENT_TYPES)).max(8), before: z.record(z.unknown()).optional(), after: z.record(z.unknown()).optional(), approvalReference: text(120).optional() }).optional(),
-  deletion: z.object({ reason: z.enum(DELETION_REASONS), newFlag: text(120).optional(), effectiveOn: z.string().nullable().optional() }).optional(),
+  amendment: z.object({ types: z.array(text(40)).max(8), before: z.record(z.unknown()).optional(), after: z.record(z.unknown()).optional(), approvalReference: text(120).optional() }).optional(),
+  deletion: z.object({ reason: text(40), newFlag: text(120).optional(), effectiveOn: z.string().nullable().optional() }).optional(),
+  particulars: z.record(z.unknown()).optional(),
   assignedTo: text(160).optional(), assignedToId: text(80).optional(),
 });
 const evidenceSchema = z.object({ key: text(80).min(1), label: text(200).default(''), reference: text(120).default(''), issuedBy: text(200).default(''), issuedOn: z.string().nullable().optional(), fileName: text(200).default('') });
@@ -63,6 +64,17 @@ export class RegistrationsController {
 
   private get profile() { return this.env.JURISDICTION; }
   private api(r: RegistrationRow) { return registrationApi(r, this.profile); }
+  /** The variant's rule from the master, or a refusal that names the master. */
+  private async ruleFor(c: PoolClient | Pool, kind: string): Promise<KindRule> {
+    const rule = (await kindRules(c)).get(kind);
+    if (!rule) throw badRequest(`"${kind}" is not an active entry of the registrationKind master`, { category: 'registrationKind' });
+    return rule;
+  }
+  /** The amendment types and closure grounds are master codes too. */
+  private async checkVocabulary(c: PoolClient | Pool, body: { amendment?: { types: string[] } | null; deletion?: { reason: string } | null }) {
+    if (body.amendment) await assertLookups(c, 'amendmentType', body.amendment.types, 'Nature of the alteration');
+    if (body.deletion) { const ok = await lookupByCode(c, 'deletionReason', body.deletion.reason); if (!ok?.active) throw badRequest(`Ground for closure: "${body.deletion.reason}" is not an active entry of the deletionReason master`, { category: 'deletionReason' }); }
+  }
 
   /** What only the database can answer: whether this ship already sits on the register, and the money owed against her. */
   private async contextFor(c: PoolClient | Pool, doc: RegistrationRow) {
@@ -79,22 +91,26 @@ export class RegistrationsController {
     // a closed entry is not a subsisting one, and a ship on a provisional certificate is not "already registered"
     // for the purpose of her permanent registration — the provisional entry exists to be superseded by exactly this file
     const bridging = doc.kind === 'PERMANENT' && state === 'PROVISIONAL';
+    const liveEncumbrances = doc.vessel_id ? (await encumbrancesFor(c, doc.vessel_id)).filter((e) => e.live) : [];
+    const caveats = doc.vessel_id ? (await liveCaveats(c, doc.vessel_id)).length : 0;
     return {
-      vessel, bridging, onRegister: Number(other.rows[0].n) > 0 && state !== 'CLOSED' && !bridging,
+      vessel, bridging, registryState: state, onRegister: (Number(other.rows[0].n) > 0 || livesOnRegister(state)) && state !== 'CLOSED' && state !== 'BAREBOAT_OUT' && !bridging,
       outstandingDues: Number(dues.rows[0]?.total ?? 0) || 0, currency: dues.rows[0]?.currency ?? getJurisdiction(this.profile).currency.code,
+      liveEncumbrances, caveats,
     };
   }
   private async runChecks(c: PoolClient | Pool, doc: RegistrationRow) {
     const ctx = await this.contextFor(c, doc);
-    const checks = registrationChecks(this.api(doc), ctx.vessel, ctx, this.profile);
-    return { checks, blocked: blocking(checks), ctx };
+    const rule = await this.ruleFor(c, doc.kind);
+    const checks = registrationChecks(this.api(doc), ctx.vessel, ctx, this.profile, rule);
+    return { checks, blocked: blocking(checks), ctx, rule };
   }
 
   /* -------------------------------------------------------------------- reference --- */
 
   /** The jurisdiction's registry profile: registrar, statute, ports, share rules, fees and evidence per journey. */
   @RequirePerm('registry.view') @Get('reference')
-  reference() { return reference(this.profile); }
+  async reference() { return reference(this.profile, [...(await kindRules(this.pool)).values()]); }
 
   /** The registry's own landing analytics — the queue, its SLA, and where the fleet stands on the register. */
   @RequirePerm('registry.view') @Get('dashboard')
@@ -129,7 +145,9 @@ export class RegistrationsController {
     const doc = await findRegistration(this.pool, id, user.scope);
     if (!doc) throw notFound('Registration not found');
     const vessel = doc.vessel_id ? await findVessel(this.pool, doc.vessel_id, user.scope) : null;
-    return registrationDetail(doc, vessel ? vesselApi(vessel, this.profile) : null, this.profile);
+    const rule = (await kindRules(this.pool)).get(doc.kind) ?? null;
+    const live = doc.vessel_id ? (await encumbrancesFor(this.pool, doc.vessel_id)).filter((e) => e.live).length : 0;
+    return registrationDetail(doc, vessel ? vesselApi(vessel, this.profile) : null, this.profile, rule, new Date(), live);
   }
 
   /** Dry-run the statutory checks against the file as it stands right now — an officer sees what will block before deciding. */
@@ -147,6 +165,8 @@ export class RegistrationsController {
   async apply(@Body(zod(applySchema)) body: z.infer<typeof applySchema>, @CurrentUser() user: Principal) {
     const j = getJurisdiction(this.profile);
     return withTx(this.pool, async (c) => {
+      const rule = await this.ruleFor(c, body.kind);
+      await this.checkVocabulary(c, body);
       const vessel = await findVessel(c, body.vesselId, user.scope);
       if (!vessel) throw notFound('No vessel found for this application');
       const port = String(body.portOfRegistry ?? j.registry.defaultPort).toUpperCase();
@@ -158,24 +178,29 @@ export class RegistrationsController {
 
       /* The ship's standing on the register decides which journeys are even available to her. The assessment
        * checks test the same fact, but refusing at the counter beats accepting an application that can never
-       * be granted and saying so weeks later. */
-      const onRegister = vessel.registry_state === 'REGISTERED' || vessel.registry_state === 'PROVISIONAL';
-      if ((body.kind === 'PERMANENT' || body.kind === 'PROVISIONAL') && onRegister) {
-        const bridging = body.kind === 'PERMANENT' && vessel.registry_state === 'PROVISIONAL';
+       * be granted and saying so weeks later. The family the variant belongs to says what it needs. */
+      const state = vessel.registry_state;
+      const onRegister = livesOnRegister(state);
+      if (rule.family === 'FIRST' && rule.code !== 'RE_REGISTRATION' && onRegister) {
+        const bridging = rule.code === 'PERMANENT' && state === 'PROVISIONAL';
         if (!bridging) throw conflict(`${vessel.name} already holds a registry entry — official number ${vessel.official_number}`);
       }
-      if ((body.kind === 'AMENDMENT' || body.kind === 'DELETION') && !onRegister) {
-        throw conflict(`${vessel.name} is not on the register, so there is nothing to ${body.kind === 'DELETION' ? 'close' : 'alter'}`);
+      if (rule.family === 'FIRST' && rule.code !== 'RE_REGISTRATION' && state === 'BAREBOAT_OUT') throw conflict(`${vessel.name}'s entry is suspended for a bareboat charter out; she returns to the register by re-registration`);
+      if (rule.code === 'RE_REGISTRATION' && state !== 'BAREBOAT_OUT' && state !== 'CLOSED') throw conflict(`${vessel.name} is ${kindLabel(state)}; re-registration applies to an entry that was closed or chartered out`);
+      if ((rule.family === 'ALTER' || rule.family === 'CLOSE' || rule.family === 'OUT') && !onRegister) {
+        throw conflict(`${vessel.name} is not on the register, so there is nothing to ${rule.family === 'CLOSE' ? 'close' : rule.family === 'OUT' ? 'charter out' : 'alter'}`);
       }
+      if (rule.family === 'OUT' && state !== 'REGISTERED') throw conflict(`${vessel.name} holds a ${kindLabel(state)} entry; only a permanently registered ship is chartered out`);
+      if (rule.family === 'DOCUMENT' && state === 'CLOSED') throw conflict(`${vessel.name}'s entry is closed`);
 
       const now = new Date();
       const isDraft = body.draft === true;
-      const fee = feesFor(this.profile)[body.kind as RegistrationKind] ?? 0;
+      const fee = rule.fee;
       const applicationNo = await nextApplicationNo(c, this.env, now);
       const r = await c.query<RegistrationRow>(
         `INSERT INTO registrations(application_no, kind, vessel_id, vessel_name, imo, port_of_registry, applicant, owners, tonnage, previous_flag, previous_registry, previous_official_number,
-           evidence, encumbrances, amendment, deletion, status, fee, submitted_at, due_at, history)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+           evidence, encumbrances, amendment, deletion, status, fee, submitted_at, due_at, history, particulars)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
         [applicationNo, body.kind, vessel.id, body.vesselName ?? vessel.name, vessel.imo, port,
           JSON.stringify({ name: body.applicantName ?? user?.name ?? '', email: body.applicantEmail ?? user?.email ?? '', phone: body.applicantPhone ?? '', capacity: body.capacity ?? 'Owner' }),
           JSON.stringify(body.owners ?? []), JSON.stringify(body.tonnage ?? {}), body.previousFlag ?? '', body.previousRegistry ?? '', body.previousOfficialNumber ?? '',
@@ -183,8 +208,8 @@ export class RegistrationsController {
           JSON.stringify((body.encumbrances ?? []).map((e) => ({ id: randomUUID(), currency: j.currency.code, registeredOn: now.toISOString(), dischargedOn: null, ...e }))),
           body.amendment ? JSON.stringify(body.amendment) : null, body.deletion ? JSON.stringify(body.deletion) : null,
           isDraft ? 'DRAFT' : 'SUBMITTED', JSON.stringify({ amount: fee, currency: j.currency.code, paid: false }),
-          isDraft ? null : now, isDraft ? null : new Date(now.getTime() + (SLA_DAYS[body.kind as RegistrationKind] ?? 30) * D),
-          JSON.stringify([{ from: '', to: isDraft ? 'DRAFT' : 'SUBMITTED', at: now.toISOString(), by: user?.name ?? 'system', note: `${kindLabel(body.kind)} registration lodged` }])]);
+          isDraft ? null : now, isDraft ? null : new Date(now.getTime() + rule.slaDays * D),
+          JSON.stringify([{ from: '', to: isDraft ? 'DRAFT' : 'SUBMITTED', at: now.toISOString(), by: user?.name ?? 'system', note: `${rule.label} lodged` }]), JSON.stringify(body.particulars ?? {})]);
       const doc = r.rows[0];
       await this.audit.record(c, { action: 'CREATE', entity: 'VesselRegistration', entityId: doc.id, entityLabel: `${doc.application_no} — ${doc.vessel_name} (${kindLabel(doc.kind)})`, after: this.api(doc) });
       return publishRegistration(c, this.env, doc, { event: EVENTS.ships.registrationLodged });
@@ -198,8 +223,9 @@ export class RegistrationsController {
       const doc = await lockRegistration(c, id, user.scope);
       if (!doc) throw notFound('Registration not found');
       if (CLOSED_STATUSES.includes(doc.status)) throw conflict(`A ${doc.status.toLowerCase()} application cannot be edited`);
+      await this.checkVocabulary(c, body);
       const patch: Record<string, unknown> = {};
-      for (const f of ['owners', 'tonnage', 'previousFlag', 'previousRegistry', 'previousOfficialNumber', 'amendment', 'deletion', 'assignedTo', 'assignedToId', 'vesselName'] as const) {
+      for (const f of ['owners', 'tonnage', 'previousFlag', 'previousRegistry', 'previousOfficialNumber', 'amendment', 'deletion', 'assignedTo', 'assignedToId', 'vesselName', 'particulars'] as const) {
         if ((body as Row)[f] !== undefined) patch[f] = (body as Row)[f];
       }
       if (body.portOfRegistry) {
@@ -301,8 +327,9 @@ export class RegistrationsController {
         throw conflict(`A ${kindLabel(doc.status)} application cannot move to ${kindLabel(to)}`);
       }
       if (to === 'REJECTED' && !body.note) throw badRequest('A reason is required to refuse an application');
-      // only a first registration is carved and surveyed
-      if ((to === 'CARVING_NOTE_ISSUED' || to === 'SURVEY_COMPLETE') && doc.kind !== 'PERMANENT') throw conflict(`A ${kindLabel(doc.kind)} application is not carved or surveyed`);
+      // only a variant the master marks for carving is carved and surveyed
+      const rule = await this.ruleFor(c, doc.kind);
+      if ((to === 'CARVING_NOTE_ISSUED' || to === 'SURVEY_COMPLETE') && !rule.carving) throw conflict(`A ${kindLabel(doc.kind)} application is not carved or surveyed`);
       if (to === 'SURVEY_COMPLETE' && !doc.carving_note?.compliedOn) throw conflict("Record the surveyor's compliance report before closing the survey");
 
       const now = new Date();
@@ -328,7 +355,7 @@ export class RegistrationsController {
       }
       if (to === 'SUBMITTED' && !doc.submitted_at) {
         patch.submittedAt = now;
-        patch.dueAt = new Date(now.getTime() + (SLA_DAYS[doc.kind as RegistrationKind] ?? 30) * D);
+        patch.dueAt = new Date(now.getTime() + rule.slaDays * D);
       }
       if (to === 'REJECTED') { patch.decision = { outcome: 'REJECTED', by: user?.name ?? 'Registry', at: now.toISOString(), reason: body.note ?? '' }; patch.closedAt = now; }
       if (to === 'WITHDRAWN') patch.closedAt = now;
@@ -377,35 +404,55 @@ export class RegistrationsController {
       const vr = await c.query<VesselRow>('SELECT * FROM vessels WHERE id = $1 FOR UPDATE', [doc.vessel_id]);
       const vessel = vr.rows[0];
       if (!vessel) throw notFound('The vessel record for this application no longer exists');
+      const rule = await this.ruleFor(c, doc.kind);
 
       const now = new Date();
       const by = user?.name ?? 'Registry';
-      const series = CERT_SERIES[doc.kind as RegistrationKind] ?? 'CR';
-      const key = `${doc.port_of_registry}/${series}/${now.getUTCFullYear()}`;
-      const certificateNo = await nextNumber(c, key, `${key}/`);
+      const key = `${doc.port_of_registry}/${rule.series}/${now.getUTCFullYear()}`;
+      const certificateNo = rule.issuesCertificate ? await nextNumber(c, key, `${key}/`) : '';
       const patch: Record<string, unknown> = { certificateNo, status: 'GRANTED', grantedOn: now, grantedBy: by, closedAt: now, decision: { outcome: 'GRANTED', by, at: now.toISOString(), reason: body.note ?? '' } };
       const before = { ...vesselApi(vessel, this.profile).registry };
       const vPatch: Record<string, unknown> = {};
+      const p: Row = doc.particulars ?? {};
       let officialNumber = doc.official_number;
       let expires: Date | null = null;
       let event: string = EVENTS.ships.registrationGranted;
+      const transactions: { type: string; particulars: Row }[] = [];
+      const months = (n: number) => new Date(now.getTime() + n * 30.44 * D);
 
-      if (doc.kind === 'PERMANENT' || doc.kind === 'PROVISIONAL') {
+      if (rule.family === 'FIRST') {
+        // the entry opens (or, for a re-registration, returns): the official number is the ship's for the life of the entry
         officialNumber = await this.allocateOfficialNumber(c, doc, by);
-        const provisional = doc.kind === 'PROVISIONAL';
-        if (provisional) expires = new Date(now.getTime() + j.registry.provisionalValidityMonths.value * 30.44 * D);
+        const charter = rule.registryState === 'BAREBOAT_IN' && p.charterEnds ? new Date(p.charterEnds) : null;
+        expires = charter ?? (rule.validityMonths ? months(rule.validityMonths) : null);
         Object.assign(vPatch, {
-          registry_state: provisional ? 'PROVISIONAL' : 'REGISTERED', official_number: officialNumber, registry_port: doc.port_of_registry,
+          registry_state: rule.registryState ?? 'REGISTERED', official_number: officialNumber, registry_port: doc.port_of_registry,
           certificate_no: certificateNo, registered_on: now, certificate_expires_on: expires, closed_on: null, closure_reason: '',
           port_of_registry: portName(doc.port_of_registry, this.profile), flag: j.name,
         });
         if (doc.tonnage?.gross) vPatch.grt = Math.round(Number(doc.tonnage.gross));
         patch.officialNumber = officialNumber;
-        if (provisional) patch.certificateExpiresOn = expires;
+        if (expires) patch.certificateExpiresOn = expires;
         event = EVENTS.ships.vesselRegistered;
+        transactions.push({ type: rule.transactionType ?? 'REGISTRATION', particulars: { certificateNo, officialNumber, portOfRegistry: doc.port_of_registry, owners: (doc.owners ?? []).map((o: Row) => ({ name: o.name, shares: o.shares })), expiresOn: expires?.toISOString() ?? null, ...(rule.registryState === 'BAREBOAT_IN' ? { charterer: p.charterer, registry: p.registry, charterEnds: p.charterEnds } : {}) } });
       }
 
-      if (doc.kind === 'AMENDMENT') {
+      if (rule.family === 'OUT') {
+        // the entry is suspended while the ship flies the charterer's flag; the number and the mortgages stay
+        expires = p.charterEnds ? new Date(p.charterEnds) : months(rule.validityMonths ?? 24);
+        Object.assign(vPatch, { registry_state: rule.registryState ?? 'BAREBOAT_OUT', certificate_expires_on: expires });
+        patch.certificateExpiresOn = expires;
+        transactions.push({ type: rule.transactionType ?? 'BAREBOAT_OUT', particulars: { charterer: p.charterer, registry: p.registry, charterEnds: p.charterEnds, consentRef: p.consentRef ?? '' } });
+      }
+
+      if (rule.family === 'DOCUMENT') {
+        // a document against the entry: the ship's standing does not change
+        expires = p.validTo ? new Date(p.validTo) : months(rule.validityMonths ?? 1);
+        patch.certificateExpiresOn = expires;
+        transactions.push({ type: rule.transactionType ?? 'TEMPORARY_PASS', particulars: { certificateNo, voyageFrom: p.voyageFrom, voyageTo: p.voyageTo, purpose: p.purpose ?? '', validTo: expires.toISOString() } });
+      }
+
+      if (rule.family === 'ALTER') {
         const types: string[] = doc.amendment?.types ?? [];
         const after: Row = doc.amendment?.after ?? {};
         // record what the entry looked like before the alteration, so the transcript reads as a history rather than only a current state
@@ -419,11 +466,18 @@ export class RegistrationsController {
         if (types.includes('TONNAGE') && after.grt) vPatch.grt = Math.round(Number(after.grt));
         if (types.includes('OWNERSHIP') && after.owner) vPatch.owner = String(after.owner);
         if (types.includes('MANAGER') && after.manager) vPatch.manager = String(after.manager);
-        vPatch.certificate_no = certificateNo;   // the certificate is reissued as altered
+        if (certificateNo) vPatch.certificate_no = certificateNo;   // the certificate is reissued as altered
         patch.amendment = amendment;
+        // one ledger entry per alteration, typed by the amendmentType master
+        for (const t of types) {
+          const at = await lookupByCode(c, 'amendmentType', t);
+          const type = String(at?.meta.transactionType ?? '') || 'ALTERATION';
+          if (type === 'MORTGAGE_REGISTRATION') continue; // written with the encumbrances below
+          transactions.push({ type, particulars: { alteration: t, before: (amendment.before as Row)[t === 'NAME' ? 'name' : t === 'PORT_OF_REGISTRY' ? 'portOfRegistry' : t === 'TONNAGE' ? 'grt' : t === 'OWNERSHIP' ? 'owner' : 'manager'] ?? null, after: after[t === 'NAME' ? 'name' : t === 'PORT_OF_REGISTRY' ? 'portOfRegistry' : t === 'TONNAGE' ? 'grt' : t === 'OWNERSHIP' ? 'owner' : 'manager'] ?? null, approvalReference: doc.amendment?.approvalReference ?? '', certificateNo, ...(t === 'OWNERSHIP' ? { owners: (doc.owners ?? []).map((o: Row) => ({ name: o.name, shares: o.shares })) } : {}) } });
+        }
       }
 
-      if (doc.kind === 'DELETION') {
+      if (rule.family === 'CLOSE') {
         const deletion: Row = { ...(doc.deletion ?? {}), certificateNo, issuedOn: now.toISOString(), effectiveOn: doc.deletion?.effectiveOn ?? now.toISOString() };
         patch.deletion = deletion;
         Object.assign(vPatch, { registry_state: 'CLOSED', closed_on: new Date(deletion.effectiveOn), closure_reason: deletion.reason ?? '' });
@@ -431,21 +485,30 @@ export class RegistrationsController {
         // a ship off the register is no longer a ship of this flag; she stays on the fleet record as history but stops being operationally live
         vPatch.status = 'INACTIVE';
         event = EVENTS.ships.registryClosed;
+        transactions.push({ type: rule.transactionType ?? 'CLOSURE', particulars: { reason: deletion.reason, newFlag: deletion.newFlag ?? '', certificateNo, effectiveOn: deletion.effectiveOn } });
       }
 
-      patch.history = [...(doc.history ?? []), { from: 'APPROVED', to: 'GRANTED', at: now.toISOString(), by, note: `${certificateNo} issued` }];
+      patch.history = [...(doc.history ?? []), { from: 'APPROVED', to: 'GRANTED', at: now.toISOString(), by, note: certificateNo ? `${certificateNo} issued` : `${rule.label} granted` }];
       const next = await updateRegistration(c, doc.id, patch);
       const keys = Object.keys(vPatch);
       const updated = keys.length
         ? (await c.query<VesselRow>(`UPDATE vessels SET ${keys.map((k, i) => `${k} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1 RETURNING *`, [vessel.id, ...keys.map((k) => vPatch[k])])).rows[0]
         : vessel;
 
-      await this.audit.record(c, { action: 'GRANT', entity: 'VesselRegistration', entityId: doc.id, entityLabel: `${doc.application_no} → ${certificateNo}`, before, after: vesselApi(updated, this.profile).registry, note: body.note ?? '' });
-      const registration = await publishRegistration(c, this.env, next, { event: EVENTS.ships.registrationGranted, data: { certificateNo, officialNumber, kind: doc.kind } });
+      // the ledger: what this grant did to the entry, and the charges the file carried onto it
+      const ledger: string[] = [];
+      for (const t of transactions) ledger.push((await recordTransaction(c, this.env, this.audit, updated, { type: t.type, registrationId: doc.id, applicationNo: doc.application_no, particulars: t.particulars, notes: body.note ?? '', by: user, at: now })).number);
+      for (const e of (doc.encumbrances ?? []).filter((x: Row) => !x.dischargedOn)) {
+        const done = await registerEncumbrance(c, this.env, this.audit, updated, { kind: e.kind, holder: e.holder, amount: Number(e.amount) || 0, currency: e.currency, registeredOn: e.registeredOn ?? now, reference: e.reference ?? '', registrationId: doc.id }, user);
+        ledger.push(done.transaction.number);
+      }
+
+      await this.audit.record(c, { action: 'GRANT', entity: 'VesselRegistration', entityId: doc.id, entityLabel: `${doc.application_no} → ${certificateNo || rule.label}`, before, after: vesselApi(updated, this.profile).registry, note: body.note ?? '' });
+      const registration = await publishRegistration(c, this.env, next, { event: EVENTS.ships.registrationGranted, data: { certificateNo, officialNumber, kind: doc.kind, family: rule.family, transactions: ledger } });
       const vesselEntity = await publishVessel(c, this.env, updated, {
-        event, data: { certificateNo, officialNumber, applicationNo: doc.application_no, kind: doc.kind, ...(doc.kind === 'DELETION' ? { reason: doc.deletion?.reason ?? '', newFlag: doc.deletion?.newFlag ?? '' } : {}) },
+        event, data: { certificateNo, officialNumber, applicationNo: doc.application_no, kind: doc.kind, family: rule.family, ...(rule.family === 'CLOSE' ? { reason: doc.deletion?.reason ?? '', newFlag: doc.deletion?.newFlag ?? '' } : {}) },
       });
-      return { registration, vessel: { id: updated.id, name: updated.name, registry: vesselEntity.registry } };
+      return { registration, vessel: { id: updated.id, name: updated.name, registry: vesselEntity.registry }, transactions: ledger };
     });
   }
 
@@ -457,6 +520,8 @@ export class RegistrationsController {
     /* The ship behind an application the caller has already been permitted to read: part of that
      * record's own context, not a second lookup the reader has to qualify for again. */
     const vessel = doc.vessel_id ? await findVessel(c, doc.vessel_id, NATIONAL_SCOPE) : null;
+    // an entry that returns — from a bareboat charter out, or after closure — keeps the number it was traced by
+    if (doc.kind === 'RE_REGISTRATION' && vessel?.official_number) return vessel.official_number;
     if (doc.kind === 'PERMANENT' && vessel?.registry_state === 'PROVISIONAL' && vessel.official_number) {
       const prior = await c.query<RegistrationRow>(`SELECT * FROM registrations WHERE vessel_id = $1 AND kind = 'PROVISIONAL' AND status = 'GRANTED' ORDER BY granted_on DESC LIMIT 1`, [doc.vessel_id]);
       if (prior.rows[0]) {

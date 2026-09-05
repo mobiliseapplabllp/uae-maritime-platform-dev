@@ -40,6 +40,8 @@ export const EVENTS = {
     certUpdated: 'ships.certificate.updated', certDeleted: 'ships.certificate.deleted',
     registrationLodged: 'ships.registration.lodged', registrationUpdated: 'ships.registration.updated', registrationTransitioned: 'ships.registration.transitioned',
     registrationGranted: 'ships.registration.granted', registrationDeleted: 'ships.registration.deleted',
+    // the registry ledger: every transaction against an entry, and the attested transcripts issued from it
+    registryTransaction: 'ships.registry.transaction', transcriptIssued: 'ships.registry.transcript',
     registryUpdated: 'ships.registry.updated', riskWeightsChanged: 'ships.risk.weights-changed',
   },
   seafarers: {

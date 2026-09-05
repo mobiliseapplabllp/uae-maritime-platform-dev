@@ -107,7 +107,7 @@ export default function RegistrationDetail() {
 
   const actions = (
     <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-      {canAssess && nextMoves(doc.status, doc.kind).map(([to, label]) => (
+      {canAssess && nextMoves(doc.status, doc.rule?.carving ?? doc.kind === 'PERMANENT').map(([to, label]) => (
         <Button key={to} size="small" variant={to === 'REJECTED' ? 'outlined' : 'contained'} color={to === 'REJECTED' ? 'error' : 'primary'} disabled={busy}
           onClick={() => setPrompt({ kind: 'move', to, label, needsNote: to === 'REJECTED' })}>{label}</Button>
       ))}
@@ -116,7 +116,7 @@ export default function RegistrationDetail() {
       )}
       {canGrant && doc.status === 'APPROVED' && (
         <Button size="small" variant="contained" color="success" disabled={busy} onClick={() => setPrompt({ kind: 'grant' })}>
-          {doc.kind === 'DELETION' ? 'Grant closure and write the register' : 'Grant and write the register'}
+          {doc.rule?.family === 'CLOSE' || doc.kind === 'DELETION' ? 'Grant closure and write the register' : doc.rule?.family === 'DOCUMENT' ? 'Grant and issue the document' : 'Grant and write the register'}
         </Button>
       )}
       {doc.vessel && <Button size="small" variant="text" onClick={() => navigate(`/vessels/${doc.vessel?.id || doc.vesselId}`)}>Open the ship</Button>}
@@ -126,12 +126,15 @@ export default function RegistrationDetail() {
   const facts = (
     <Card sx={{ p: 2, mb: 2 }}>
       <Grid container spacing={2.5}>
-        <Grid item xs={6} sm={4} md={2}><Fact label="Transaction" value={kindLabel(doc.kind)} /></Grid>
+        <Grid item xs={6} sm={4} md={2}><Fact label="Transaction" value={doc.rule?.label ?? kindLabel(doc.kind)} /></Grid>
         <Grid item xs={6} sm={4} md={2}><Fact label="Official number" value={doc.officialNumber} mono /></Grid>
         <Grid item xs={6} sm={4} md={2}><Fact label="Certificate" value={doc.certificateNo} mono /></Grid>
         <Grid item xs={6} sm={4} md={2}><Fact label="Port of registry" value={doc.portOfRegistryName || doc.portOfRegistry} /></Grid>
         <Grid item xs={6} sm={4} md={2}><Fact label="Lodged" value={fmtD(doc.submittedAt)} /></Grid>
         <Grid item xs={6} sm={4} md={2}><Fact label="Due" value={fmtD(doc.dueAt)} tone={doc.slaBreached ? 'error.main' : undefined} /></Grid>
+        {Object.entries(doc.particulars ?? {}).filter(([, v]) => v !== '' && v != null).map(([k, v]) => (
+          <Grid item xs={6} sm={4} md={2} key={k}><Fact label={words(k.replace(/([A-Z])/g, ' $1'))} value={/^\d{4}-\d{2}-\d{2}/.test(String(v)) ? fmtD(String(v)) : String(v)} /></Grid>
+        ))}
       </Grid>
     </Card>
   );
@@ -311,7 +314,7 @@ export default function RegistrationDetail() {
 
         {tab === 3 && (
           <Box sx={{ p: 2 }}>
-            {doc.kind !== 'PERMANENT' ? (
+            {!(doc.rule?.carving ?? doc.kind === 'PERMANENT') ? (
               <Typography sx={{ fontSize: 13, color: 'text.secondary' }}>A {words(doc.kind).toLowerCase()} has nothing to carve and nothing to survey — the short path applies.</Typography>
             ) : (
               <Grid container spacing={2.5}>

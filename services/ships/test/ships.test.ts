@@ -8,7 +8,9 @@ import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedShips } from '../src/seed';
 import { applyEvent } from '../src/consumer';
-import { qualifies, registrationChecks, shareLedger, requiredEvidence, blocking } from '../src/registry';
+import { buildWorld } from '@maritime/world';
+import { qualifies, registrationChecks, shareLedger, requiredEvidence, blocking, ruleOf, type KindRule } from '../src/registry';
+import { digestOf } from '../src/transactions';
 import { scoreVessel, bandOf } from '../src/risk';
 import { ageBandOf, surveyEvents, voyagesOf } from '../src/vessels';
 
@@ -25,6 +27,9 @@ const del = (p: string, t = admin) => request(server as never).delete(p).set('au
 const outbox = async (type: string) => (await pool.query('SELECT payload FROM outbox WHERE subject = $1 ORDER BY id', [subjectFor(type)])).rows.map((r) => r.payload as { type: string; data: Record<string, any> });
 const clearOutbox = () => pool.query('DELETE FROM outbox');
 const D = 86_400_000;
+/* The variants as the master declares them — the same rows the runtime mirrors. */
+const RULES = new Map<string, KindRule>(buildWorld({ profile: 'AE' }).lookups.filter((l) => l.category === 'registrationKind').map((l) => [l.code, ruleOf({ code: l.code, label: l.label, labelAr: l.labelAr ?? null, meta: l.meta, active: true })]));
+const rule = (k: string) => RULES.get(k)!;
 
 beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });
@@ -74,19 +79,23 @@ describe('ships — the statutory rules, tested without a request', () => {
     expect(shareLedger([], 'AE').withinLimit).toBe(false);
   });
   it('resolves the conditional evidence a journey actually needs', () => {
-    expect(requiredEvidence({ kind: 'PERMANENT' }, 'AE').map((e) => e.key)).not.toContain('DELETION_CERTIFICATE');
-    expect(requiredEvidence({ kind: 'PERMANENT', previousFlag: 'Panama' }, 'AE').map((e) => e.key)).toContain('DELETION_CERTIFICATE');
-    expect(requiredEvidence({ kind: 'AMENDMENT', amendment: { types: ['NAME'] } }, 'AE').map((e) => e.key)).toContain('NAME_APPROVAL');
-    expect(requiredEvidence({ kind: 'DELETION', encumbrances: [{ dischargedOn: null }] }, 'AE').map((e) => e.key)).toContain('MORTGAGE_DISCHARGE');
+    expect(requiredEvidence({ kind: 'PERMANENT' }, rule('PERMANENT'), 'AE').map((e) => e.key)).not.toContain('DELETION_CERTIFICATE');
+    expect(requiredEvidence({ kind: 'PERMANENT', previousFlag: 'Panama' }, rule('PERMANENT'), 'AE').map((e) => e.key)).toContain('DELETION_CERTIFICATE');
+    expect(requiredEvidence({ kind: 'AMENDMENT', amendment: { types: ['NAME'] } }, rule('AMENDMENT'), 'AE').map((e) => e.key)).toContain('NAME_APPROVAL');
+    expect(requiredEvidence({ kind: 'DELETION', encumbrances: [{ dischargedOn: null }] }, rule('DELETION'), 'AE').map((e) => e.key)).toContain('MORTGAGE_DISCHARGE');
+    // a charge registered on the entry itself, not on the file, still calls for the mortgagee's consent
+    expect(requiredEvidence({ kind: 'BAREBOAT_OUT' }, rule('BAREBOAT_OUT'), 'AE', null, 1).map((e) => e.key)).toContain('MORTGAGEE_CONSENT');
+    expect(requiredEvidence({ kind: 'BAREBOAT_OUT' }, rule('BAREBOAT_OUT'), 'AE', null, 0).map((e) => e.key)).not.toContain('MORTGAGEE_CONSENT');
+    expect(requiredEvidence({ kind: 'RE_REGISTRATION' }, rule('RE_REGISTRATION'), 'AE', { registry_state: 'BAREBOAT_OUT' }).map((e) => e.key)).toContain('BAREBOAT_TERMINATION');
   });
   it('blocks a first registration for a ship already on the register, and a closure carrying a live charge', () => {
-    const first = registrationChecks({ kind: 'PERMANENT', portOfRegistry: 'AUH', owners: OWNERS(), tonnage: { gross: 100, net: 50 }, evidence: EVIDENCE_PERMANENT, carvingNote: { compliedOn: '2026-01-01' } }, { name: 'X', status: 'ACTIVE', grt: 100 }, { onRegister: true }, 'AE');
+    const first = registrationChecks({ kind: 'PERMANENT', portOfRegistry: 'AUH', owners: OWNERS(), tonnage: { gross: 100, net: 50 }, evidence: EVIDENCE_PERMANENT, carvingNote: { compliedOn: '2026-01-01' } }, { name: 'X', status: 'ACTIVE', grt: 100 }, { onRegister: true }, 'AE', rule('PERMANENT'));
     expect(blocking(first).map((c) => c.check)).toContain('Ship is not already on the register');
-    const closure = registrationChecks({ kind: 'DELETION', portOfRegistry: 'AUH', deletion: { reason: 'SOLD_FOREIGN', newFlag: 'Panama' }, encumbrances: [{ kind: 'MORTGAGE', holder: 'Bank', dischargedOn: null }], evidence: [] }, null, { onRegister: true, outstandingDues: 0 }, 'AE');
+    const closure = registrationChecks({ kind: 'DELETION', portOfRegistry: 'AUH', deletion: { reason: 'SOLD_FOREIGN', newFlag: 'Panama' }, encumbrances: [{ kind: 'MORTGAGE', holder: 'Bank', dischargedOn: null }], evidence: [] }, null, { onRegister: true, outstandingDues: 0 }, 'AE', rule('DELETION'));
     expect(blocking(closure).map((c) => c.check)).toEqual(expect.arrayContaining(['No subsisting mortgage or charge', 'Mandatory evidence on file']));
   });
   it('lets a permanent registration bridge from a provisional one', () => {
-    const checks = registrationChecks({ kind: 'PERMANENT', portOfRegistry: 'AUH', owners: OWNERS(), tonnage: { gross: 100, net: 50 }, evidence: EVIDENCE_PERMANENT, carvingNote: { compliedOn: '2026-01-01', surveyor: 'S' } }, { name: 'X', status: 'ACTIVE', grt: 100 }, { onRegister: false, bridging: true }, 'AE');
+    const checks = registrationChecks({ kind: 'PERMANENT', portOfRegistry: 'AUH', owners: OWNERS(), tonnage: { gross: 100, net: 50 }, evidence: EVIDENCE_PERMANENT, carvingNote: { compliedOn: '2026-01-01', surveyor: 'S' } }, { name: 'X', status: 'ACTIVE', grt: 100 }, { onRegister: false, bridging: true }, 'AE', rule('PERMANENT'));
     expect(blocking(checks)).toHaveLength(0);
     expect(checks.map((c) => c.check)).toContain('Supersedes a provisional certificate');
   });
@@ -282,7 +291,10 @@ describe('ships — the registration lifecycle', () => {
     const r = (await g('/registrations/reference', clerk).expect(200)).body.data;
     expect(r.defaultPort).toBe('AUH');
     expect(r.shareRules.denominator).toBe(24);
-    expect(r.kinds.map((k: any) => k.kind)).toEqual(['PERMANENT', 'PROVISIONAL', 'AMENDMENT', 'DELETION']);
+    // the variants and their SLAs, fees and evidence are the registrationKind master's, in its order
+    expect(r.kinds.map((k: any) => k.kind)).toEqual(['PROVISIONAL', 'PERMANENT', 'BAREBOAT_IN', 'BAREBOAT_OUT', 'UNDER_CONSTRUCTION', 'TEMPORARY_PASS', 'AMENDMENT', 'RE_REGISTRATION', 'DELETION']);
+    expect(r.kinds.find((k: any) => k.kind === 'BAREBOAT_IN')).toMatchObject({ family: 'FIRST', slaDays: 21, fee: 3000, registryState: 'BAREBOAT_IN', series: 'BCR' });
+    expect(r.registryStates).toContain('BAREBOAT_OUT');
     expect(r.kinds[0].evidence.length).toBeGreaterThan(0);
     expect(r.portsOfRegistry.find((p: any) => p.default)).toMatchObject({ code: 'AUH' });
   });
@@ -595,5 +607,166 @@ describe('ships — tenancy', () => {
 
   it('leaves a national officer reading the whole register, with no clause added at all', async () => {
     expect((await g('/vessels?limit=1', officer)).body.meta.total).toBe((await g('/vessels?limit=1', admin)).body.meta.total);
+  });
+});
+
+describe('ships — registration variants, the ledger and the master record', () => {
+  const day = (n: number) => new Date(Date.now() + n * D).toISOString();
+  const move = (id: string, to: string, extra: Record<string, unknown> = {}) => post(`/registrations/${id}/transition`, { to, ...extra }, registrar);
+  const approveAndGrant = async (id: string) => {
+    expect((await move(id, 'UNDER_SCRUTINY')).status).toBe(201);
+    const approved = await move(id, 'APPROVED'); expect(approved.status, JSON.stringify(approved.body)).toBe(201);
+    const granted = await post(`/registrations/${id}/grant`, {}, registrar); expect(granted.status, JSON.stringify(granted.body)).toBe(201);
+    return granted.body.data;
+  };
+  const ev = (...keys: string[]) => keys.map((key) => ({ key, label: key, reference: `${key}/1` }));
+  async function registeredVessel(offset = 0) {
+    const r = await pool.query<{ id: string; name: string; official_number: string; manager: string }>(
+      `SELECT v.id, v.name, v.official_number, v.manager FROM vessels v WHERE v.registry_state = 'REGISTERED' AND NOT v.real AND v.status = 'ACTIVE'
+         AND NOT EXISTS (SELECT 1 FROM registrations r WHERE r.vessel_id = v.id AND NOT (r.status = ANY($1)))
+         AND NOT EXISTS (SELECT 1 FROM registry_encumbrances e WHERE e.vessel_id = v.id AND e.discharged_on IS NULL)
+       ORDER BY v.name OFFSET $2 LIMIT 1`, [['GRANTED', 'REJECTED', 'WITHDRAWN'], offset]);
+    // nothing leaves the register owing money: the ship's dues are settled so the variant under test is what decides
+    if (r.rows[0]) await pool.query("UPDATE invoices SET status = 'PAID' WHERE vessel_id = $1 AND status = 'ISSUED'", [r.rows[0].id]);
+    return r.rows[0];
+  }
+
+  it('offers the variants and transaction types the masters declare, and refuses codes they do not', async () => {
+    const kinds = (await g('/registry/kinds', clerk).expect(200)).body.data; expect(kinds).toHaveLength(9); expect(kinds.map((k: any) => k.family)).toEqual(expect.arrayContaining(['FIRST', 'ALTER', 'OUT', 'CLOSE', 'DOCUMENT']));
+    const types = (await g('/registry/transaction-types', clerk).expect(200)).body.data;
+    expect(types.find((t: any) => t.code === 'MORTGAGE_REGISTRATION').direct).toBe(true); expect(types.find((t: any) => t.code === 'REGISTRATION').direct).toBe(false);
+    const v = await unregisteredVessel();
+    expect((await post('/registrations', { kind: 'MOON_LAUNCH', vesselId: v.id }, registrar)).body.message).toMatch(/MOON_LAUNCH.*registrationKind/);
+    const reg = await registeredVessel();
+    expect((await post('/registrations', { kind: 'AMENDMENT', vesselId: reg.id, amendment: { types: ['PAINT_COLOUR'] } }, registrar)).body.message).toMatch(/PAINT_COLOUR.*amendmentType/);
+    expect((await post('/registrations', { kind: 'DELETION', vesselId: reg.id, deletion: { reason: 'BORED' } }, registrar)).body.message).toMatch(/BORED.*deletionReason/);
+  });
+
+  it('seeds the ledger from the grants the world records, one transaction per grant and one per charge', async () => {
+    const ledger = (await g('/registry/transactions?limit=200', clerk).expect(200)).body;
+    expect(ledger.meta.total).toBeGreaterThan(5);
+    expect(ledger.data.every((t: any) => /^RTX-\d{4}-\d{5}$/.test(t.number))).toBe(true);
+    expect(ledger.data.map((t: any) => t.type)).toEqual(expect.arrayContaining(['REGISTRATION', 'CHANGE_OF_NAME', 'TRANSFER_OF_OWNERSHIP']));
+    const mortgaged = (await pool.query("SELECT vessel_id FROM registry_encumbrances WHERE discharged_on IS NULL LIMIT 1")).rows[0];
+    expect(mortgaged).toBeTruthy();
+    const record = (await g(`/vessels/${mortgaged.vessel_id}/registry`, clerk).expect(200)).body.data;
+    expect(record.encumbrances.length).toBeGreaterThan(0); expect(record.transactions.some((t: any) => t.type === 'MORTGAGE_REGISTRATION')).toBe(true);
+  });
+
+  it('registers a bareboat charter in, held by its charterer for the charter, and issues a temporary pass against it', async () => {
+    const v = await unregisteredVessel();
+    const particulars = { charterer: 'Falaj Bareboat Charterers LLC (sample)', chartererKind: 'BODY_CORPORATE', chartererRegistrationNo: 'CN-2244001 (sample)', registry: 'Registry of Panama', charterEnds: day(400) };
+    const applied = await post('/registrations', { kind: 'BAREBOAT_IN', vesselId: v.id, portOfRegistry: 'AUH', particulars, evidence: ev('BAREBOAT_CHARTER_PARTY', 'UNDERLYING_REGISTRY_CONSENT', 'UNDERLYING_REGISTRY_CERTIFICATE', 'INSURANCE_CERTIFICATE') }, registrar);
+    expect(applied.status, JSON.stringify(applied.body)).toBe(201);
+    const id = applied.body.data.id;
+    expect(applied.body.data).toMatchObject({ kind: 'BAREBOAT_IN', particulars: { registry: 'Registry of Panama' }, fee: { amount: 3000 } });
+    const detail = (await g(`/registrations/${id}`, clerk)).body.data;
+    expect(detail.rule).toMatchObject({ family: 'FIRST', registryState: 'BAREBOAT_IN', carving: false }); expect(detail.requiredEvidence.map((e: any) => e.key)).not.toContain('MORTGAGEE_CONSENT');
+    const checks = (await g(`/registrations/${id}/checks`, clerk)).body.data;
+    expect(checks.checks.map((c: any) => c.check)).toEqual(expect.arrayContaining(['Bareboat charterer qualifies to hold a ship of United Arab Emirates', 'Underlying registry named', 'Charter party ends after today']));
+    expect(checks.blocked).toHaveLength(0);
+    expect((await move(id, 'CARVING_NOTE_ISSUED')).status).toBe(409); // not a carved variant
+    await clearOutbox();
+    const granted = await approveAndGrant(id);
+    expect(granted.vessel.registry).toMatchObject({ state: 'BAREBOAT_IN' }); expect(granted.registration.certificateNo).toMatch(/\/BCR\//);
+    expect(Math.round((new Date(granted.registration.certificateExpiresOn).getTime() - new Date(particulars.charterEnds).getTime()) / D)).toBe(0);
+    expect(granted.transactions).toHaveLength(1);
+    expect((await outbox(EVENTS.ships.registryTransaction)).at(-1)?.data).toMatchObject({ type: 'BAREBOAT_IN', vesselId: v.id });
+    const record = (await g(`/vessels/${v.id}/registry`, clerk).expect(200)).body.data;
+    expect(record).toMatchObject({ onRegister: true, currentEntry: { kind: 'BAREBOAT_IN' } }); expect(record.currentEntry.particulars.charterer).toBe(particulars.charterer); expect(record.transactions[0].type).toBe('BAREBOAT_IN');
+    // a temporary pass is a document against the entry: the standing does not move, the pass is on the ledger
+    const tooLong = await post('/registrations', { kind: 'TEMPORARY_PASS', vesselId: v.id, particulars: { voyageFrom: 'Abu Dhabi', voyageTo: 'Fujairah', validTo: day(90) }, evidence: ev('PASS_APPLICATION', 'INSURANCE_CERTIFICATE', 'SEAWORTHINESS_CERTIFICATE') }, registrar);
+    expect(tooLong.status).toBe(201);
+    expect((await g(`/registrations/${tooLong.body.data.id}/checks`, clerk)).body.data.blocked.map((c: any) => c.check)).toContain('Pass validity within the permitted term');
+    expect((await move(tooLong.body.data.id, 'WITHDRAWN')).status).toBe(201);
+    const pass = await post('/registrations', { kind: 'TEMPORARY_PASS', vesselId: v.id, particulars: { voyageFrom: 'Abu Dhabi', voyageTo: 'Fujairah', purpose: 'Delivery voyage', validTo: day(10) }, evidence: ev('PASS_APPLICATION', 'INSURANCE_CERTIFICATE', 'SEAWORTHINESS_CERTIFICATE') }, registrar);
+    expect(pass.status).toBe(201);
+    const issued = await approveAndGrant(pass.body.data.id);
+    expect(issued.vessel.registry.state).toBe('BAREBOAT_IN'); expect(issued.registration.certificateNo).toMatch(/\/TP\//);
+    expect((await g(`/vessels/${v.id}/registry`, clerk)).body.data.transactions.map((t: any) => t.type)).toEqual(['TEMPORARY_PASS', 'BAREBOAT_IN']);
+  });
+
+  it('charters a registered ship out under a caveat only once the caveat is withdrawn, and re-registers her on the same official number', async () => {
+    const v = await registeredVessel(0);
+    expect(v).toBeTruthy();
+    // a caveat lodged directly on the entry stops title moving
+    const caveat = await post(`/vessels/${v.id}/registry/transactions`, { type: 'CAVEAT', particulars: { lodgedBy: 'Coastal Cooperative Bank (sample)', ground: 'Disputed sale' }, notes: 'Caveat lodged on notice' }, registrar);
+    expect(caveat.status, JSON.stringify(caveat.body)).toBe(201); expect(caveat.body.data.transaction.type).toBe('CAVEAT');
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'CAVEAT', particulars: {} }, registrar)).status).toBe(400);
+    const out = await post('/registrations', { kind: 'BAREBOAT_OUT', vesselId: v.id, particulars: { charterer: 'Northern Bareboat Ltd (sample)', registry: 'Bareboat Registry of Malta', charterEnds: day(300) }, evidence: ev('BAREBOAT_CHARTER_PARTY', 'BAREBOAT_REGISTRY_CONFIRMATION') }, registrar);
+    expect(out.status, JSON.stringify(out.body)).toBe(201);
+    const outId = out.body.data.id;
+    expect((await move(outId, 'UNDER_SCRUTINY')).status).toBe(201);
+    const blocked = await move(outId, 'APPROVED'); expect(blocked.status).toBe(409); expect(blocked.body.message).toMatch(/caveat/i);
+    const lifted = await post(`/vessels/${v.id}/registry/transactions`, { type: 'CAVEAT_WITHDRAWAL', particulars: { caveatId: caveat.body.data.transaction.id } }, registrar); expect(lifted.status).toBe(201);
+    expect((await g(`/vessels/${v.id}/registry`, clerk)).body.data).toMatchObject({ titleBlocked: false, caveats: [] });
+    expect((await move(outId, 'APPROVED')).status).toBe(201);
+    const chartered = await post(`/registrations/${outId}/grant`, {}, registrar); expect(chartered.status, JSON.stringify(chartered.body)).toBe(201);
+    expect(chartered.vessel ?? chartered.body.data.vessel).toBeTruthy();
+    const after = (await g(`/vessels/${v.id}/registry`, clerk)).body.data;
+    expect(after.registry.state).toBe('BAREBOAT_OUT'); expect(after.onRegister).toBe(false); expect(after.registry.officialNumber).toBe(v.official_number);
+    expect(after.transactions[0]).toMatchObject({ type: 'BAREBOAT_OUT', particulars: { registry: 'Bareboat Registry of Malta' } });
+    // while chartered out she takes no amendment, and a fresh first registration is refused; re-registration is the way back
+    expect((await post('/registrations', { kind: 'AMENDMENT', vesselId: v.id, amendment: { types: ['MANAGER'] } }, registrar)).status).toBe(409);
+    expect((await post('/registrations', { kind: 'PERMANENT', vesselId: v.id }, registrar)).status).toBe(409);
+    const back = await post('/registrations', { kind: 'RE_REGISTRATION', vesselId: v.id, portOfRegistry: 'AUH', owners: OWNERS(), tonnage: { gross: 100, net: 50, certificateNo: 'TM/1' }, evidence: ev('DECLARATION_OF_OWNERSHIP', 'SURVEY_CERTIFICATE', 'INSURANCE_CERTIFICATE', 'BAREBOAT_TERMINATION') }, registrar);
+    expect(back.status, JSON.stringify(back.body)).toBe(201);
+    const checks = (await g(`/registrations/${back.body.data.id}/checks`, clerk)).body.data;
+    expect(checks.checks.find((c: any) => c.check === 'Entry is returning to the register')).toMatchObject({ passed: true });
+    const returned = await approveAndGrant(back.body.data.id);
+    expect(returned.vessel.registry).toMatchObject({ state: 'REGISTERED', officialNumber: v.official_number }); expect(returned.registration.certificateNo).toMatch(/\/CR\//);
+    expect((await g(`/vessels/${v.id}/registry`, clerk)).body.data.transactions.map((t: any) => t.type).slice(0, 2)).toEqual(['RE_REGISTRATION', 'BAREBOAT_OUT']);
+  });
+
+  it('keeps the encumbrance register and the ledger in step, and refuses what the master does not record directly', async () => {
+    const v = await registeredVessel(1);
+    expect(v).toBeTruthy();
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'REGISTRATION', particulars: {} }, registrar)).status).toBe(409);
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'LOTTERY', particulars: {} }, registrar)).body.message).toMatch(/LOTTERY.*registryTransactionType/);
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'CAVEAT', particulars: { lodgedBy: 'x' } }, clerk)).status).toBe(403);
+    await clearOutbox();
+    const mortgage = await post(`/vessels/${v.id}/registry/transactions`, { type: 'MORTGAGE_REGISTRATION', particulars: { holder: 'Gulf Coast Maritime Finance PJSC (sample)', amount: 12000000, reference: 'MTG/AUH/2026/044' } }, registrar);
+    expect(mortgage.status, JSON.stringify(mortgage.body)).toBe(201); expect(mortgage.body.data.encumbranceId).toBeTruthy();
+    let record = (await g(`/vessels/${v.id}/registry`, clerk)).body.data;
+    expect(record.encumbrances).toHaveLength(1); expect(record.encumbrances[0]).toMatchObject({ holder: 'Gulf Coast Maritime Finance PJSC (sample)', amount: 12000000, live: true });
+    // a closure now carries the charge as a blocking check, read from the entry rather than the file
+    const closing = await post('/registrations', { kind: 'DELETION', vesselId: v.id, deletion: { reason: 'BROKEN_UP' }, evidence: ev('CLOSURE_APPLICATION', 'DUES_CLEARANCE') }, registrar);
+    expect(closing.status, JSON.stringify(closing.body)).toBe(201);
+    expect((await g(`/registrations/${closing.body.data.id}/checks`, clerk)).body.data.blocked.map((c: any) => c.check)).toContain('No subsisting mortgage or charge');
+    expect((await g(`/registrations/${closing.body.data.id}`, clerk)).body.data.requiredEvidence.map((e: any) => e.key)).toContain('MORTGAGE_DISCHARGE');
+    expect((await move(closing.body.data.id, 'WITHDRAWN')).status).toBe(201);
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'MORTGAGE_DISCHARGE', particulars: {} }, registrar)).status).toBe(400);
+    const discharge = await post(`/vessels/${v.id}/registry/transactions`, { type: 'MORTGAGE_DISCHARGE', particulars: { encumbranceId: mortgage.body.data.encumbranceId, reference: 'REL/2026/09' } }, registrar);
+    expect(discharge.status).toBe(201);
+    expect((await post(`/vessels/${v.id}/registry/transactions`, { type: 'MORTGAGE_DISCHARGE', particulars: { encumbranceId: mortgage.body.data.encumbranceId } }, registrar)).status).toBe(409);
+    record = (await g(`/vessels/${v.id}/registry`, clerk)).body.data;
+    expect(record.encumbrances).toHaveLength(0); expect(record.dischargedEncumbrances).toHaveLength(1);
+    expect(record.transactions.map((t: any) => t.type).slice(0, 2)).toEqual(['MORTGAGE_DISCHARGE', 'MORTGAGE_REGISTRATION']);
+    const manager = await post(`/vessels/${v.id}/registry/transactions`, { type: 'CHANGE_OF_MANAGER', particulars: { manager: 'Harbour Ship Management LLC (sample)' } }, registrar); expect(manager.status).toBe(201);
+    expect((await g(`/vessels/${v.id}`, clerk)).body.data.manager).toBe('Harbour Ship Management LLC (sample)');
+    expect((await outbox(EVENTS.ships.registryTransaction)).map((e) => e.data.type)).toEqual(['MORTGAGE_REGISTRATION', 'MORTGAGE_DISCHARGE', 'CHANGE_OF_MANAGER']);
+  });
+
+  it('issues an attested transcript that verifies until the register moves, and shows an operator their own ledger only', async () => {
+    const v = await registeredVessel(2);
+    expect(v).toBeTruthy();
+    const issued = await post(`/vessels/${v.id}/registry/transcripts`, { purpose: 'Produced to a mortgagee' }, registrar);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(201);
+    const a = issued.body.data.attestation;
+    expect(a.number).toMatch(/^TOR-\d{4}-\d{5}$/); expect(a.digest).toMatch(/^[0-9a-f]{64}$/); expect(a.purpose).toBe('Produced to a mortgagee');
+    expect(issued.body.data.owners.length).toBeGreaterThan(0); expect(issued.body.data.transactions.every((t: any) => t.type !== 'TRANSCRIPT')).toBe(true);
+    expect((await g(`/vessels/${v.id}/registry/transcripts/${a.number}`, clerk).expect(200)).body.data).toMatchObject({ matches: true, transactionsSince: 0 });
+    expect((await g(`/vessels/${v.id}/registry/transcripts/TOR-1999-00001`, clerk)).status).toBe(404);
+    expect((await outbox(EVENTS.ships.transcriptIssued)).at(-1)?.data).toMatchObject({ transcriptNo: a.number, digest: a.digest });
+    // the digest is of the content and the number, so a copy cannot be re-numbered
+    expect(digestOf({ number: 'TOR-0000-00000', content: {} })).not.toBe(digestOf({ number: 'TOR-0000-00001', content: {} }));
+    await post(`/vessels/${v.id}/registry/transactions`, { type: 'CAVEAT', particulars: { lodgedBy: 'A claimant (sample)', ground: 'Unpaid repairs' } }, registrar);
+    expect((await g(`/vessels/${v.id}/registry/transcripts/${a.number}`, clerk)).body.data).toMatchObject({ matches: false, transactionsSince: 1 });
+    expect((await g(`/vessels/${v.id}/registry`, clerk)).body.data.transcripts[0]).toMatchObject({ transcriptNo: a.number });
+    // tenancy: the ledger an agent reads is their ships' and nobody else's
+    const mine = new Set(((await g('/vessels?limit=200', agentgss)).body.data as any[]).map((x) => x.id));
+    const ledger = (await g('/registry/transactions?limit=200', agentgss).expect(200)).body.data;
+    expect(ledger.every((t: any) => mine.has(t.vesselId))).toBe(true);
+    expect(((await g('/registry/transactions?limit=200', clerk)).body.data as any[]).some((t) => !mine.has(t.vesselId))).toBe(true);
   });
 });

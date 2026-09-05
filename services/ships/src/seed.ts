@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { buildWorld, certStatus, stableId, type WorldRegistration, type WorldVessel } from '@maritime/world';
-import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
+import { createDb, runMigrations, withTx, type Queryable, seedLookupMirror } from '@maritime/service-kit';
 import { env } from './env';
 import { upsertCompany, upsertCrew, upsertIncident, upsertInspection, upsertInvoice, upsertPortCall, upsertPosition } from './subjects';
 import type { Row } from './vessels';
@@ -27,7 +27,7 @@ function noteSeries(series: Map<string, number>, value: string, sep = '/') {
   if (Number.isFinite(n)) series.set(key, Math.max(series.get(key) ?? 0, n));
 }
 
-export async function seedShips(databaseUrl: string, profile = 'AE') {
+export async function seedShips(databaseUrl: string, profile = 'AE', prefix = { transaction: 'RTX' }) {
   const { pool } = createDb(databaseUrl);
   await runMigrations(pool, join(__dirname, '..', 'migrations'));
   const world = buildWorld({ profile });
@@ -89,6 +89,49 @@ export async function seedShips(databaseUrl: string, profile = 'AE') {
     }
     for (const [key, n] of series) await advance(c, key, n);
 
+    /* The registry ledger, from the grants the world records: one transaction per grant (typed by the variant's
+     * master entry, or by each amendment type), the charges those files carried onto the entry, and the masters
+     * the registrar validates against — all as the runtime would have written them. Numbered chronologically. */
+    const lookups = await seedLookupMirror(c, world.lookups);
+    const kindMeta = new Map(world.lookups.filter((l) => l.category === 'registrationKind').map((l) => [l.code, l.meta as Row]));
+    const amendMeta = new Map(world.lookups.filter((l) => l.category === 'amendmentType').map((l) => [l.code, l.meta as Row]));
+    const vesselById = new Map(world.vessels.map((v) => [v.id, v]));
+    type Tx = { id: string; vesselId: string; type: string; registrationId: string; applicationNo: string; particulars: Row; at: Date; encumbrance?: Row };
+    const txs: Tx[] = [];
+    for (const r of world.registrations.filter((x) => x.status === 'GRANTED' && x.grantedOn)) {
+      const at = new Date(r.grantedOn as string); const meta = kindMeta.get(r.kind) ?? {};
+      const types: string[] = r.kind === 'AMENDMENT' ? (r.amendment?.types ?? []).map((t) => String(amendMeta.get(t)?.transactionType ?? 'ALTERATION')) : [String(meta.transactionType ?? 'REGISTRATION')];
+      types.filter((t) => t !== 'MORTGAGE_REGISTRATION').forEach((type, i) => txs.push({ id: stableId('rtx', `${r.applicationNo}:${i}`), vesselId: r.vesselId, type, registrationId: r.id, applicationNo: r.applicationNo, at,
+        particulars: r.kind === 'AMENDMENT' ? { alteration: r.amendment?.types?.[i] ?? '', before: r.amendment?.before ?? {}, after: r.amendment?.after ?? {}, approvalReference: r.amendment?.approvalReference ?? '', certificateNo: r.certificateNo }
+          : r.kind === 'DELETION' ? { reason: r.deletion?.reason, newFlag: r.deletion?.newFlag ?? '', certificateNo: r.certificateNo, effectiveOn: r.deletion?.effectiveOn ?? null }
+          : { certificateNo: r.certificateNo, officialNumber: r.officialNumber, portOfRegistry: r.portOfRegistry, owners: r.owners.map((o) => ({ name: o.name, shares: o.shares })), expiresOn: r.certificateExpiresOn } }));
+    }
+    // a charge recorded on any file stands against the entry whatever the file's own state: a closure held up by a mortgage is held up by a mortgage on the register
+    for (const r of world.registrations) {
+      r.encumbrances.forEach((e, i) => txs.push({ id: stableId('rtx', `${r.applicationNo}:enc:${i}`), vesselId: r.vesselId, type: 'MORTGAGE_REGISTRATION', registrationId: r.id, applicationNo: r.applicationNo, at: new Date(e.registeredOn),
+        particulars: { kind: e.kind, holder: e.holder, amount: e.amount, currency: e.currency, reference: e.reference }, encumbrance: { ...e, id: stableId('renc', `${r.applicationNo}:${i}`) } }));
+    }
+    txs.sort((a, b) => a.at.getTime() - b.at.getTime());
+    const txSeries = new Map<string, number>();
+    for (const t of txs) {
+      const v = vesselById.get(t.vesselId); if (!v) continue;
+      const key = `${prefix.transaction}-${t.at.getUTCFullYear()}`; const n = (txSeries.get(key) ?? 0) + 1; txSeries.set(key, n);
+      const number = `${key}-${String(n).padStart(5, '0')}`;
+      await c.query('DELETE FROM registry_transactions WHERE number = $1 AND id <> $2', [number, t.id]);
+      await c.query(`INSERT INTO registry_transactions(id, number, vessel_id, vessel_name, official_number, type, registration_id, application_no, particulars, recorded_on, recorded_by, notes, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Registry','',$10)
+        ON CONFLICT (id) DO UPDATE SET number = EXCLUDED.number, type = EXCLUDED.type, particulars = EXCLUDED.particulars, recorded_on = EXCLUDED.recorded_on`,
+        [t.id, number, t.vesselId, v.name, world.registry.find((x) => x.vesselId === t.vesselId)?.officialNumber ?? '', t.type, t.registrationId, t.applicationNo, JSON.stringify(t.particulars), t.at]);
+      if (t.encumbrance) {
+        const e = t.encumbrance;
+        await c.query(`INSERT INTO registry_encumbrances(id, vessel_id, kind, holder, amount, currency, registered_on, discharged_on, reference, registration_id, transaction_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          ON CONFLICT (id) DO UPDATE SET holder = EXCLUDED.holder, amount = EXCLUDED.amount, discharged_on = EXCLUDED.discharged_on, transaction_id = EXCLUDED.transaction_id, updated_at = now()`,
+          [e.id, t.vesselId, e.kind, e.holder, e.amount, e.currency, e.registeredOn, e.dischargedOn, e.reference, t.registrationId, t.id]);
+      }
+    }
+    for (const [key, n] of txSeries) await advance(c, key, n);
+
     // the snapshots other domains own, so the ship record and the risk model read from one database from the first request
     const berthByCode = new Map(world.berths.map((b) => [b.code, b]));
     for (const o of world.companies) await upsertCompany(c, o as unknown as Row);
@@ -107,7 +150,7 @@ export async function seedShips(databaseUrl: string, profile = 'AE') {
     for (const inv of world.invoices) await upsertInvoice(c, { id: inv.id, number: inv.number, vesselId: inv.vesselId, portCallId: inv.portCallId, status: inv.status, total: inv.total, currency: inv.currency });
 
     return {
-      profile: world.profile, vessels: world.vessels.length, certificates: world.vesselCertificates.length, registrations: world.registrations.length,
+      profile: world.profile, vessels: world.vessels.length, certificates: world.vesselCertificates.length, registrations: world.registrations.length, lookups, transactions: txs.length,
       registryEntries: world.registry.filter((r) => r.state !== 'UNREGISTERED').length, series: series.size,
       portCalls: world.portCalls.length, inspections: world.inspections.length, incidents: world.incidents.filter((i) => i.vesselId).length,
       crew: world.seafarers.length, companies: world.companies.length, positions: world.positions.length, invoices: world.invoices.length,
@@ -130,5 +173,5 @@ function statusTrail(call: { status: string; eta: string; etb: string | null; at
 
 if (require.main === module) {
   const e = env();
-  seedShips(e.DATABASE_URL, e.JURISDICTION).then((c) => console.log('SEED COMPLETE', c)).catch((err) => { console.error(err); process.exit(1); });
+  seedShips(e.DATABASE_URL, e.JURISDICTION, { transaction: e.TRANSACTION_PREFIX }).then((c) => console.log('SEED COMPLETE', c)).catch((err) => { console.error(err); process.exit(1); });
 }

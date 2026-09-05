@@ -10,7 +10,7 @@ import api from '../src/api/client';
 import VesselsList from '../src/pages/vessels/VesselsList';
 import VesselDetail from '../src/pages/vessels/VesselDetail';
 import type { Vessel, VesselDetailData } from '../src/pages/vessels/types';
-import type { Registration, Transcript } from '../src/pages/registry/types';
+import type { MasterRecord, Registration, Transcript } from '../src/pages/registry/types';
 
 const ok = <T,>(data: T, meta: Record<string, unknown> = {}) => ({ success: true as const, data, meta });
 const session = { user: { id: 'u1', name: 'Harbour Master', email: 'hm@maritime.example', active: true, kind: 'user', scope: { level: 'NATIONAL' }, role: { id: 'r', name: 'Super Admin', permissions: ['*'] }, perms: ['*'] }, token: 't', refreshToken: 'r' };
@@ -54,7 +54,16 @@ describe('Fleet Manager pages', () => {
   });
 
   it('renders the vessel record with its tabs and the registry transcript', async () => {
-    mockGet({ '/vessels/v1': ok(detail), '/vessels/v1/transcript': ok(transcript), '/vessels/v1/registrations': ok(registrations, { total: 1 }) });
+    const record: MasterRecord = {
+      vessel: { id: 'v1', name: 'MV Coral Reach', imo: '9000001', flag: 'United Arab Emirates', type: 'CONT', grt: 41000, owner: 'Coral Reach Shipping (sample)', operator: 'Coral Reach Shipping (sample)', manager: 'Harbour Ship Management LLC (sample)', status: 'ACTIVE' },
+      registry: transcript.registry, portOfRegistry: transcript.portOfRegistry, registrar: transcript.registrar, onRegister: true, firstRegistered: transcript.firstRegistered,
+      currentEntry: { applicationNo: 'REG-2026-00001', kind: 'PERMANENT', certificateNo: 'KHL/CR/2026/0001', grantedOn: '2026-03-01', expiresOn: null, particulars: {} },
+      owners: transcript.owners, shareLedger: transcript.shareLedger, tonnage: transcript.tonnage, encumbrances: [], dischargedEncumbrances: [], caveats: [], titleBlocked: false, closure: null,
+      applications: registrations, certificates: [{ certificateNo: 'KHL/CR/2026/0001', kind: 'PERMANENT', series: 'CR', grantedOn: '2026-03-01', expiresOn: null, applicationNo: 'REG-2026-00001' }],
+      transactions: [{ id: 't1', number: 'RTX-2026-00001', vesselId: 'v1', vesselName: 'MV Coral Reach', officialNumber: '500123', type: 'REGISTRATION', registrationId: 'r1', applicationNo: 'REG-2026-00001', particulars: { certificateNo: 'KHL/CR/2026/0001', officialNumber: '500123' }, status: 'RECORDED', recordedOn: '2026-03-01T09:00:00Z', recordedBy: 'Registrar', notes: '', digest: null }],
+      transcripts: [], generatedAt: '2026-09-05T08:00:00Z',
+    };
+    mockGet({ '/vessels/v1': ok(detail), '/vessels/v1/registry': ok(record) });
     wrap(<Routes><Route path="/vessels/:id" element={<VesselDetail />} /></Routes>, '/vessels/v1');
     // the name is both the last breadcrumb and the h1, so target the heading
     expect(await screen.findByRole('heading', { name: /MV Coral Reach/ })).toBeInTheDocument();
@@ -65,6 +74,8 @@ describe('Fleet Manager pages', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Registry' }));
     expect(await screen.findByText('Registered')).toBeInTheDocument();
     expect(screen.getByText('500123')).toBeInTheDocument();
-    expect(screen.getByText('REG-2026-00001')).toBeInTheDocument();
+    expect(screen.getAllByText('REG-2026-00001').length).toBeGreaterThan(0);
+    expect(screen.getByText('RTX-2026-00001')).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Registry ledger' })).toBeInTheDocument();
   });
 });

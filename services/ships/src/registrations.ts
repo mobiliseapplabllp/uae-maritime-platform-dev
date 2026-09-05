@@ -3,7 +3,7 @@ import { scopeWhere, enqueue, eventFromContext, nextNumber, type Queryable, reco
 import { REGISTRATION_SCOPE } from './scope';
 import type { Env } from './env';
 import { iso, type Row, type VesselRow } from './vessels';
-import { portName, shareLedger, requiredEvidence, type Check } from './registry';
+import { portName, shareLedger, requiredEvidence, type Check, type KindRule } from './registry';
 
 /* One file with the registrar — the row, what the screens read off it, and the events it publishes.
  * The register itself (a ship's registry_* columns) is written only by a grant; see registrations.controller. */
@@ -12,7 +12,7 @@ export interface RegistrationRow {
   /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; application_no: string; kind: string; vessel_id: string | null; vessel_name: string; imo: string; port_of_registry: string;
   applicant: Row; owners: Row[]; tonnage: Row; previous_flag: string; previous_registry: string; previous_official_number: string;
-  evidence: Row[]; encumbrances: Row[]; carving_note: Row | null; amendment: Row | null; deletion: Row | null;
+  evidence: Row[]; encumbrances: Row[]; carving_note: Row | null; amendment: Row | null; deletion: Row | null; particulars: Row;
   status: string; checks: Check[]; assigned_to_id: string | null; assigned_to: string; official_number: string; certificate_no: string;
   granted_on: Date | null; granted_by: string; certificate_expires_on: Date | null; fee: Row; decision: Row | null;
   submitted_at: Date | null; due_at: Date | null; closed_at: Date | null; history: Row[]; created_at: Date; updated_at: Date;
@@ -30,7 +30,7 @@ export function registrationApi(r: RegistrationRow, profile: string, now = new D
     portOfRegistry: r.port_of_registry, portOfRegistryName: portName(r.port_of_registry, profile),
     applicant: r.applicant ?? {}, owners: r.owners ?? [], tonnage: r.tonnage ?? {},
     previousFlag: r.previous_flag, previousRegistry: r.previous_registry, previousOfficialNumber: r.previous_official_number,
-    evidence: r.evidence ?? [], encumbrances: r.encumbrances ?? [], carvingNote: r.carving_note, amendment: r.amendment, deletion: r.deletion,
+    evidence: r.evidence ?? [], encumbrances: r.encumbrances ?? [], carvingNote: r.carving_note, amendment: r.amendment, deletion: r.deletion, particulars: r.particulars ?? {},
     status: r.status, checks: r.checks ?? [], assignedToId: r.assigned_to_id, assignedTo: r.assigned_to,
     officialNumber: r.official_number, certificateNo: r.certificate_no, grantedOn: iso(r.granted_on), grantedBy: r.granted_by,
     certificateExpiresOn: iso(r.certificate_expires_on), fee: r.fee ?? {}, decision: r.decision,
@@ -43,8 +43,10 @@ export function registrationApi(r: RegistrationRow, profile: string, now = new D
 export type RegistrationApi = ReturnType<typeof registrationApi>;
 
 /** The detail record: the same file plus the resolved ship, the evidence this journey needs and the share ledger. */
-export function registrationDetail(r: RegistrationRow, vessel: Row | null, profile: string, now = new Date()) {
-  return { ...registrationApi(r, profile, now), vessel, requiredEvidence: requiredEvidence(registrationApi(r, profile, now), profile), shareLedger: shareLedger(r.owners ?? [], profile) };
+export function registrationDetail(r: RegistrationRow, vessel: Row | null, profile: string, rule: KindRule | null, now = new Date(), liveEncumbrances = 0) {
+  const api = registrationApi(r, profile, now);
+  return { ...api, vessel, rule: rule ? { code: rule.code, label: rule.label, labelAr: rule.labelAr, family: rule.family, carving: rule.carving, issuesCertificate: rule.issuesCertificate, validityMonths: rule.validityMonths, registryState: rule.registryState } : null,
+    requiredEvidence: rule ? requiredEvidence(api, rule, profile, vessel, liveEncumbrances) : [], shareLedger: shareLedger(r.owners ?? [], profile) };
 }
 
 /* The choke point for one application, so the tenancy filter is here and not in the handlers. */
@@ -64,7 +66,7 @@ export async function lockRegistration(c: Queryable, ref: string, scope: Tenancy
 const COLS: Record<string, string> = {
   vesselName: 'vessel_name', portOfRegistry: 'port_of_registry', applicant: 'applicant', owners: 'owners', tonnage: 'tonnage',
   previousFlag: 'previous_flag', previousRegistry: 'previous_registry', previousOfficialNumber: 'previous_official_number',
-  evidence: 'evidence', encumbrances: 'encumbrances', carvingNote: 'carving_note', amendment: 'amendment', deletion: 'deletion',
+  evidence: 'evidence', encumbrances: 'encumbrances', carvingNote: 'carving_note', amendment: 'amendment', deletion: 'deletion', particulars: 'particulars',
   status: 'status', checks: 'checks', assignedToId: 'assigned_to_id', assignedTo: 'assigned_to', officialNumber: 'official_number',
   certificateNo: 'certificate_no', grantedOn: 'granted_on', grantedBy: 'granted_by', certificateExpiresOn: 'certificate_expires_on',
   fee: 'fee', decision: 'decision', submittedAt: 'submitted_at', dueAt: 'due_at', closedAt: 'closed_at', history: 'history',
@@ -111,7 +113,7 @@ export async function publishRegistrationDeleted(c: Queryable, env: Env, r: Regi
 export function transcriptOf(vessel: VesselRow, rows: RegistrationRow[], profile: string) {
   const j = getJurisdiction(profile);
   const granted = rows.filter((r) => r.status === 'GRANTED').sort((a, b) => (a.granted_on?.getTime() ?? 0) - (b.granted_on?.getTime() ?? 0));
-  const current = [...granted].reverse().find((r) => r.kind === 'PERMANENT' || r.kind === 'PROVISIONAL') ?? null;
+  const current = [...granted].reverse().find((r) => ['PERMANENT', 'PROVISIONAL', 'BAREBOAT_IN', 'UNDER_CONSTRUCTION', 'RE_REGISTRATION'].includes(r.kind)) ?? null;
   const closure = granted.find((r) => r.kind === 'DELETION') ?? null;
   const ownershipAmendment = [...granted].reverse().find((r) => r.kind === 'AMENDMENT' && (r.amendment?.types ?? []).includes('OWNERSHIP') && (r.owners ?? []).length);
   const owners = ownershipAmendment?.owners ?? current?.owners ?? [];

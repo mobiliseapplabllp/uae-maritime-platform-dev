@@ -73,7 +73,11 @@ export const REGISTRATION_TRANSITIONS: TransitionTable<RegistrationStatus> = {
   REJECTED: [],
   WITHDRAWN: [],
 };
-export const REGISTRY_STATES = ['UNREGISTERED', 'PROVISIONAL', 'REGISTERED', 'CLOSED'] as const;
+/** Where a ship stands on the flag's register. A bareboat charter in takes a foreign ship onto the flag for the charter; one out suspends a registered ship's entry while she flies the charterer's flag. */
+export const REGISTRY_STATES = ['UNREGISTERED', 'PROVISIONAL', 'REGISTERED', 'BAREBOAT_IN', 'BAREBOAT_OUT', 'CLOSED'] as const;
+/** The states in which a ship is a ship of this flag today. */
+export const ON_REGISTER_STATES = ['PROVISIONAL', 'REGISTERED', 'BAREBOAT_IN'] as const;
+export const livesOnRegister = (state: string | null | undefined): boolean => (ON_REGISTER_STATES as readonly string[]).includes(String(state ?? ''));
 export const DELETION_REASONS = ['SOLD_FOREIGN', 'TRANSFER_OF_REGISTRY', 'BROKEN_UP', 'TOTAL_LOSS', 'MISSING', 'CEASED_TO_QUALIFY'] as const;
 export const AMENDMENT_TYPES = ['NAME', 'OWNERSHIP', 'PORT_OF_REGISTRY', 'TONNAGE', 'ALTERATION', 'MANAGER', 'MORTGAGE'] as const;
 

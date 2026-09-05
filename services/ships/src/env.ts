@@ -5,6 +5,9 @@ export const envSchema = baseEnvSchema.extend({
   PORT: z.coerce.number().default(5421),
   DATABASE_URL: z.string().default('postgres://maritime:maritime@127.0.0.1:5432/maritime_ships'),
   JURISDICTION: z.string().default('AE'),
+  /** Ledger transactions read `${TRANSACTION_PREFIX}-YYYY-NNNNN`; transcripts `${TRANSCRIPT_PREFIX}-YYYY-NNNNN` — one chronological series each per calendar year. */
+  TRANSACTION_PREFIX: z.string().default('RTX'),
+  TRANSCRIPT_PREFIX: z.string().default('TOR'),
   /** Registry application numbers read `${REG_PREFIX}-YYYY-NNNNN`, one atomic series per calendar year. */
   REG_PREFIX: z.string().default('REG'),
   /** How many days before expiry a certificate reads EXPIRING rather than VALID. */
