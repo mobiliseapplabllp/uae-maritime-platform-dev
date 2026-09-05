@@ -43,9 +43,9 @@ const published = async () => {
 };
 
 describe('scheduler', () => {
-  it('seeds the eight standing jobs with future next runs and lists them to settings viewers only', async () => {
+  it('seeds the standing jobs with future next runs and lists them to settings viewers only', async () => {
     const list = await srv().get('/jobs?limit=50').set('authorization', viewer);
-    expect(list.status).toBe(200); expect(list.body.meta.total).toBe(8);
+    expect(list.status).toBe(200); expect(list.body.meta.total).toBe(SEED_JOBS.length);
     expect(list.body.data.map((j: { key: string }) => j.key).sort()).toEqual(SEED_JOBS.map((j) => j.key).sort());
     for (const j of list.body.data) { expect(new Date(j.nextRunAt).getTime()).toBeGreaterThan(Date.now()); expect(j.timezone).toBe('Asia/Dubai'); expect(j.enabled).toBe(true); expect(j.runs).toBe(0); }
     const retention = list.body.data.find((j: { key: string }) => j.key === 'document-retention');
@@ -117,7 +117,7 @@ describe('scheduler', () => {
     expect(created.status).toBe(200); expect(created.body.data).toMatchObject({ key: 'nightly-parity', enabled: false, timezone: 'UTC' }); expect(new Date(created.body.data.nextRunAt).getUTCHours()).toBe(1);
     await pool.query("UPDATE jobs SET next_run_at = now() - interval '1 hour' WHERE key = 'nightly-parity'");
     expect((await ticker.tick()).fired).toBe(0);
-    expect((await srv().get('/jobs?limit=50').set('authorization', viewer)).body.meta.total).toBe(9);
+    expect((await srv().get('/jobs?limit=50').set('authorization', viewer)).body.meta.total).toBe(SEED_JOBS.length + 1);
     expect((await srv().get('/jobs?enabled=false').set('authorization', viewer)).body.data.map((j: { key: string }) => j.key)).toEqual(['nightly-parity']);
   });
 

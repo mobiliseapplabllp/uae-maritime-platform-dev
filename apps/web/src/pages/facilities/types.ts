@@ -47,3 +47,38 @@ export interface AuditPayload { date: string; auditor: string; result: AuditResu
 /** POST /licenses/:id/endorsements */
 export interface EndorsePayload { kind: EndorsementKind; completedOn?: string; surveyor?: string; organisation?: string; place?: string; result: EndorsementResult; remarks?: string; anniversary?: string }
 export interface BerthOption { id: string; code: string; name?: string; terminal?: string }
+
+/* ---- Annual accreditation and inspection visits (facilities service, /facilities/...) ---- */
+export type CycleStatus = 'CURRENT' | 'DUE' | 'EXPIRED' | 'SUSPENDED' | 'WITHDRAWN' | 'RENEWED';
+export type VisitStatus = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';
+/** One cycle of an accreditation scheme, read against the calendar: `status` is where it stands today, `storedStatus` what the sweep last wrote. */
+export interface AccreditationCycle {
+  id: string; companyId: string; companyName: string; category: string; instrumentId: string | null; instrumentNo: string; cycleNo: number; startsOn: string | null; endsOn: string | null;
+  status: CycleStatus; storedStatus: string; statusReason: string; daysLeft: number; visitsRequired: number; visitsDone: number; visitsOutstanding: number;
+  lastVisitAt: string | null; lastVisitResult: string | null; nextVisitDue: string | null; visitOverdue: boolean; rating: number | null; reminders: number[]; grantedBy: string; createdAt?: string | null; updatedAt?: string | null;
+}
+/** A scheme as the `accreditationCategory` master declares it. */
+export interface Scheme { category: string; label: string; labelAr: string | null; instrumentType: string; cycleMonths: number; visitsPerCycle: number; reminderDays: number[]; ratingWeight: number }
+export interface VisitFinding { code: string; title: string; severity: 'MINOR' | 'MAJOR' | 'CRITICAL'; dueDays?: number | null }
+export interface Visit {
+  id: string; number: string; subjectKind: string; subjectId: string; subjectName: string; category: string | null; cycleId: string | null; visitType: string; status: VisitStatus;
+  scheduledOn: string | null; visitedOn: string | null; inspectorId?: string | null; inspector: string; result: AuditResult | null; score: number | null; findings: VisitFinding[]; remarks: string;
+  reportDocumentId?: string | null; cancelReason: string; overdue: boolean; createdBy: string; createdAt?: string | null;
+}
+export interface SchemeSummary { category: string; label: string; labelAr: string | null; cycleMonths: number; companies: number; current: number; due: number; expired: number; suspended: number; withdrawn: number; visitsOverdue: number; averageRating: number | null }
+export interface AccreditationDashboard {
+  kpis: { schemes: number; accredited: number; companies: number; due: number; expired: number; suspended: number; renewalsNext30: number; renewalsNext90: number; visitsScheduled: number; visitsOverdue: number; visitsCompleted90: number; nonConformities90: number };
+  bySchemes: SchemeSummary[]; byStatus: { status: string; total: number }[]; renewals: AccreditationCycle[]; visitsDue: Visit[]; generatedAt: string;
+}
+export interface DirectoryAudit { id: string; number: string; subjectKind: string; subjectId: string; date: string; auditor: string; result: AuditResult; scope: string; remarks: string; instrumentNo: string }
+export interface Obligation { id: string; kind: string; title: string; detail: string; sourceRef: string; dueAt: string | null; status: 'OPEN' | 'CLEARED'; raisedAt: string; raisedBy: string; clearedAt: string | null; clearedBy: string; clearanceNote: string; overdue: boolean }
+export interface StandingEntry { from: string; to: string; reason: string; at: string; by: string }
+/** GET /facilities/companies/:id — the administration's overlay on the directory record. */
+export interface CompanyOverlay extends Company {
+  statusReason: string; statusChangedAt: string | null; statusChangedBy: string; audits: DirectoryAudit[]; auditCount: number; lastAuditAt: string | null; lastAuditResult: string | null; nonConformities: number;
+  obligations: Obligation[]; openObligations: number; overdueObligations: number; history: StandingEntry[];
+  accreditations: AccreditationCycle[]; accreditedFor: string[]; accreditationsDue: number; accreditationsExpired: number; visits: Visit[]; visitsScheduled: number; lastVisitAt: string | null;
+}
+export interface RatingEntry { source: 'AUDIT' | 'VISIT'; number: string; date: string; result: string; score: number | null; value: number; recency: number; typeWeight: number; weight: number }
+export interface RatingBreakdown { rating: number | null; recorded?: number; considered: number; entries: RatingEntry[]; method: string }
+export interface VisitOutcome { visit: Visit; rating: number | null; obligations: string[]; cycle: AccreditationCycle | null }

@@ -47,7 +47,7 @@ export function ispsOf(soc: WorldLicence | undefined, now: Date) {
   return { status: 'PROVISIONAL', socNo: soc.licenseNo, expiry: soc.expiryDate };
 }
 
-export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix = { audit: 'AUD', facility: 'PF' }) {
+export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix = { audit: 'AUD', facility: 'PF', visit: 'VIS' }) {
   const { pool } = createDb(databaseUrl);
   await runMigrations(pool, join(__dirname, '..', 'migrations'));
   const world = buildWorld({ profile });
@@ -118,6 +118,74 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
       } as Row);
     }
 
+    /* Annual accreditation: one cycle for every term a company has held under a scheme, and the visit each
+     * cycle called for — paid when its date has passed, still scheduled when it has not. The scheme's cycle
+     * length comes from the master, exactly as the consumer would read it. Numbered per calendar year. */
+    const schemeByType = new Map(world.lookups.filter((l) => l.category === 'accreditationCategory').map((l) => [String(l.meta.instrumentType ?? l.code), l]));
+    const inspectors = world.users.filter((u) => u.roleName === 'Marine Surveyor' && u.active);
+    const addMonths = (d: Date, m: number) => { const x = new Date(d); x.setUTCMonth(x.getUTCMonth() + m); return x; };
+    type SeedVisit = { id: string; cycleId: string; subjectId: string; subjectName: string; category: string; visitType: string; status: string; on: Date; inspector: (typeof inspectors)[number] | undefined; result: string; score: number | null; findings: Row[]; remarks: string };
+    const seedVisits: SeedVisit[] = [];
+    let cycles = 0; let vi = 0;
+    for (const l of held.filter((x) => x.subjectKind === 'COMPANY' && x.subjectId && x.issueDate && ['ISSUED', 'SUSPENDED', 'REVOKED'].includes(x.status))) {
+      const scheme = schemeByType.get(l.entityType); if (!scheme) continue;
+      const months = Number(scheme.meta.cycleMonths) || 12; const visitsRequired = Number(scheme.meta.visitsPerCycle ?? 1);
+      const renewals = l.history.filter((h) => h.from === 'ISSUED' && h.to === 'ISSUED').length;
+      const first = new Date(l.issueDate as string); const company = world.companies.find((c) => c.id === l.subjectId);
+      const latest = [...l.audits].sort((a, b) => b.date.localeCompare(a.date))[0];
+      for (let k = 0; k <= renewals; k++) {
+        const current = k === renewals;
+        const ends = current && l.expiryDate ? new Date(l.expiryDate) : addMonths(first, (k + 1) * months);
+        const starts = current && l.expiryDate ? addMonths(ends, -months) : addMonths(first, k * months);
+        const status = !current ? 'RENEWED' : l.status === 'SUSPENDED' ? 'SUSPENDED' : l.status === 'REVOKED' ? 'WITHDRAWN' : 'CURRENT';
+        const reason = !current ? `Renewed — cycle ${k + 2} opened` : status === 'SUSPENDED' ? `${l.licenseNo} suspended` : status === 'WITHDRAWN' ? `${l.licenseNo} revoked` : k === 0 ? 'Accreditation granted' : 'Accreditation renewed';
+        const due = new Date(starts.getTime() + (ends.getTime() - starts.getTime()) * 0.75);
+        const paid = visitsRequired > 0 && due.getTime() < now.getTime();
+        const result = !paid ? '' : current && latest ? latest.result : (company?.rating ?? 4) >= 4 ? 'SATISFACTORY' : (company?.rating ?? 4) >= 3 ? 'OBSERVATIONS' : 'NON_CONFORMITY';
+        const cycleId = stableId('cycle', `${l.licenseNo}:${k + 1}`);
+        await c.query(
+          `INSERT INTO accreditation_cycles(id, company_id, company_name, category, instrument_id, instrument_no, cycle_no, starts_on, ends_on, status, status_reason, visits_required, visits_done, last_visit_at, last_visit_result, next_visit_due, rating, granted_by, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'Registry',$18)
+           ON CONFLICT (id) DO UPDATE SET company_name = EXCLUDED.company_name, instrument_id = EXCLUDED.instrument_id, instrument_no = EXCLUDED.instrument_no, starts_on = EXCLUDED.starts_on, ends_on = EXCLUDED.ends_on,
+             status = EXCLUDED.status, status_reason = EXCLUDED.status_reason, visits_required = EXCLUDED.visits_required, visits_done = EXCLUDED.visits_done, last_visit_at = EXCLUDED.last_visit_at,
+             last_visit_result = EXCLUDED.last_visit_result, next_visit_due = EXCLUDED.next_visit_due, rating = EXCLUDED.rating, updated_at = now()`,
+          [cycleId, l.subjectId, l.entityName, scheme.code, current ? l.id : null, l.licenseNo, k + 1, starts, ends, status, reason, visitsRequired, paid ? 1 : 0, paid ? due : null, result, paid || visitsRequired === 0 ? null : due, l.performanceRating || null, starts]);
+        cycles += 1;
+        if (visitsRequired > 0) {
+          const score = result === 'SATISFACTORY' ? 90 + (vi % 8) : result === 'OBSERVATIONS' ? 72 + (vi % 6) : result === 'NON_CONFORMITY' ? 50 + (vi % 8) : null;
+          seedVisits.push({ id: stableId('visit', `${l.licenseNo}:${k + 1}`), cycleId, subjectId: l.subjectId as string, subjectName: l.entityName, category: scheme.code, visitType: k === 0 ? 'INITIAL' : 'ANNUAL', status: paid ? 'COMPLETED' : 'SCHEDULED', on: due,
+            inspector: inspectors[vi % Math.max(1, inspectors.length)], result, score,
+            findings: result === 'NON_CONFORMITY' ? [{ code: 'F1', title: 'Servicing records incomplete for the period', severity: 'MAJOR', dueDays: 30 }] : result === 'OBSERVATIONS' ? [{ code: 'O1', title: 'Test equipment calibration certificate due', severity: 'MINOR', dueDays: 60 }] : [],
+            remarks: paid ? `${scheme.label} — ${k === 0 ? 'initial' : 'annual'} accreditation visit` : '' });
+          vi += 1;
+        }
+      }
+    }
+    seedVisits.sort((a, b) => a.on.getTime() - b.on.getTime());
+    const visitSeries = new Map<string, number>();
+    for (const v of seedVisits) {
+      const key = `${prefix.visit}-${v.on.getUTCFullYear()}`; const n = (visitSeries.get(key) ?? 0) + 1; visitSeries.set(key, n);
+      const number = `${key}-${String(n).padStart(4, '0')}`;
+      await c.query('DELETE FROM visits WHERE number = $1 AND id <> $2', [number, v.id]);
+      await c.query(
+        `INSERT INTO visits(id, number, subject_kind, subject_id, subject_name, category, cycle_id, visit_type, status, scheduled_on, visited_on, inspector_id, inspector, result, score, findings, remarks, created_by, created_at)
+         VALUES ($1,$2,'COMPANY',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'Registry',$17)
+         ON CONFLICT (id) DO UPDATE SET number = EXCLUDED.number, cycle_id = EXCLUDED.cycle_id, status = EXCLUDED.status, scheduled_on = EXCLUDED.scheduled_on, visited_on = EXCLUDED.visited_on,
+           inspector_id = EXCLUDED.inspector_id, inspector = EXCLUDED.inspector, result = EXCLUDED.result, score = EXCLUDED.score, findings = EXCLUDED.findings, remarks = EXCLUDED.remarks, updated_at = now()`,
+        [v.id, number, v.subjectId, v.subjectName, v.category, v.cycleId, v.visitType, v.status, v.on, v.status === 'COMPLETED' ? v.on : null, v.inspector?.id ?? null, v.inspector?.name ?? '', v.result, v.score, JSON.stringify(v.findings), v.remarks, new Date(v.on.getTime() - 14 * D)]);
+      // what a completed visit found is something the company still owes, exactly as completing one live raises it
+      for (const [i, f] of v.findings.entries()) {
+        if (v.status !== 'COMPLETED') continue;
+        await c.query(
+          `INSERT INTO obligations(id, subject_kind, subject_id, subject_name, kind, title, detail, source_ref, due_at, status, raised_at, raised_by)
+           VALUES ($1,'COMPANY',$2,$3,'VISIT_FINDING',$4,$5,$6,$7,$8,$9,'Registry')
+           ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, detail = EXCLUDED.detail, due_at = EXCLUDED.due_at`,
+          [stableId('obligation', `${v.id}:${i + 1}`), v.subjectId, v.subjectName, `${f.code} — ${f.title}`, `${f.severity}: raised on visit ${number} (${v.category})`, `${number}:${i + 1}`,
+            new Date(v.on.getTime() + Number(f.dueDays ?? 30) * D), v.on.getTime() + Number(f.dueDays ?? 30) * D < now.getTime() - 60 * D ? 'CLEARED' : 'OPEN', v.on]);
+      }
+    }
+    for (const [key, n] of visitSeries) await advance(c, key, n);
+
     /* Compliance audits: the audits recorded against the instruments these subjects hold are the desk's
      * own record of how each subject has performed, so they are kept here against the subject rather
      * than only inside the instrument. Numbered per calendar year, chronologically, as they were taken. */
@@ -175,7 +243,7 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
     const rated = await c.query<{ n: string }>('SELECT count(*) AS n FROM companies WHERE rating > 0');
     return {
       profile: world.profile, lookups, companies: world.companies.length, facilities: world.berths.length, instruments: held.length,
-      audits, obligations, series: series.size, ispsCompliant: Number(isps.rows[0].n), rated: Number(rated.rows[0].n),
+      audits, obligations, cycles, visits: seedVisits.length, series: series.size, ispsCompliant: Number(isps.rows[0].n), rated: Number(rated.rows[0].n),
       operators: new Set(world.berths.map((b) => operatorFor(world.companies, b)?.code).filter(Boolean)).size,
     };
   });
@@ -185,5 +253,5 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
 
 if (require.main === module) {
   const e = env();
-  seedFacilities(e.DATABASE_URL, e.JURISDICTION, { audit: e.AUDIT_PREFIX, facility: e.FACILITY_PREFIX }).then((c) => console.log('SEED COMPLETE', c)).catch((err) => { console.error(err); process.exit(1); });
+  seedFacilities(e.DATABASE_URL, e.JURISDICTION, { audit: e.AUDIT_PREFIX, facility: e.FACILITY_PREFIX, visit: e.VISIT_PREFIX }).then((c) => console.log('SEED COMPLETE', c)).catch((err) => { console.error(err); process.exit(1); });
 }

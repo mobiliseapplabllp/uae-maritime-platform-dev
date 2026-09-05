@@ -12,8 +12,9 @@ import CompaniesPage from '../src/pages/facilities/CompaniesPage';
 import CompanyDetail from '../src/pages/facilities/CompanyDetail';
 import FacilitiesList from '../src/pages/facilities/FacilitiesList';
 import FacilityDetail from '../src/pages/facilities/FacilityDetail';
+import AccreditationDesk from '../src/pages/facilities/AccreditationDesk';
 import { categoryLabel, nextActions, subjectPath, verifyPath } from '../src/pages/facilities/shared';
-import type { ChecksResult, Company, EndorsementsView, Licence, LicenceDetail, LicenceMeta } from '../src/pages/facilities/types';
+import type { AccreditationCycle, AccreditationDashboard, ChecksResult, Company, CompanyOverlay, EndorsementsView, Licence, LicenceDetail, LicenceMeta, Scheme, Visit } from '../src/pages/facilities/types';
 
 const ok = <T,>(data: T, meta: Record<string, unknown> = {}) => ({ success: true as const, data, meta });
 const session = { user: { id: 'u1', name: 'Accreditation Officer', email: 'facilities@maritime.example', active: true, kind: 'user', scope: { level: 'PORT' }, role: { id: 'r', name: 'Super Admin', permissions: ['*'] }, perms: ['*'] }, token: 't', refreshToken: 'r' };
@@ -292,5 +293,104 @@ describe('instrument lifecycle helpers', () => {
     expect(categoryLabel('TERMINAL_OPERATOR')).toBe('Terminal Operator');
     expect(categoryLabel('SOMETHING_ELSE')).toBe('Something Else');
     expect(verifyPath('LIC-2026-0041')).toBe('/verify/LIC-2026-0041');
+  });
+});
+
+/* The administration's overlay on a company: the accreditation cycles it holds, the visits paid, the audits and the obligations. Fictional. */
+const schemes: Scheme[] = [
+  { category: 'PEST_CONTROL', label: 'Pest control and deratting', labelAr: 'مكافحة الآفات وإبادة القوارض', instrumentType: 'PEST_CONTROL', cycleMonths: 12, visitsPerCycle: 1, reminderDays: [90, 30, 7], ratingWeight: 0.8 },
+  { category: 'LSA_SERVICING', label: 'Life-saving appliance servicing', labelAr: 'صيانة معدات إنقاذ الأرواح', instrumentType: 'LSA_SERVICING', cycleMonths: 12, visitsPerCycle: 1, reminderDays: [90, 30, 7], ratingWeight: 1.2 },
+];
+const cycle = (over: Partial<AccreditationCycle>): AccreditationCycle => ({
+  id: 'cy1', companyId: 'c1', companyName: 'Gulf Coast Agencies (sample)', category: 'PEST_CONTROL', instrumentId: 'i9', instrumentNo: 'ACC-PST-2026-0004', cycleNo: 2, startsOn: '2026-03-01', endsOn: '2027-03-01',
+  status: 'CURRENT', storedStatus: 'CURRENT', statusReason: 'Accreditation renewed', daysLeft: 177, visitsRequired: 1, visitsDone: 0, visitsOutstanding: 1, lastVisitAt: null, lastVisitResult: null, nextVisitDue: '2026-12-01', visitOverdue: false, rating: 4.2, reminders: [], grantedBy: 'Registry', ...over,
+});
+const visit = (over: Partial<Visit>): Visit => ({
+  id: 'v1', number: 'VIS-2026-0012', subjectKind: 'COMPANY', subjectId: 'c1', subjectName: 'Gulf Coast Agencies (sample)', category: 'PEST_CONTROL', cycleId: 'cy1', visitType: 'ANNUAL', status: 'SCHEDULED', scheduledOn: '2026-10-05', visitedOn: null,
+  inspector: 'S. Al Marzouqi', result: null, score: null, findings: [], remarks: '', cancelReason: '', overdue: false, createdBy: 'Accreditation Officer', ...over,
+});
+const overlay: CompanyOverlay = {
+  ...agency, statusReason: '', statusChangedAt: null, statusChangedBy: '', auditCount: 1, lastAuditAt: '2026-06-02', lastAuditResult: 'OBSERVATIONS', nonConformities: 0,
+  audits: [{ id: 'a1', number: 'AUD-2026-0007', subjectKind: 'COMPANY', subjectId: 'c1', date: '2026-06-02', auditor: 'Accreditation Officer', result: 'OBSERVATIONS', scope: 'Periodic compliance audit', remarks: 'Two observations on record keeping', instrumentNo: 'LIC-2026-0041' }],
+  obligations: [{ id: 'o1', kind: 'VISIT_FINDING', title: 'PC-01 — Fumigation log not kept', detail: 'MAJOR: raised on visit VIS-2026-0009', sourceRef: 'VIS-2026-0009:1', dueAt: '2026-08-01', status: 'OPEN', raisedAt: '2026-07-01', raisedBy: 'Accreditation Officer', clearedAt: null, clearedBy: '', clearanceNote: '', overdue: true }],
+  openObligations: 1, overdueObligations: 1, history: [{ from: '', to: 'ACTIVE', reason: 'Recorded on the directory', at: '2021-04-11', by: 'Registry' }],
+  accreditations: [cycle({}), cycle({ id: 'cy2', category: 'LSA_SERVICING', status: 'DUE', storedStatus: 'DUE', daysLeft: 21, endsOn: '2026-09-26', visitsDone: 1, visitsOutstanding: 0, nextVisitDue: null, lastVisitAt: '2026-06-20', lastVisitResult: 'SATISFACTORY', instrumentNo: 'ACC-LSA-2025-0011' })],
+  accreditedFor: ['PEST_CONTROL', 'LSA_SERVICING'], accreditationsDue: 1, accreditationsExpired: 0,
+  visits: [visit({}), visit({ id: 'v0', number: 'VIS-2026-0009', status: 'COMPLETED', scheduledOn: '2026-07-01', visitedOn: '2026-07-01', result: 'NON_CONFORMITY', score: 55, findings: [{ code: 'PC-01', title: 'Fumigation log not kept', severity: 'MAJOR', dueDays: 30 }], remarks: 'Fumigation logs missing' })],
+  visitsScheduled: 1, lastVisitAt: '2026-07-01',
+};
+const visitTypes = ok([{ id: 'vt1', category: 'visitType', code: 'ANNUAL', label: 'Annual accreditation visit', labelAr: 'زيارة الاعتماد السنوية', active: true }, { id: 'vt2', category: 'visitType', code: 'SPOT_CHECK', label: 'Unannounced spot check', labelAr: 'تفتيش مفاجئ', active: true }]);
+const dashboard: AccreditationDashboard = {
+  kpis: { schemes: 6, accredited: 7, companies: 5, due: 2, expired: 1, suspended: 1, renewalsNext30: 1, renewalsNext90: 3, visitsScheduled: 4, visitsOverdue: 1, visitsCompleted90: 6, nonConformities90: 1 },
+  bySchemes: [{ category: 'PEST_CONTROL', label: 'Pest control and deratting', labelAr: null, cycleMonths: 12, companies: 2, current: 1, due: 1, expired: 0, suspended: 0, withdrawn: 0, visitsOverdue: 1, averageRating: 3.9 }],
+  byStatus: [{ status: 'CURRENT', total: 4 }, { status: 'DUE', total: 2 }], renewals: [cycle({ id: 'cy2', status: 'DUE', daysLeft: 21 })], visitsDue: [visit({ overdue: true, scheduledOn: '2026-08-20' })], generatedAt: '2026-09-05T08:00:00Z',
+};
+
+describe('Annual accreditation and inspection visits', () => {
+  beforeAll(() => { store.dispatch(setSession(session as never)); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('shows a company\'s accreditation position, read against the calendar, with the visits it calls for', async () => {
+    mockGet({ '/companies/c1': ok(agency), '/instruments/subjects/COMPANY/c1': ok([detailOf(issued)]), '/facilities/companies/c1': ok(overlay), '/facilities/accreditations/schemes': ok(schemes), '/facilities/companies/c1/accreditations': ok({ position: overlay.accreditations, history: overlay.accreditations }), '/lookups': visitTypes });
+    wrap(<Routes><Route path="/companies/:id" element={<CompanyDetail />} /></Routes>, '/companies/c1?tab=accreditation');
+    await screen.findByRole('heading', { name: /Gulf Coast Agencies \(sample\)/ });
+    const pest = await screen.findByTestId('cycle-PEST_CONTROL');
+    expect(within(pest).getByText('Pest control and deratting')).toBeInTheDocument();
+    expect(within(pest).getByText('Current')).toBeInTheDocument();
+    expect(within(pest).getByText('Cycle 2 · ACC-PST-2026-0004')).toBeInTheDocument();
+    expect(within(pest).getByText('177 days left')).toBeInTheDocument();
+    expect(within(pest).getByText('Visits 0 of 1')).toBeInTheDocument();
+    const lsa = screen.getByTestId('cycle-LSA_SERVICING');
+    expect(within(lsa).getByText('Renewal due')).toBeInTheDocument();
+    expect(within(lsa).getByText('21 days left')).toBeInTheDocument();
+    // an approver can record a grant by hand; the scheme list is the master's
+    expect(screen.getByRole('button', { name: 'Record accreditation' })).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: 'Cycle history' })).toBeInTheDocument();
+  });
+
+  it('lists the visits paid, and offers to record a visit now or schedule one', async () => {
+    mockGet({ '/companies/c1': ok(agency), '/instruments/subjects/COMPANY/c1': ok([]), '/facilities/companies/c1': ok(overlay), '/facilities/accreditations/schemes': ok(schemes), '/lookups': visitTypes });
+    wrap(<Routes><Route path="/companies/:id" element={<CompanyDetail />} /></Routes>, '/companies/c1?tab=visits');
+    const table = await screen.findByRole('table', { name: 'Visits' });
+    expect(within(table).getByText('VIS-2026-0012')).toBeInTheDocument();
+    expect(within(table).getByText('VIS-2026-0009')).toBeInTheDocument();
+    expect(within(table).getByText('Non-conformity')).toBeInTheDocument();
+    expect(within(table).getByText('55')).toBeInTheDocument();
+    expect(within(table).getByText('Major')).toBeInTheDocument();
+    await waitFor(() => expect(within(table).getAllByText('Annual accreditation visit').length).toBeGreaterThan(0));
+    expect(within(table).getByRole('button', { name: 'Record outcome VIS-2026-0012' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Record a visit now' }));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByLabelText('Record the outcome now')).toBeChecked();
+    expect(screen.getByText('Findings (0)')).toBeInTheDocument();
+  });
+
+  it('shows what the company owes and how its rating is earned', async () => {
+    mockGet({ '/companies/c1': ok(agency), '/instruments/subjects/COMPANY/c1': ok([]), '/facilities/companies/c1': ok(overlay), '/facilities/accreditations/schemes': ok(schemes), '/lookups': ok([{ id: 'ok1', category: 'obligationKind', code: 'VISIT_FINDING', label: 'Inspection visit finding', active: true }]),
+      '/facilities/companies/c1/rating': ok({ rating: 3.4, recorded: 3.4, considered: 2, method: 'Recency-weighted mean.', entries: [{ source: 'VISIT', number: 'VIS-2026-0009', date: '2026-07-01', result: 'NON_CONFORMITY', score: 55, value: 2.75, recency: 0.9, typeWeight: 1, weight: 0.9 }, { source: 'AUDIT', number: 'AUD-2026-0007', date: '2026-06-02', result: 'OBSERVATIONS', score: null, value: 3.5, recency: 0.88, typeWeight: 1, weight: 0.88 }] }) });
+    wrap(<Routes><Route path="/companies/:id" element={<CompanyDetail />} /></Routes>, '/companies/c1?tab=compliance');
+    const obligations = await screen.findByRole('table', { name: 'Obligations' });
+    expect(within(obligations).getByText('PC-01 — Fumigation log not kept')).toBeInTheDocument();
+    expect(within(obligations).getByText('Overdue')).toBeInTheDocument();
+    await waitFor(() => expect(within(obligations).getByText('Inspection visit finding')).toBeInTheDocument());
+    const breakdown = await screen.findByRole('table', { name: 'How the rating is earned' });
+    expect(within(breakdown).getByText('VIS-2026-0009')).toBeInTheDocument();
+    expect(within(breakdown).getByText('2.75')).toBeInTheDocument();
+    expect(within(screen.getByRole('table', { name: 'Audit history (1)' })).getByText('AUD-2026-0007')).toBeInTheDocument();
+  });
+
+  it('runs the accreditation desk: schemes, renewals, visits due and the work list', async () => {
+    const get = mockGet({ '/facilities/accreditations/dashboard': ok(dashboard), '/facilities/accreditations/schemes': ok(schemes), '/facilities/accreditations': ok(overlay.accreditations, { total: 2 }), '/lookups': visitTypes });
+    wrap(<AccreditationDesk />);
+    expect(await screen.findByRole('heading', { name: 'Accreditation desk' })).toBeInTheDocument();
+    const byScheme = await screen.findByRole('table', { name: 'By scheme' });
+    await waitFor(() => expect(within(byScheme).getByText('Pest control and deratting')).toBeInTheDocument());
+    expect(within(byScheme).getByText('3.9')).toBeInTheDocument();
+    const due = screen.getByRole('table', { name: 'Visits due' });
+    expect(within(due).getByText('VIS-2026-0012')).toBeInTheDocument(); expect(within(due).getByText('Overdue')).toBeInTheDocument();
+    expect(await screen.findByText('ACC-LSA-2025-0011', { exact: false })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByLabelText('Status'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Renewal due' }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/facilities/accreditations', { params: expect.objectContaining({ status: 'DUE', page: 1 }) }));
   });
 });

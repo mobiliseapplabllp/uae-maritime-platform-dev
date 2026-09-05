@@ -2,7 +2,8 @@ import type { PoolClient } from 'pg';
 import { EVENTS } from '@maritime/contracts';
 import { AuditClient, badRequest, enqueue, eventFromContext, nextNumber, notFound, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
-import { auditApi, obligationApi, ratingFrom, type AuditRow, type ObligationRow, type Row } from './directory';
+import { auditApi, obligationApi, type AuditRow, type ObligationRow, type Row } from './directory';
+import { recomputeRating } from './rating';
 import { auditsFor } from './read';
 
 /* Compliance, which is the same act whether the subject is a company or a port facility.
@@ -34,8 +35,8 @@ export async function recordAudit(c: PoolClient, env: Env, audit: AuditClient, s
   await audit.record(c, { action: 'AUDIT', entity: subject.kind === 'COMPANY' ? 'Company' : 'PortFacility', entityId: subject.id, entityLabel: subject.name, after: auditApi(row), note: body.remarks ?? '' });
 
   const history = await auditsFor(c, subject.kind, subject.id);
-  const rating = ratingFrom(history);
-  if (subject.kind === 'COMPANY' && rating != null) await c.query('UPDATE companies SET rating = $2, updated_at = now() WHERE id = $1', [subject.id, rating]);
+  // the rating is earned from audits and completed visits together, so the recompute lives with the visits
+  const rating = await recomputeRating(c, subject.kind, subject.id);
 
   let obligation: ObligationRow | null = null;
   if (body.result === 'NON_CONFORMITY') {

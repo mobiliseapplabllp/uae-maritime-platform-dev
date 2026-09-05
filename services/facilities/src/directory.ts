@@ -97,6 +97,50 @@ export const obligationApi = (o: ObligationRow, now = new Date()) => ({
 });
 export type ObligationApi = ReturnType<typeof obligationApi>;
 
+export const CYCLE_STATUS = ['CURRENT', 'DUE', 'EXPIRED', 'SUSPENDED', 'WITHDRAWN', 'RENEWED'] as const;
+export type CycleStatus = (typeof CYCLE_STATUS)[number];
+export const VISIT_STATUS = ['SCHEDULED', 'COMPLETED', 'CANCELLED'] as const;
+export interface CycleRow {
+  id: string; company_id: string; company_name: string; category: string; instrument_id: string | null; instrument_no: string; cycle_no: number;
+  starts_on: string; ends_on: string; status: string; status_reason: string; visits_required: number; visits_done: number; last_visit_at: Date | null; last_visit_result: string;
+  next_visit_due: string | null; rating: string | null; reminders: number[]; granted_by_id: string | null; granted_by: string; scope_company: string; created_at: Date; updated_at: Date;
+}
+export interface VisitFinding { code: string; title: string; severity: string; dueDays?: number | null }
+export interface VisitRow {
+  id: string; number: string; subject_kind: string; subject_id: string; subject_name: string; category: string; cycle_id: string | null; visit_type: string; status: string;
+  scheduled_on: string | null; visited_on: Date | null; inspector_id: string | null; inspector: string; result: string; score: string | null; findings: VisitFinding[]; remarks: string;
+  report_document_id: string | null; cancel_reason: string; scope_company: string; created_by_id: string | null; created_by: string; created_at: Date; updated_at: Date;
+}
+/** Where a cycle stands on a given day: the stored status, read against the calendar for the two states time decides. */
+export function cycleStateOn(c: { status: string; ends_on: string | Date; reminders?: number[] }, now: Date, reminderDays: number[]): { status: string; daysLeft: number; inWindow: boolean } {
+  const daysLeft = Math.ceil((new Date(c.ends_on).getTime() + D - now.getTime()) / D) - 1;
+  const window = Math.max(0, ...reminderDays);
+  const live = c.status === 'CURRENT' || c.status === 'DUE';
+  if (live && daysLeft < 0) return { status: 'EXPIRED', daysLeft, inWindow: false };
+  if (live && daysLeft <= window) return { status: 'DUE', daysLeft, inWindow: true };
+  return { status: c.status, daysLeft, inWindow: false };
+}
+export const cycleApi = (c: CycleRow, now = new Date(), reminderDays: number[] = [90, 30, 7]) => {
+  const state = cycleStateOn(c, now, reminderDays);
+  return {
+    id: c.id, companyId: c.company_id, companyName: c.company_name, category: c.category, instrumentId: c.instrument_id, instrumentNo: c.instrument_no, cycleNo: c.cycle_no,
+    startsOn: dateOnly(c.starts_on), endsOn: dateOnly(c.ends_on), status: state.status, storedStatus: c.status, statusReason: c.status_reason, daysLeft: state.daysLeft,
+    visitsRequired: c.visits_required, visitsDone: c.visits_done, visitsOutstanding: Math.max(0, c.visits_required - c.visits_done),
+    lastVisitAt: iso(c.last_visit_at), lastVisitResult: c.last_visit_result || null, nextVisitDue: dateOnly(c.next_visit_due),
+    visitOverdue: !!c.next_visit_due && c.visits_done < c.visits_required && new Date(c.next_visit_due).getTime() < now.getTime() && (state.status === 'CURRENT' || state.status === 'DUE'),
+    rating: num(c.rating), reminders: c.reminders ?? [], grantedBy: c.granted_by, createdAt: iso(c.created_at), updatedAt: iso(c.updated_at),
+  };
+};
+export type CycleApi = ReturnType<typeof cycleApi>;
+export const visitApi = (v: VisitRow, now = new Date()) => ({
+  id: v.id, number: v.number, subjectKind: v.subject_kind, subjectId: v.subject_id, subjectName: v.subject_name, category: v.category || null, cycleId: v.cycle_id,
+  visitType: v.visit_type, status: v.status, scheduledOn: dateOnly(v.scheduled_on), visitedOn: iso(v.visited_on), inspectorId: v.inspector_id, inspector: v.inspector,
+  result: v.result || null, score: num(v.score), findings: v.findings ?? [], remarks: v.remarks, reportDocumentId: v.report_document_id, cancelReason: v.cancel_reason,
+  overdue: v.status === 'SCHEDULED' && !!v.scheduled_on && new Date(v.scheduled_on).getTime() + D < now.getTime(),
+  createdBy: v.created_by, createdAt: iso(v.created_at), updatedAt: iso(v.updated_at),
+});
+export type VisitApi = ReturnType<typeof visitApi>;
+
 export const statusEntryApi = (h: StatusRow) => ({ from: h.from_status, to: h.to_status, reason: h.reason, at: iso(h.at)!, by: h.by, byId: h.by_id });
 
 /** One instrument as the local snapshot holds it — the register's own record stays in the instruments service. */
@@ -110,7 +154,7 @@ export const instrumentApi = (i: InstrumentRow, now = new Date()) => ({
 });
 export type InstrumentApi = ReturnType<typeof instrumentApi>;
 
-export interface CompanyExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; history?: ReturnType<typeof statusEntryApi>[]; facilities?: FacilityApi[] }
+export interface CompanyExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; history?: ReturnType<typeof statusEntryApi>[]; facilities?: FacilityApi[]; accreditations?: CycleApi[]; visits?: VisitApi[] }
 /** The company as the directory, the detail screen and every read-model event see it. */
 export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
   const instruments = extra.instruments ?? [];
@@ -131,6 +175,13 @@ export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
     overdueObligations: obligations.filter((o) => o.status === 'OPEN' && o.overdue).length,
     facilities: extra.facilities ?? [],
     history: extra.history ?? [],
+    // the accreditation position: the latest cycle under each scheme, and the visits paid
+    accreditations: extra.accreditations ?? [],
+    accreditedFor: (extra.accreditations ?? []).filter((a) => a.status === 'CURRENT' || a.status === 'DUE').map((a) => a.category),
+    accreditationsDue: (extra.accreditations ?? []).filter((a) => a.status === 'DUE').length,
+    accreditationsExpired: (extra.accreditations ?? []).filter((a) => a.status === 'EXPIRED').length,
+    visits: extra.visits ?? [], visitsScheduled: (extra.visits ?? []).filter((v) => v.status === 'SCHEDULED').length,
+    lastVisitAt: (extra.visits ?? []).find((v) => v.status === 'COMPLETED')?.visitedOn ?? null,
     createdAt: iso(c.created_at), updatedAt: iso(c.updated_at),
   };
 }
@@ -159,20 +210,43 @@ export type FacilityApi = ReturnType<typeof facilityApi>;
 /* ----------------------------------------------------------------------------- ratings --- */
 
 export const AUDIT_SCORE: Record<string, number> = { SATISFACTORY: 5, OBSERVATIONS: 3.5, NON_CONFORMITY: 2 };
-/* A performance rating is the recency-weighted mean of the last eight audits: an audit from this year
- * counts for roughly twice one from two years ago, and nothing older than about a decade moves it much.
- * A subject with no audit history has no rating to give — the caller keeps whatever it had. */
-export function ratingFrom(audits: { date: string | Date; result: string }[], now = new Date()): number | null {
-  const recent = [...audits].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 8);
+/** One thing the rating is earned from: a compliance audit, or a completed inspection visit. */
+export interface RatingEntry {
+  date: string | Date; result: string;
+  /** A scored visit (0–100) speaks for itself; an unscored one, or an audit, is read off its result. */ score?: number | null;
+  /** The visit type's weight from the `visitType` master — a spot check counts for less than the annual visit. */ weight?: number | null;
+  source?: 'AUDIT' | 'VISIT'; number?: string;
+}
+/** A checklist score on the five-point scale the rating is kept on: 100 is a 5, 40 is a 2. */
+export const scoreToRating = (score: number) => Math.max(1, Math.min(5, score / 20));
+/* A performance rating is the recency-weighted mean of the last eight things the desk learned about a
+ * subject — audits and completed visits alike. An entry from this year counts for roughly twice one from
+ * two years ago, nothing older than about a decade moves it much, and each visit type carries its own
+ * weight from the master, so an unannounced spot check informs the rating without dominating it. A subject
+ * with no history has no rating to give — the caller keeps whatever it had. */
+export function ratingFrom(entries: RatingEntry[], now = new Date()): number | null {
+  const recent = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 8);
   if (!recent.length) return null;
   let weighted = 0; let weight = 0;
-  for (const a of recent) {
-    const years = Math.max(0, (now.getTime() - new Date(a.date).getTime()) / YEAR);
-    const w = Math.max(0.25, 1 / (1 + years / 2));
-    weighted += (AUDIT_SCORE[a.result] ?? 3.5) * w;
+  for (const e of recent) {
+    const years = Math.max(0, (now.getTime() - new Date(e.date).getTime()) / YEAR);
+    const w = Math.max(0.25, 1 / (1 + years / 2)) * (e.weight != null && e.weight > 0 ? e.weight : 1);
+    const value = e.score != null && Number.isFinite(Number(e.score)) ? scoreToRating(Number(e.score)) : AUDIT_SCORE[e.result] ?? 3.5;
+    weighted += value * w;
     weight += w;
   }
   return Math.round((weighted / weight) * 10) / 10;
+}
+/** The rating with its working shown: every entry that went in, and what each one contributed. */
+export function ratingBreakdown(entries: RatingEntry[], now = new Date()) {
+  const recent = [...entries].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 8);
+  const rows = recent.map((e) => {
+    const years = Math.max(0, (now.getTime() - new Date(e.date).getTime()) / YEAR);
+    const recency = Math.max(0.25, 1 / (1 + years / 2)); const typeWeight = e.weight != null && e.weight > 0 ? e.weight : 1;
+    const value = e.score != null && Number.isFinite(Number(e.score)) ? scoreToRating(Number(e.score)) : AUDIT_SCORE[e.result] ?? 3.5;
+    return { source: e.source ?? 'AUDIT', number: e.number ?? '', date: iso(e.date)!, result: e.result, score: e.score ?? null, value: Math.round(value * 100) / 100, recency: Math.round(recency * 100) / 100, typeWeight, weight: Math.round(recency * typeWeight * 100) / 100 };
+  });
+  return { rating: ratingFrom(entries, now), considered: rows.length, entries: rows, method: 'Recency-weighted mean of the last eight audits and completed visits; a visit type\'s weight comes from the visitType master, a checklist score maps 100 → 5.' };
 }
 
 export type Verdict = { ok: true } | { ok: false; error: string };

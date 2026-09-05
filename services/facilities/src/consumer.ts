@@ -6,6 +6,7 @@ import type { Env } from './env';
 import { facilityApi, publishCompany, type CompanyRow, type FacilityRow, type Row } from './directory';
 import { projectSnapshot } from './subjects';
 import { raiseObligation } from './compliance';
+import { closeCycleFromInstrument, openCycle, schemeForInstrumentType, sweepAccreditations } from './accreditation';
 import { loadCompany } from './read';
 
 /* What the port-companies desk learns from the rest of the platform.
@@ -39,8 +40,27 @@ async function announce(c: PoolClient, env: Env, type: string, data: Row, cause:
   await enqueue(c, makeEvent({ type, source: env.SERVICE_NAME, data, subject, correlationId: cause.correlationid, causationId: cause.id, actor: cause.actor }));
 }
 
+/* An accreditation instrument arriving from the register drives the company's cycle: an issue opens or
+ * renews one, a suspension suspends it, a revocation withdraws it. The cycle is this desk's; the instrument
+ * stays the register's, and the two agree because one is written from the other's events. */
+async function syncCycle(c: PoolClient, deps: Deps, instrument: Row, subject: { id: string; name: string }, before: Row | null, cause: EventEnvelope) {
+  const scheme = await schemeForInstrumentType(c, deps.env, String(instrument.entityType ?? ''));
+  if (!scheme) return;
+  const status = String(instrument.status ?? ''); const id = String(instrument.id);
+  const number = String(instrument.number ?? instrument.licenseNo ?? '');
+  if (status === 'ISSUED' && instrument.issueDate) {
+    const startsOn = new Date(instrument.issueDate);
+    await openCycle(c, deps.env, deps.audit, subject, scheme.category, { instrumentId: id, instrumentNo: number, startsOn, endsOn: instrument.expiryDate ? new Date(instrument.expiryDate) : null, cause, reason: before?.status === 'SUSPENDED' ? `${number} reinstated` : undefined });
+  } else if (status === 'SUSPENDED') {
+    await closeCycleFromInstrument(c, deps.env, deps.audit, id, 'SUSPENDED', `${number} suspended`, cause);
+  } else if (status === 'REVOKED') {
+    await closeCycleFromInstrument(c, deps.env, deps.audit, id, 'REVOKED', `${number} revoked`, cause);
+  }
+}
+
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
   if (await applyLookupEvent(c, event)) return; // the masters the directory validates against
+  if (event.type === EVENTS.scheduler.sweepAccreditations) { await sweepAccreditations(c, deps.env, deps.audit, new Date(), event); return; }
   const result = await projectSnapshot(c, event);
   if (!result.kind) return;
   const entity = (result.entity ?? {}) as Row;
@@ -49,6 +69,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
     if (!REGULATED_KINDS.includes(String(entity.subjectKind ?? ''))) return;
     const subject = await subjectOf(c, entity);
     if (!subject) return;
+    if (subject.kind === 'COMPANY') await syncCycle(c, deps, entity, subject, result.before ?? null, event);
     const was = result.before?.status ?? '';
     const now = String(entity.status ?? '');
     if (now === was) return;
@@ -91,7 +112,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   }
 }
 
-export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.companyUpserted), ...LOOKUP_SUBJECTS];
+export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.companyUpserted), subjectFor(EVENTS.scheduler.sweepAccreditations), ...LOOKUP_SUBJECTS];
 
 @Injectable()
 export class FacilitiesConsumer implements OnModuleInit, OnModuleDestroy {

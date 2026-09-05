@@ -8,7 +8,8 @@ import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedFacilities } from '../src/seed';
 import { applyEvent } from '../src/consumer';
-import { canChangeStatus, directoryDashboard, ratingFrom } from '../src/directory';
+import { canChangeStatus, cycleStateOn, directoryDashboard, ratingBreakdown, ratingFrom, scoreToRating } from '../src/directory';
+import { accreditationDashboard, nextVisitDue, parseDays } from '../src/accreditation';
 
 const DB = 'maritime_facilities_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
@@ -541,5 +542,180 @@ describe('facilities — tenancy', () => {
   it('leaves an officer reading the whole directory, with no clause added at all', async () => {
     expect((await g('/facilities/companies?limit=1', viewer)).body.meta.total).toBe((await g('/facilities/companies?limit=1', admin)).body.meta.total);
     expect((await g('/facilities/audits?limit=1', viewer)).body.meta.total).toBe((await g('/facilities/audits?limit=1', admin)).body.meta.total);
+  });
+});
+
+describe('facilities — annual accreditation and inspection visits', () => {
+  const deps = () => ({ env, audit });
+  const day = (n: number) => iso(Date.now() + n * D);
+  const accreditationEvent = (over: Record<string, unknown>) => makeEvent({
+    type: EVENTS.readModel.upserted, source: 'instruments',
+    data: { kind: 'instrument', entity: { id: 'acc-inst-1', number: 'ACC-CMP-2026-0001', subjectKind: 'COMPANY', entityType: 'COMPASS_CALIBRATION', typeLabel: 'Magnetic Compass Adjuster Approval', instrumentClass: 'ACCREDITATION', status: 'ISSUED', issueDate: day(-10), expiryDate: day(355), inForce: true, ...over } },
+  });
+
+  it('reads a cycle against the calendar, spaces the visits, and weighs visits into the rating', () => {
+    const now = new Date('2026-06-01T00:00:00Z');
+    expect(cycleStateOn({ status: 'CURRENT', ends_on: '2027-05-01' }, now, [90, 30, 7])).toMatchObject({ status: 'CURRENT', inWindow: false });
+    expect(cycleStateOn({ status: 'CURRENT', ends_on: '2026-06-20' }, now, [90, 30, 7])).toMatchObject({ status: 'DUE', daysLeft: 19, inWindow: true });
+    expect(cycleStateOn({ status: 'CURRENT', ends_on: '2026-05-20' }, now, [90, 30, 7]).status).toBe('EXPIRED');
+    expect(cycleStateOn({ status: 'SUSPENDED', ends_on: '2026-05-20' }, now, [90, 30, 7]).status).toBe('SUSPENDED');
+    expect(cycleStateOn({ status: 'RENEWED', ends_on: '2026-06-20' }, now, [90, 30, 7]).status).toBe('RENEWED');
+    const s = new Date('2026-01-01T00:00:00Z'); const e = new Date('2027-01-01T00:00:00Z');
+    expect(nextVisitDue(s, e, 1, 0)?.toISOString().slice(0, 10)).toBe('2026-10-01');
+    expect(nextVisitDue(s, e, 2, 1)?.toISOString().slice(0, 7)).toBe('2026-11');
+    expect(nextVisitDue(s, e, 1, 1)).toBeNull();
+    expect(parseDays('90, 30,7', [1])).toEqual([90, 30, 7]); expect(parseDays('', [60])).toEqual([60]); expect(parseDays([7, 30], [1])).toEqual([30, 7]);
+    expect(scoreToRating(100)).toBe(5); expect(scoreToRating(40)).toBe(2); expect(scoreToRating(0)).toBe(1);
+    // a scored visit speaks for itself; a spot check informs the rating without dominating it
+    expect(ratingFrom([{ date: '2026-05-01', result: 'NON_CONFORMITY', score: 55, source: 'VISIT' }], now)).toBe(2.8);
+    const audited = ratingFrom([{ date: '2026-05-01', result: 'SATISFACTORY' }], now);
+    const withSpot = ratingFrom([{ date: '2026-05-01', result: 'SATISFACTORY' }, { date: '2026-05-15', result: 'NON_CONFORMITY', score: 40, weight: 0.6, source: 'VISIT' }], now);
+    const withAnnual = ratingFrom([{ date: '2026-05-01', result: 'SATISFACTORY' }, { date: '2026-05-15', result: 'NON_CONFORMITY', score: 40, weight: 1, source: 'VISIT' }], now);
+    expect(withSpot!).toBeLessThan(audited!); expect(withAnnual!).toBeLessThan(withSpot!);
+    const shown = ratingBreakdown([{ date: '2026-05-01', result: 'SATISFACTORY', number: 'AUD-2026-0001' }, { date: '2026-05-15', result: 'OBSERVATIONS', score: 70, weight: 0.8, source: 'VISIT', number: 'VIS-2026-0001' }], now);
+    expect(shown.entries.map((x) => x.source)).toEqual(['VISIT', 'AUDIT']); expect(shown.entries[0]).toMatchObject({ value: 3.5, typeWeight: 0.8 }); expect(shown.rating).toBe(shown.rating);
+    const dash = accreditationDashboard([
+      { category: 'PEST_CONTROL', status: 'CURRENT', endsOn: '2026-06-20', companyId: 'a', rating: 4, visitOverdue: false } as never,
+      { category: 'PEST_CONTROL', status: 'DUE', endsOn: '2026-06-10', companyId: 'b', rating: 3, visitOverdue: true } as never,
+      { category: 'TOWAGE_CERTIFICATION', status: 'EXPIRED', endsOn: '2026-05-01', companyId: 'c', rating: null, visitOverdue: false } as never,
+    ], [{ status: 'SCHEDULED', overdue: true, scheduledOn: '2026-05-20' } as never, { status: 'COMPLETED', result: 'NON_CONFORMITY', visitedOn: '2026-05-20' } as never],
+    [{ category: 'PEST_CONTROL', label: 'Pest control', labelAr: null, cycleMonths: 12 } as never, { category: 'TOWAGE_CERTIFICATION', label: 'Towage', labelAr: null, cycleMonths: 12 } as never], now);
+    expect(dash.kpis).toMatchObject({ schemes: 2, accredited: 2, companies: 2, due: 1, expired: 1, renewalsNext30: 2, visitsScheduled: 1, visitsOverdue: 2, nonConformities90: 1 });
+    expect(dash.bySchemes[0]).toMatchObject({ category: 'PEST_CONTROL', companies: 2, current: 1, due: 1, visitsOverdue: 1, averageRating: 3.5 });
+  });
+
+  it('seeds the six schemes with cycles, visits and a desk dashboard, read from the master', async () => {
+    const schemes = await g('/facilities/accreditations/schemes'); expect(schemes.body.data).toHaveLength(6); expect(schemes.body.data[0]).toMatchObject({ cycleMonths: 12, visitsPerCycle: 1, reminderDays: [90, 30, 7] });
+    const dash = await g('/facilities/accreditations/dashboard'); expect(dash.body.data.kpis.schemes).toBe(6); expect(dash.body.data.kpis.accredited).toBeGreaterThan(0);
+    const list = await g('/facilities/accreditations?limit=100'); expect(list.body.meta.total).toBeGreaterThan(0);
+    for (const row of list.body.data) expect(['CURRENT', 'DUE', 'EXPIRED', 'SUSPENDED', 'WITHDRAWN']).toContain(row.status);
+    const history = await g('/facilities/accreditations?history=true&limit=200'); expect(history.body.meta.total).toBeGreaterThanOrEqual(list.body.meta.total);
+    const visits = await g('/facilities/visits?limit=100'); expect(visits.body.meta.total).toBeGreaterThan(0); expect(visits.body.data.every((v: any) => /^VIS-\d{4}-\d{4}$/.test(v.number))).toBe(true);
+    const one = await g(`/facilities/accreditations/${list.body.data[0].id}`); expect(one.body.data.scheme.category).toBe(list.body.data[0].category); expect(one.body.data.history.length).toBeGreaterThan(0);
+    expect((await g('/facilities/accreditations/00000000-0000-4000-a000-000000000000')).status).toBe(404);
+  });
+
+  it('grants, renews and reads back a cycle by hand, and refuses what the master or the standing does not allow', async () => {
+    const co = await newCompany({ category: 'SERVICE_PROVIDER', types: ['PEST_CONTROL'] });
+    await clearOutbox();
+    expect((await post(`${C}/${co.id}/accreditations`, { category: 'MOON_MINING', startsOn: day(-30) }, registrar)).status).toBe(400);
+    expect((await post(`${C}/${co.id}/accreditations`, { category: 'PEST_CONTROL', startsOn: day(-30) }, clerk)).status).toBe(403);
+    const granted = await post(`${C}/${co.id}/accreditations`, { category: 'PEST_CONTROL', startsOn: day(-30), instrumentNo: 'ACC-PST-2025-0007' }, registrar);
+    expect(granted.status).toBe(201); expect(granted.body.data.change).toBe('opened');
+    expect(granted.body.data.cycle).toMatchObject({ category: 'PEST_CONTROL', cycleNo: 1, status: 'CURRENT', visitsRequired: 1, visitsDone: 0, instrumentNo: 'ACC-PST-2025-0007' });
+    expect(granted.body.data.cycle.daysLeft).toBeGreaterThan(300); expect(granted.body.data.cycle.nextVisitDue).toBeTruthy();
+    expect((await outbox(EVENTS.facilities.accreditationOpened)).at(-1)?.data).toMatchObject({ companyId: co.id, category: 'PEST_CONTROL', cycleNo: 1, change: 'opened' });
+    const full = await g(`${C}/${co.id}`); expect(full.body.data.accreditedFor).toEqual(['PEST_CONTROL']); expect(full.body.data.accreditations[0].status).toBe('CURRENT');
+    const renewed = await post(`${C}/${co.id}/accreditations`, { category: 'PEST_CONTROL', startsOn: day(300), instrumentNo: 'ACC-PST-2026-0031', reason: 'Renewed on application' }, registrar);
+    expect(renewed.body.data.change).toBe('renewed'); expect(renewed.body.data.cycle.cycleNo).toBe(2);
+    const position = await g(`${C}/${co.id}/accreditations`);
+    expect(position.body.data.position).toHaveLength(1); expect(position.body.data.position[0].cycleNo).toBe(2);
+    expect(position.body.data.history.map((x: any) => [x.cycleNo, x.status])).toEqual([[2, 'CURRENT'], [1, 'RENEWED']]);
+    expect((await outbox(EVENTS.facilities.accreditationRenewed)).at(-1)?.data).toMatchObject({ cycleNo: 2, previousCycleId: granted.body.data.cycle.id });
+    await post(`${C}/${co.id}/status`, { status: 'SUSPENDED', reason: 'Servicing station closed' }, registrar);
+    expect((await post(`${C}/${co.id}/accreditations`, { category: 'LSA_SERVICING', startsOn: day(-1) }, registrar)).status).toBe(409);
+  });
+
+  it('opens, suspends, reinstates and withdraws a cycle as the instrument register issues, suspends and revokes', async () => {
+    const co = await newCompany({ category: 'SERVICE_PROVIDER', types: ['COMPASS_CALIBRATION'] });
+    await clearOutbox();
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ subjectId: co.id, entityName: co.name })));
+    let position = (await g(`${C}/${co.id}/accreditations`)).body.data.position;
+    expect(position).toHaveLength(1); expect(position[0]).toMatchObject({ category: 'COMPASS_CALIBRATION', status: 'CURRENT', instrumentNo: 'ACC-CMP-2026-0001', cycleNo: 1 });
+    expect((await outbox(EVENTS.facilities.accreditationOpened)).at(-1)?.data).toMatchObject({ companyId: co.id, category: 'COMPASS_CALIBRATION' });
+    // the same issue arriving again is the same cycle
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ subjectId: co.id, entityName: co.name })));
+    expect((await g(`${C}/${co.id}/accreditations`)).body.data.history).toHaveLength(1);
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ subjectId: co.id, entityName: co.name, status: 'SUSPENDED' })));
+    position = (await g(`${C}/${co.id}/accreditations`)).body.data.position; expect(position[0].status).toBe('SUSPENDED');
+    expect((await outbox(EVENTS.facilities.accreditationSuspended)).at(-1)?.data).toMatchObject({ companyId: co.id, reason: 'ACC-CMP-2026-0001 suspended' });
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ subjectId: co.id, entityName: co.name, status: 'ISSUED' })));
+    position = (await g(`${C}/${co.id}/accreditations`)).body.data.position; expect(position[0].status).toBe('CURRENT'); expect(position[0].statusReason).toMatch(/reinstated/i);
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ subjectId: co.id, entityName: co.name, status: 'REVOKED' })));
+    position = (await g(`${C}/${co.id}/accreditations`)).body.data.position; expect(position[0].status).toBe('WITHDRAWN');
+    expect((await outbox(EVENTS.facilities.accreditationWithdrawn)).at(-1)?.data).toMatchObject({ companyId: co.id });
+    // an instrument under no scheme opens nothing
+    const other = await newCompany({ category: 'AGENCY', types: ['SHIPPING_AGENCY'] });
+    await withTx(pool, (c) => applyEvent(c, deps(), accreditationEvent({ id: 'acc-inst-2', number: 'LIC-2026-0500', subjectId: other.id, entityName: other.name, entityType: 'SHIPPING_AGENCY', instrumentClass: 'LICENCE' })));
+    expect((await g(`${C}/${other.id}/accreditations`)).body.data.position).toHaveLength(0);
+  });
+
+  it('moves a cycle into its renewal window, reminds once per milestone with an obligation, and expires it on the day', async () => {
+    const co = await newCompany({ category: 'SERVICE_PROVIDER', types: ['TOWAGE_CERTIFICATION'] });
+    const granted = await post(`${C}/${co.id}/accreditations`, { category: 'TOWAGE_CERTIFICATION', startsOn: day(-350), instrumentNo: 'ACC-TOW-2025-0002' }, registrar);
+    expect(granted.body.data.cycle.status).toBe('DUE'); // read against the calendar before any sweep
+    await clearOutbox();
+    const swept = await post('/facilities/accreditations/sweep', {}, registrar); expect(swept.status).toBe(201);
+    expect(swept.body.data.due).toBeGreaterThanOrEqual(1); expect(swept.body.data.reminded).toBeGreaterThanOrEqual(2);
+    const cycle = (await g(`/facilities/accreditations/${granted.body.data.cycle.id}`)).body.data;
+    expect(cycle.storedStatus).toBe('DUE'); expect(cycle.reminders).toEqual([90, 30]);
+    const dueEvents = (await outbox(EVENTS.facilities.accreditationDue)).filter((e) => e.data.companyId === co.id);
+    expect(dueEvents.map((e) => e.data.reminderDay)).toEqual([90, 30]);
+    const obligations = (await g(`${C}/${co.id}/obligations`)).body.data.obligations.filter((o: any) => o.kind === 'RENEWAL');
+    expect(obligations).toHaveLength(1); expect(obligations[0].title).toMatch(/Renew Towage accreditation/);
+    // the next sweep owes nothing new
+    await clearOutbox();
+    expect((await post('/facilities/accreditations/sweep', {}, registrar)).body.data.reminded).toBe(0);
+    expect((await outbox(EVENTS.facilities.accreditationDue)).filter((e) => e.data.companyId === co.id)).toHaveLength(0);
+    // the day after it ends
+    const expired = await post('/facilities/accreditations/sweep', { now: day(20) }, registrar); expect(expired.body.data.expired).toBeGreaterThanOrEqual(1);
+    expect((await g(`/facilities/accreditations/${granted.body.data.cycle.id}`)).body.data.storedStatus).toBe('EXPIRED');
+    expect((await outbox(EVENTS.facilities.accreditationExpired)).some((e) => e.data.companyId === co.id)).toBe(true);
+    expect((await g(`${C}/${co.id}`)).body.data.accreditationsExpired).toBe(1);
+    expect((await post('/facilities/accreditations/sweep', {}, clerk)).status).toBe(403);
+  });
+
+  it('schedules a visit, records what it found, moves the rating, raises the findings and counts it on the cycle', async () => {
+    const co = await newCompany({ category: 'SERVICE_PROVIDER', types: ['PEST_CONTROL'] });
+    await post(`${C}/${co.id}/accreditations`, { category: 'PEST_CONTROL', startsOn: day(-60) }, registrar);
+    expect((await post(`${C}/${co.id}/visits`, { visitType: 'PICNIC' }, clerk)).body.message).toMatch(/PICNIC.*visitType/);
+    expect((await post(`${C}/${co.id}/visits`, { visitType: 'ANNUAL', category: 'MOON_MINING' }, clerk)).status).toBe(400);
+    expect((await post(`${C}/${co.id}/visits`, { visitType: 'ANNUAL' }, viewer)).status).toBe(403);
+    await clearOutbox();
+    const planned = await post(`${C}/${co.id}/visits`, { visitType: 'ANNUAL', category: 'PEST_CONTROL', scheduledOn: day(3), inspector: 'S. Al Marzouqi' }, clerk);
+    expect(planned.status).toBe(201); const v = planned.body.data.visit;
+    expect(v).toMatchObject({ status: 'SCHEDULED', visitType: 'ANNUAL', category: 'PEST_CONTROL', inspector: 'S. Al Marzouqi' }); expect(v.number).toMatch(/^VIS-\d{4}-\d{4}$/); expect(v.cycleId).toBeTruthy();
+    expect((await outbox(EVENTS.facilities.visitScheduled)).at(-1)?.data).toMatchObject({ number: v.number, subjectId: co.id });
+    expect((await g(`${C}/${co.id}/visits`)).body.data).toMatchObject({ scheduled: 1, overdue: 0 });
+    expect((await post(`/facilities/visits/${v.id}/complete`, { result: 'SATISFACTORY', visitedOn: day(5) }, clerk)).status).toBe(400); // not in the future
+    expect((await post(`/facilities/visits/${v.id}/complete`, { result: 'SATISFACTORY', score: 140 }, clerk)).status).toBe(400);
+    const done = await post(`/facilities/visits/${v.id}/complete`, { result: 'NON_CONFORMITY', score: 55, remarks: 'Fumigation logs missing for two vessels', findings: [{ code: 'PC-01', title: 'Fumigation log not kept', severity: 'MAJOR', dueDays: 21 }, { code: 'PC-02', title: 'Operator certificates expired', severity: 'CRITICAL' }] }, clerk);
+    expect(done.status).toBe(201);
+    expect(done.body.data.visit).toMatchObject({ status: 'COMPLETED', result: 'NON_CONFORMITY', score: 55 }); expect(done.body.data.obligations).toHaveLength(2);
+    expect(done.body.data.rating).toBe(2.8); expect(done.body.data.cycle).toMatchObject({ visitsDone: 1, visitsOutstanding: 0, lastVisitResult: 'NON_CONFORMITY', nextVisitDue: null, rating: 2.8 });
+    expect((await outbox(EVENTS.facilities.visitCompleted)).at(-1)?.data).toMatchObject({ number: v.number, result: 'NON_CONFORMITY', findings: 2, obligations: 2, rating: 2.8 });
+    const obligations = (await g(`${C}/${co.id}/obligations`)).body.data.obligations.filter((o: any) => o.kind === 'VISIT_FINDING');
+    expect(obligations.map((o: any) => o.title).sort()).toEqual(['PC-01 — Fumigation log not kept', 'PC-02 — Operator certificates expired']);
+    expect(Math.round((new Date(obligations.find((o: any) => o.title.startsWith('PC-01')).dueAt).getTime() - Date.now()) / D)).toBe(21);
+    const company = (await g(`${C}/${co.id}`)).body.data; expect(company.rating).toBe(2.8); expect(company.lastVisitAt).toBeTruthy(); expect(company.visits).toHaveLength(1);
+    const rating = (await g(`${C}/${co.id}/rating`)).body.data; expect(rating.rating).toBe(2.8); expect(rating.entries[0]).toMatchObject({ source: 'VISIT', number: v.number, score: 55, typeWeight: 1 });
+    expect((await post(`/facilities/visits/${v.id}/complete`, { result: 'SATISFACTORY' }, clerk)).status).toBe(409);
+    // a spot check is recorded on the spot, and weighs less than the annual visit did
+    const spot = await post(`${C}/${co.id}/visits`, { visitType: 'SPOT_CHECK', complete: { result: 'SATISFACTORY', score: 95, remarks: 'Unannounced; records in order' } }, clerk);
+    expect(spot.status).toBe(201); expect(spot.body.data.visit.status).toBe('COMPLETED'); expect(spot.body.data.rating).toBeGreaterThan(2.8); expect(spot.body.data.rating).toBeLessThan(4);
+    // an audit recorded now reads the same history
+    const audited = await post(`${C}/${co.id}/audits`, { result: 'SATISFACTORY', remarks: 'Follow-up audit' }, clerk); expect(audited.body.data.rating).toBeGreaterThan(spot.body.data.rating);
+    // cancellation needs a reason and only applies to a planned visit
+    const later = await post(`${C}/${co.id}/visits`, { visitType: 'FOLLOW_UP', scheduledOn: day(30) }, clerk);
+    expect((await post(`/facilities/visits/${later.body.data.visit.id}/cancel`, { reason: '' }, clerk)).status).toBe(400);
+    const cancelled = await post(`/facilities/visits/${later.body.data.visit.id}/cancel`, { reason: 'Rescheduled with the operator' }, clerk); expect(cancelled.body.data.status).toBe('CANCELLED');
+    expect((await post(`/facilities/visits/${later.body.data.visit.id}/complete`, { result: 'SATISFACTORY' }, clerk)).status).toBe(409);
+    expect((await outbox(EVENTS.facilities.visitCancelled)).at(-1)?.data).toMatchObject({ reason: 'Rescheduled with the operator' });
+    const listed = await g(`/facilities/visits?subjectId=${co.id}&limit=50`); expect(listed.body.meta.total).toBe(3);
+    expect((await g(`/facilities/visits?subjectId=${co.id}&status=COMPLETED&result=NON_CONFORMITY`)).body.meta.total).toBe(1);
+    // a port facility is visited the same way
+    const f = await newFacility(); const fv = await post(`${F}/${f.id}/visits`, { visitType: 'SPOT_CHECK', complete: { result: 'OBSERVATIONS', score: 70 } }, clerk);
+    expect(fv.status).toBe(201); expect(fv.body.data.visit.subjectKind).toBe('FACILITY'); expect((await g(`${F}/${f.id}/rating`)).body.data.rating).toBe(3.5);
+  });
+
+  it('shows an operator their own visits and cycles, and nobody else\'s', async () => {
+    const gss = (await pool.query("SELECT id, name FROM companies WHERE code = 'GSS'")).rows[0];
+    const mine = await post(`${C}/${gss.id}/visits`, { visitType: 'SPOT_CHECK', complete: { result: 'SATISFACTORY', score: 88 } }, clerk); expect(mine.status).toBe(201);
+    const other = (await g('/facilities/visits?limit=100')).body.data.find((v: any) => v.subjectId !== gss.id);
+    const seen = await g('/facilities/visits?limit=100', agentGss); expect(seen.body.meta.total).toBeGreaterThan(0); expect(seen.body.data.every((v: any) => v.subjectId === gss.id)).toBe(true);
+    expect((await g(`/facilities/visits/${mine.body.data.visit.id}`, agentGss)).status).toBe(200);
+    expect((await g(`/facilities/visits/${other.id}`, agentGss)).status).toBe(404);
+    const cycles = await g('/facilities/accreditations?limit=100', agentGss); expect(cycles.body.data.every((x: any) => x.companyId === gss.id)).toBe(true);
+    expect((await g('/facilities/accreditations/dashboard', agentGss)).body.data.kpis.companies).toBeLessThanOrEqual(1);
   });
 });

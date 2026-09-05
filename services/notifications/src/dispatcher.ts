@@ -17,6 +17,10 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
   { type: EVENTS.instruments.expiring, audiencePerm: 'facilities.view', severity: 'warning', title: (d) => `${d.typeLabel ?? 'Instrument'} ${d.number} expires in ${d.daysLeft} days — ${d.entityName}`, link: (d) => `/facilities/${d.instrumentId}` },
   { type: EVENTS.workflow.requestDecided, audiencePerm: 'services.view', severity: 'info', title: (d) => `Application ${d.requestNo} ${String(d.outcome).toLowerCase()}`, link: (d) => `/services/requests/${d.requestId}` },
   { type: EVENTS.ships.vesselRegistered, audiencePerm: 'registry.view', severity: 'success', title: (d) => `Registry granted: ${d.vesselName}`, link: (d) => `/registry/${d.registrationId}` },
+  { type: EVENTS.facilities.accreditationDue, audiencePerm: 'facilities.view', severity: 'warning', title: (d) => `${d.scheme ?? d.category} accreditation of ${d.companyName} ends in ${d.daysLeft} days`, link: (d) => `/companies/${d.companyId}` },
+  { type: EVENTS.facilities.accreditationExpired, audiencePerm: 'facilities.view', severity: 'error', title: (d) => `${d.scheme ?? d.category} accreditation of ${d.companyName} has expired`, link: (d) => `/companies/${d.companyId}` },
+  { type: EVENTS.facilities.accreditationRenewed, audiencePerm: 'facilities.view', severity: 'success', title: (d) => `${d.scheme ?? d.category} accreditation renewed — ${d.companyName} (cycle ${d.cycleNo})`, link: (d) => `/companies/${d.companyId}` },
+  { type: EVENTS.facilities.visitCompleted, audiencePerm: 'facilities.view', severity: 'info', title: (d) => `Visit ${d.number} completed — ${d.subjectName}: ${String(d.result ?? '').toLowerCase().replace('_', ' ')}`, body: (d) => (Number(d.findings) ? `${d.findings} finding(s) raised as obligations` : ''), link: (d) => `/companies/${d.subjectId}` },
   { type: EVENTS.ai.decisionRecorded, audiencePerm: 'agents.view', severity: 'info', title: (d) => `Agent ${d.agentId} recorded a decision (${d.disposition})`, link: () => '/agents/decisions' },
 ];
 

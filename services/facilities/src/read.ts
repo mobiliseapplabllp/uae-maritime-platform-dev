@@ -2,6 +2,9 @@ import type { Pool, PoolClient } from 'pg';
 import { notFound, scopeWhere } from '@maritime/service-kit';
 import { COMPANY_SCOPE, FACILITY_SCOPE } from './scope';
 import type { TenancyScope } from '@maritime/contracts';
+import type { Env } from './env';
+import { cyclesFor, positionOf } from './accreditation';
+import { visitsFor } from './visits';
 import {
   auditApi, companyApi, facilityApi, instrumentApi, obligationApi, statusEntryApi,
   type AuditApi, type AuditRow, type CompanyApi, type CompanyRow, type FacilityApi, type FacilityRow,
@@ -51,14 +54,16 @@ export async function historyFor(c: Q, companyId: string) {
 }
 
 /** The whole company record: contacts, addresses, what it holds, how it has audited and what it owes. */
-export async function fullCompany(c: Q, row: CompanyRow): Promise<CompanyApi> {
+export async function fullCompany(c: Q, row: CompanyRow, env?: Env): Promise<CompanyApi> {
   // sequential rather than concurrent: `c` is often a transaction's own client, which serves one query at a time
   const instruments = await instrumentsFor(c, [row.id]);
   const audits = await auditsFor(c, 'COMPANY', row.id);
   const obligations = await obligationsFor(c, 'COMPANY', row.id);
   const history = await historyFor(c, row.id);
   const facilities = await c.query<FacilityRow>('SELECT * FROM port_facilities WHERE operator_id = $1 ORDER BY code', [row.id]);
-  return companyApi(row, { instruments, audits, obligations, history, facilities: facilities.rows.map((f) => facilityApi(f)) });
+  const accreditations = env ? positionOf(await cyclesFor(c, row.id, env)) : [];
+  const visits = await visitsFor(c, 'COMPANY', row.id);
+  return companyApi(row, { instruments, audits, obligations, history, facilities: facilities.rows.map((f) => facilityApi(f)), accreditations, visits });
 }
 
 /** The whole facility record: operator, ISPS standing, capability and capacity, and its inspection and audit history. */

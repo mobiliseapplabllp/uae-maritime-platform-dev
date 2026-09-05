@@ -94,6 +94,7 @@ export const MODULES: ModuleDef[] = [
     nav: [{ header: 'Companies', items: [
       { to: '/companies', label: 'Company Directory', icon: CorporateFareRoundedIcon, perm: 'facilities.view' },
       { to: '/facilities', label: 'Licence Register', icon: WorkspacePremiumRoundedIcon, perm: 'facilities.view' },
+      { to: '/accreditations', label: 'Accreditation Desk', icon: FactCheckRoundedIcon, perm: 'facilities.view' },
     ] }] },
   { key: 'services', name: 'Service Desk', short: 'Services', color: '#0E7C86', desc: 'The catalogue of maritime services, applications and the Service Studio', icon: StorefrontRoundedIcon, perm: 'services.view', home: '/services',
     nav: [{ header: 'Services', items: [

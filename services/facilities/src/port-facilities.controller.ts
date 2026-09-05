@@ -6,11 +6,14 @@ import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup,
 import { FACILITY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, auditApi, facilityApi, obligationApi,
+  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, auditApi, cycleApi, facilityApi, obligationApi, visitApi,
   publishFacility, ratingFrom, type FacilityRow,
 } from './directory';
 import { auditsFor, fullFacility, loadFacility } from './read';
 import { clearObligation, raiseObligation, recordAudit, renewalWorkList } from './compliance';
+import { completeVisit, scheduleVisit, visitsFor } from './visits';
+import { ratingFor } from './rating';
+import { completeSchema } from './accreditation.controller';
 
 /* The port-facility register — berthing and terminal facilities as regulated subjects.
  *
@@ -41,6 +44,7 @@ const auditBody = z.object({
 });
 const obligationBody = z.object({ kind: text(40).min(1), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
 const clearBody = z.object({ note: text(600).default('') });
+const visitBody = z.object({ visitType: text(40).min(1), scheduledOn: z.union([text(40), z.null()]).optional(), inspector: text(120).optional(), inspectorId: text(80).nullish(), remarks: text(2000).default(''), complete: completeSchema.optional() });
 
 const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType: 'facility_type', terminal: 'terminal', operatorName: 'operator_name', ispsStatus: 'isps_status', status: 'status', createdAt: 'created_at', updatedAt: 'updated_at' };
 
@@ -80,6 +84,28 @@ export class PortFacilitiesController {
   async renewals(@Param('id') id: string, @CurrentUser() user: Principal, @Query('window') window?: string) {
     const f = await loadFacility(this.pool, id, user.scope);
     return renewalWorkList(this.pool, Number(window) || this.env.RENEWAL_WINDOW_DAYS, { subjectId: f.id });
+  }
+
+  @RequirePerm('facilities.view') @Get(':id/visits')
+  async visits(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const f = await loadFacility(this.pool, id, user.scope);
+    const list = await visitsFor(this.pool, 'FACILITY', f.id);
+    return { subjectId: f.id, subjectName: f.name, scheduled: list.filter((v) => v.status === 'SCHEDULED').length, overdue: list.filter((v) => v.overdue).length, visits: list };
+  }
+  @RequirePerm('facilities.manage') @Post(':id/visits')
+  async visit(@Param('id') id: string, @Body(zod(visitBody)) b: z.infer<typeof visitBody>, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const f = await loadFacility(c, id, user.scope, true);
+      const row = await scheduleVisit(c, this.env, this.audit, { kind: 'FACILITY', id: f.id, name: f.name }, { ...b, scheduledOn: b.scheduledOn ?? b.complete?.visitedOn ?? null }, user);
+      if (!b.complete) return { visit: visitApi(row), rating: null, obligations: [], cycle: null };
+      const done = await completeVisit(c, this.env, this.audit, row.id, b.complete, user);
+      return { visit: visitApi(done.row), rating: done.rating, obligations: done.obligations, cycle: done.cycle ? cycleApi(done.cycle) : null };
+    });
+  }
+  @RequirePerm('facilities.view') @Get(':id/rating')
+  async rating(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const f = await loadFacility(this.pool, id, user.scope);
+    return { subjectId: f.id, subjectName: f.name, ...(await ratingFor(this.pool, 'FACILITY', f.id)) };
   }
 
   @RequirePerm('facilities.manage') @Post()

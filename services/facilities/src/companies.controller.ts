@@ -6,11 +6,15 @@ import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup,
 import { COMPANY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, COMPANY_STATUS, auditApi, canChangeStatus, companyApi, obligationApi, ratingFrom,
+  AUDIT_RESULTS, COMPANY_STATUS, auditApi, canChangeStatus, companyApi, cycleApi, obligationApi, ratingFrom, visitApi,
   publishCompany, publishCompanyDeleted, type CompanyRow,
 } from './directory';
 import { auditsFor, fullCompany, instrumentsFor, loadCompany, obligationsFor } from './read';
 import { clearObligation, raiseObligation, recordAudit, renewalWorkList } from './compliance';
+import { cyclesFor, openCycle, positionOf, schemeFor } from './accreditation';
+import { completeVisit, scheduleVisit, visitsFor } from './visits';
+import { ratingFor } from './rating';
+import { completeSchema } from './accreditation.controller';
 
 /* The regulated-company directory.
  *
@@ -36,6 +40,9 @@ const auditBody = z.object({
 });
 const obligationBody = z.object({ kind: text(40).min(1), title: text(200).min(3), detail: text(2000).default(''), sourceRef: text(80).default(''), dueAt: z.union([text(40), z.null()]).optional() });
 const clearBody = z.object({ note: text(600).default('') });
+const grantBody = z.object({ category: text(60).min(1), instrumentNo: text(60).default(''), instrumentId: text(80).nullish(), startsOn: text(40), endsOn: z.union([text(40), z.null()]).optional(), reason: text(600).default('') });
+/* A visit is planned, or — for a spot check — recorded on the spot: `complete` carries what was found and the visit is created already complete. */
+const visitBody = z.object({ visitType: text(40).min(1), category: text(60).nullish(), scheduledOn: z.union([text(40), z.null()]).optional(), inspector: text(120).optional(), inspectorId: text(80).nullish(), remarks: text(2000).default(''), complete: completeSchema.optional() });
 
 /** What a company is licensed for is a list of instrument types; the register of those is the contract's, since each carries its own numbering and survey regime. */
 const assertTypes = (types: string[]) => { const bad = types.filter((t) => !typeAllowedFor('COMPANY', t)); if (bad.length) throw badRequest(`Unknown company instrument type(s): ${bad.join(', ')}`, { allowed: 'GET /licenses/meta' }); };
@@ -64,7 +71,7 @@ export class CompaniesController {
   }
 
   @RequirePerm('facilities.view') @Get(':id')
-  async get(@Param('id') id: string, @CurrentUser() user: Principal) { return fullCompany(this.pool, await loadCompany(this.pool, id, user.scope)); }
+  async get(@Param('id') id: string, @CurrentUser() user: Principal) { return fullCompany(this.pool, await loadCompany(this.pool, id, user.scope), this.env); }
 
   /** What this company holds, from the local snapshot of the instrument register. */
   @RequirePerm('facilities.view') @Get(':id/instruments')
@@ -92,6 +99,49 @@ export class CompaniesController {
   async renewals(@Param('id') id: string, @CurrentUser() user: Principal, @Query('window') window?: string) {
     const c = await loadCompany(this.pool, id, user.scope);
     return renewalWorkList(this.pool, Number(window) || this.env.RENEWAL_WINDOW_DAYS, { subjectId: c.id });
+  }
+
+  /* The accreditation position: the latest cycle under each scheme the company has held, and the history behind it. */
+  @RequirePerm('facilities.view') @Get(':id/accreditations')
+  async accreditations(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
+    const cycles = await cyclesFor(this.pool, c.id, this.env);
+    return { subjectId: c.id, subjectName: c.name, position: positionOf(cycles), history: cycles };
+  }
+  /* Recording a grant by hand — for an accreditation that predates the register, or one issued outside it. An
+   * accreditation issued through the instrument register opens its cycle on its own when the issue arrives. */
+  @RequirePerm('facilities.approve') @Post(':id/accreditations')
+  async grant(@Param('id') id: string, @Body(zod(grantBody)) b: z.infer<typeof grantBody>, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const company = await loadCompany(c, id, user.scope, true);
+      if (company.status !== 'ACTIVE') throw conflict(`${company.name} is ${company.status.toLowerCase()}; accreditation is granted to a company in good standing`);
+      if (!(await schemeFor(c, this.env, b.category))) throw badRequest(`"${b.category}" is not an active entry of the accreditationCategory master`, { category: 'accreditationCategory' });
+      const done = await openCycle(c, this.env, this.audit, { id: company.id, name: company.name }, b.category, { instrumentId: b.instrumentId ?? null, instrumentNo: b.instrumentNo, startsOn: new Date(b.startsOn), endsOn: b.endsOn ? new Date(b.endsOn) : null, by: user, reason: b.reason || undefined });
+      return { change: done.change, cycle: (await cyclesFor(c, company.id, this.env)).find((x) => x.id === done.row.id) ?? null, position: positionOf(await cyclesFor(c, company.id, this.env)) };
+    });
+  }
+  @RequirePerm('facilities.view') @Get(':id/visits')
+  async visits(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
+    const list = await visitsFor(this.pool, 'COMPANY', c.id);
+    return { subjectId: c.id, subjectName: c.name, scheduled: list.filter((v) => v.status === 'SCHEDULED').length, overdue: list.filter((v) => v.overdue).length, visits: list };
+  }
+  @RequirePerm('facilities.manage') @Post(':id/visits')
+  async visit(@Param('id') id: string, @Body(zod(visitBody)) b: z.infer<typeof visitBody>, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const company = await loadCompany(c, id, user.scope, true);
+      if (b.category) await schemeFor(c, this.env, b.category).then((s) => { if (!s) throw badRequest(`"${b.category}" is not an active entry of the accreditationCategory master`, { category: 'accreditationCategory' }); });
+      const row = await scheduleVisit(c, this.env, this.audit, { kind: 'COMPANY', id: company.id, name: company.name }, { ...b, scheduledOn: b.scheduledOn ?? b.complete?.visitedOn ?? null }, user);
+      if (!b.complete) return { visit: visitApi(row), rating: Number(company.rating), obligations: [], cycle: null };
+      const done = await completeVisit(c, this.env, this.audit, row.id, b.complete, user);
+      return { visit: visitApi(done.row), rating: done.rating, obligations: done.obligations, cycle: done.cycle ? cycleApi(done.cycle) : null };
+    });
+  }
+  /** The rating with its working shown. */
+  @RequirePerm('facilities.view') @Get(':id/rating')
+  async rating(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const c = await loadCompany(this.pool, id, user.scope);
+    return { subjectId: c.id, subjectName: c.name, recorded: Number(c.rating), ...(await ratingFor(this.pool, 'COMPANY', c.id)) };
   }
 
   @RequirePerm('facilities.manage') @Post()
@@ -180,7 +230,7 @@ export class CompaniesController {
         event: EVENTS.facilities.companyAudited,
         data: { auditNo: done.row.number, result: done.row.result, auditor: done.row.auditor, rating: done.rating, previousRating: Number(before.rating), audits: done.audits },
       });
-      return { audit: auditApi(done.row), rating: Number(after.rating), previousRating: Number(before.rating), obligation: done.obligation ? obligationApi(done.obligation) : null, company: await fullCompany(c, after) };
+      return { audit: auditApi(done.row), rating: Number(after.rating), previousRating: Number(before.rating), obligation: done.obligation ? obligationApi(done.obligation) : null, company: await fullCompany(c, after, this.env) };
     });
   }
 
