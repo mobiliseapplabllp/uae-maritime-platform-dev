@@ -133,6 +133,8 @@ export class InspectionsController {
     let out = row;
     if (!out.dossier_prepared_at) out = (await prepareDossier(c, this.env, out, 'AUTO', { actor: { id: user.id, name: user.name, kind: 'user' }, now: new Date(new Date(out.started_at ?? Date.now()).getTime() - 1) })).row;
     await mark(c, out, 'STARTED', out.started_at ?? new Date(), 'DESK');
+    // whichever action boarded her — the start button, a first answer, a first finding — the read model hears the same fact once
+    await this.publish(c, out, EVENTS.inspection.started, { startedAt: iso(out.started_at), dossier: !!out.dossier_prepared_at });
     return out;
   }
   /** A survey the inspector has begun answering is in progress, whatever the button said. */
@@ -436,7 +438,7 @@ export class InspectionsController {
       const r = await c.query<InspectionRow>(`UPDATE inspections SET status = 'IN_PROGRESS', started_at = now(), updated_at = now() WHERE id = $1 RETURNING *`, [before.id]);
       const row = await this.boarded(c, before, r.rows[0], user);
       await this.audit.record(c, { action: 'START', entity: 'Inspection', entityId: row.id, entityLabel: row.number, before: { status: before.status }, after: { status: row.status, startedAt: iso(row.started_at), dossier: !!row.dossier_prepared_at } });
-      return this.publish(c, row, EVENTS.inspection.started);
+      return inspectionApi(row, { findings: await this.findingsOf(c, row.id), detention: await this.detentionOf(c, row.id) });
     });
   }
 
@@ -627,6 +629,8 @@ export class InspectionsController {
         `UPDATE restriction_recommendations SET status = $2, decision = $2, decision_note = $3, decided_at = $4, decided_by_id = $5, decided_by = $6, detention_id = $7, routed_at = COALESCE(routed_at, $4), updated_at = now() WHERE id = $1 RETURNING *`,
         [before.id, body.decision, body.note, now, user.id, user.name, detentionId]);
       const rec = r.rows[0];
+      // decided before the bus routed it: the officer plainly reached it, so the routing is stamped at the decision and the KPI sees it
+      if (!before.routed_at) await mark(c, row, 'RESTRICTION_ROUTED', now, 'DESK', { recommendationId: rec.id, via: 'decision' });
       await mark(c, row, 'RESTRICTION_DECIDED', now, 'DESK', { recommendationId: rec.id, decision: rec.decision, kind: rec.kind });
       await this.audit.record(c, { action: `RESTRICTION_${body.decision}`, entity: 'Inspection', entityId: row.id, entityLabel: `${row.number} — ${rec.kind}`, before: recommendationApi(before), after: recommendationApi(rec), note: body.note });
       await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.inspection.restrictionDecided, { recommendationId: rec.id, inspectionId: row.id, number: row.number, subjectName: row.subject_name, vesselName: row.vessel_name, kind: rec.kind, decision: rec.decision, decidedAt: now.toISOString(), decidedBy: rec.decided_by, minutesToDecide: Math.round((now.getTime() - new Date(rec.recommended_at).getTime()) / 60_000), detentionId, scope: { port: row.scope_port || undefined } }, { subject: rec.id, actor: { id: user.id, name: user.name, kind: 'user' } }));

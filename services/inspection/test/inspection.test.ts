@@ -9,7 +9,7 @@ import { buildAppModule } from '../src/app.module';
 import { seedInspection } from '../src/seed';
 import { applyEvent } from '../src/consumer';
 import { inspectionDashboard, mergeAnswers, monthsBack, scoreChecklist, type ChecklistAnswer, type DashboardInput } from '../src/inspections';
-import { classify, sweepOverdueFindings } from '../src/smart';
+import { classify, routeRecommendation, sweepOverdueFindings } from '../src/smart';
 
 const DB = 'maritime_inspection_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
@@ -602,8 +602,9 @@ describe('inspection — Smart Inspection: subjects beyond ships, the dossier, t
     expect(full.prediction).toMatchObject({ source: 'A5', decisionId: 'dec-1', band: 'HIGH', predictedCodes: ['11101', '07105'] });
     expect(full.dossier.agentDossier).toMatchObject({ expiredCertificates: 1 });
     expect(full.dossier.subject).toMatchObject({ kind: 'VESSEL', name: v.name });
-    // boarding: the timeline says when, after the dossier
+    // boarding: the timeline says when, after the dossier, and the read model hears of it exactly once
     await post(`/inspections/${id}/start`, {}, surveyor).expect(201);
+    expect(await outbox(EVENTS.inspection.started)).toHaveLength(1);
     const tl1 = await timeline(id);
     expect(tl1.map((t) => t.kind)).toEqual(['PLANNED', 'DOSSIER_PREPARED', 'PREDICTION_RECORDED', 'STARTED']);
     expect(tl1[1].at.getTime()).toBeLessThanOrEqual(tl1[3].at.getTime());
@@ -658,7 +659,11 @@ describe('inspection — Smart Inspection: subjects beyond ships, the dossier, t
     const v = await freeVessel(); const tpl = await activeTemplate('PSC');
     const planned = await post('/inspections', { vesselId: v.id, type: 'PSC', plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor', templateId: tpl.id }, surveyor);
     const id = planned.body.data.id;
+    await clearOutbox();
     for (const code of ['01101', '04103', '07105', '10111', '13101']) await post(`/inspections/${id}/findings`, { deficiencyCode: code, description: `${code} observed`, actionCode: '17' }, surveyor).expect(201);
+    // the first finding boarded her: one STARTED fact on the timeline, one started event for the read model, however many findings followed
+    expect((await timeline(id)).filter((t) => t.kind === 'STARTED')).toHaveLength(1);
+    expect(await outbox(EVENTS.inspection.started)).toHaveLength(1);
     await clearOutbox();
     const closed = await post(`/inspections/${id}/close`, { result: 'DEFICIENCIES' }, surveyor);
     expect(closed.body.data).toMatchObject({ severity: 'MAJOR', recommendation: 'RESTRICT' });
@@ -682,6 +687,12 @@ describe('inspection — Smart Inspection: subjects beyond ships, the dossier, t
     expect(own.status).toBe(201); expect(own.body.data).toMatchObject({ source: 'MANUAL', status: 'PENDING' });
     const approved = await post(`/inspections/${id}/recommendations/${own.body.data.id}/decide`, { decision: 'APPROVED', note: 'Detain' }, surveyor);
     expect(approved.body.data).toMatchObject({ status: 'APPROVED', detentionId: expect.any(String) });
+    // decided before the bus routed it: the officer plainly reached it, so the routing is stamped at the decision and the bus is a no-op afterwards
+    const facts = (await g(`/inspections/${id}/timeline`)).body.data;
+    expect(facts.find((t: any) => t.kind === 'RESTRICTION_ROUTED' && t.meta?.recommendationId === own.body.data.id)).toMatchObject({ source: 'DESK', meta: { via: 'decision' } });
+    const late = await pool.connect();
+    try { expect(await routeRecommendation(late, own.body.data.id, new Date())).toBe(false); } finally { late.release(); }
+    expect(facts.filter((t: any) => t.kind === 'RESTRICTION_ROUTED').length).toBe(2);
     expect((await g(`/inspections/${id}`)).body.data).toMatchObject({ detention: true, detentionRecord: { status: 'ORDERED' } });
     expect((await outbox(EVENTS.inspection.detention)).length).toBe(1);
     // and the manual notice path

@@ -31,6 +31,8 @@ beforeAll(async () => {
     registrar: principal('registrar', ['legislation.view', 'legislation.manage']),
     /* The other kind of external tenant: a licensed manning agency, scoped to the seafarers it placed. */
     mca: { ...principal('mca', ['seafarers.view', 'dashboard.view']), scope: { level: 'COMPANY' as const, companies: ['MCA'] } },
+    /* A port officer: the Smart Inspection programme is measured for their port alone, not the nation's. */
+    fujairah: { ...principal('fujairah', ['inspections.view']), scope: { level: 'PORT' as const, ports: ['AEFJR'] } },
   }) };
   app = await createApp({ env, module: buildAppModule(env, resolver) });
   await app.init(); server = app.getHttpServer();
@@ -244,38 +246,49 @@ describe('reporting — the Smart Inspection KPIs, measured from the survey desk
   it('projects every dated fact as it arrives, counts the recommendation coming off the bus as its routing, and grades the six figures', async () => {
     const close = Date.now() - 10 * D;
     const events = [
-      ev(EVENTS.inspection.planned, { inspectionId: 'ins-k1', number: 'INS-2026-K01', regime: 'PSC', subjectKind: 'VESSEL', inspection: { id: 'ins-k1', number: 'INS-2026-K01', scope: { port: 'AEAUH' } } }),
-      ev(EVENTS.inspection.dossierPrepared, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AUTO', preparedAt: iso(close - 2 * D), scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.predictionRecorded, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'A5', band: 'HIGH', riskScore: 70, predictedAt: iso(close - 2 * D), scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.started, { inspectionId: 'ins-k1', number: 'INS-2026-K01', inspection: { id: 'ins-k1', number: 'INS-2026-K01', startedAt: iso(close - D), scope: { port: 'AEAUH' } } }),
-      ev(EVENTS.inspection.closed, { inspectionId: 'ins-k1', number: 'INS-2026-K01', totalFindings: 2, openFindings: 2, result: 'DEFICIENCIES', severity: 'MINOR', recommendation: 'RECTIFY', inspection: { id: 'ins-k1', number: 'INS-2026-K01', closedAt: iso(close), scope: { port: 'AEAUH' } } }),
-      ev(EVENTS.inspection.reportDrafted, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', reportId: 'rep-1', version: 1, draftedAt: iso(close + 6 * 60_000), scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.reportIssued, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', reportId: 'rep-1', issuedAt: iso(close + 4 * 3_600_000), minutesAfterClose: 240, scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.noticeDrafted, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', noticeId: 'not-1', kind: 'DEFICIENCY', draftedAt: iso(close + 9 * 60_000), minutesAfterClose: 9, scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.predictionScored, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'A5', band: 'HIGH', correlated: true, matched: ['11101'], findings: 2, scoredAt: iso(close + 60_000), scope: { port: 'AEAUH' } }),
-      ev(EVENTS.inspection.restrictionRecommended, { recommendationId: 'rec-1', inspectionId: 'ins-k1', number: 'INS-2026-K01', kind: 'RESTRICTION', source: 'RULES', status: 'PENDING', recommendedAt: iso(Date.now() - 5 * 60_000), scope: { port: 'AEAUH' } }, 'rec-1'),
-      ev(EVENTS.inspection.restrictionDecided, { recommendationId: 'rec-1', inspectionId: 'ins-k1', number: 'INS-2026-K01', kind: 'RESTRICTION', decision: 'REJECTED', decidedAt: iso(Date.now() + 60_000), minutesToDecide: 6, scope: { port: 'AEAUH' } }, 'rec-1'),
+      ev(EVENTS.inspection.planned, { inspectionId: 'ins-k1', number: 'INS-2026-K01', regime: 'PSC', subjectKind: 'VESSEL', inspection: { id: 'ins-k1', number: 'INS-2026-K01', scope: { port: 'AEFJR' } } }),
+      ev(EVENTS.inspection.dossierPrepared, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AUTO', preparedAt: iso(close - 2 * D), scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.predictionRecorded, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'A5', band: 'HIGH', riskScore: 70, predictedAt: iso(close - 2 * D), scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.started, { inspectionId: 'ins-k1', number: 'INS-2026-K01', inspection: { id: 'ins-k1', number: 'INS-2026-K01', startedAt: iso(close - D), scope: { port: 'AEFJR' } } }),
+      ev(EVENTS.inspection.closed, { inspectionId: 'ins-k1', number: 'INS-2026-K01', totalFindings: 2, openFindings: 2, result: 'DEFICIENCIES', severity: 'MINOR', recommendation: 'RECTIFY', inspection: { id: 'ins-k1', number: 'INS-2026-K01', closedAt: iso(close), scope: { port: 'AEFJR' } } }),
+      ev(EVENTS.inspection.reportDrafted, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', reportId: 'rep-1', version: 1, draftedAt: iso(close + 6 * 60_000), scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.reportIssued, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', reportId: 'rep-1', issuedAt: iso(close + 4 * 3_600_000), minutesAfterClose: 240, scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.noticeDrafted, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'AI', noticeId: 'not-1', kind: 'DEFICIENCY', draftedAt: iso(close + 9 * 60_000), minutesAfterClose: 9, scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.predictionScored, { inspectionId: 'ins-k1', number: 'INS-2026-K01', source: 'A5', band: 'HIGH', correlated: true, matched: ['11101'], findings: 2, scoredAt: iso(close + 60_000), scope: { port: 'AEFJR' } }),
+      ev(EVENTS.inspection.restrictionRecommended, { recommendationId: 'rec-1', inspectionId: 'ins-k1', number: 'INS-2026-K01', kind: 'RESTRICTION', source: 'RULES', status: 'PENDING', recommendedAt: iso(Date.now() - 5 * 60_000), scope: { port: 'AEFJR' } }, 'rec-1'),
+      ev(EVENTS.inspection.restrictionDecided, { recommendationId: 'rec-1', inspectionId: 'ins-k1', number: 'INS-2026-K01', kind: 'RESTRICTION', decision: 'REJECTED', decidedAt: iso(Date.now() + 60_000), minutesToDecide: 6, scope: { port: 'AEFJR' } }, 'rec-1'),
     ];
+    type Card = { label: string; value: string | number; sub: string; tone: string };
+    const LABELS = ['Dossier before boarding', 'Reports first drafted by AI', 'Notices drafted within the window', 'Predictions that matched the findings', 'Report time reduced', 'Restrictions routed within the hour', 'Programme', 'Surveys measured'];
+    const read = async (as = 'fujairah') => Object.fromEntries(((await get('/stats/inspectionKpis', as)).body.data.cards as Card[]).map((c) => [c.label, c])) as Record<string, Card>;
+    const fraction = (c: Card) => { const m = /(\d+)\/(\d+)$/.exec(c.sub); return m ? { n: Number(m[1]), d: Number(m[2]) } : { n: 0, d: 0 }; };
+    // The seeded world files its programme under AEAUH. The port officer at AEFJR sees none of it — only the
+    // administration's own facility audits, which belong to no port — so every figure below moves by this one survey alone.
+    const before = await read();
+    expect(Object.keys(before)).toEqual(LABELS);
+    expect(fraction(before['Restrictions routed within the hour'])).toEqual({ n: 0, d: 0 });
     await withTx(pool, async (c) => { for (const e of events) { await project(c, e); await project(c, e); } }); // twice: a redelivery projects nothing twice
     await invalidateDerived(cache);
     const rows = (await pool.query<{ kind: string; source: string; scope_port: string }>(`SELECT kind, source, scope_port FROM rm_inspection_timeline WHERE inspection_id = 'ins-k1' ORDER BY at, id`)).rows;
     // the planning fact is dated by the event itself (the desk planned it now); every other fact carries the date the desk gave it
     expect(rows.map((r) => r.kind).sort()).toEqual(['PLANNED', 'DOSSIER_PREPARED', 'PREDICTION_RECORDED', 'STARTED', 'CLOSED', 'PREDICTION_SCORED', 'REPORT_DRAFTED', 'NOTICE_DRAFTED', 'REPORT_ISSUED', 'RESTRICTION_RECOMMENDED', 'RESTRICTION_ROUTED', 'RESTRICTION_DECIDED'].sort());
     expect(rows.filter((r) => r.kind !== 'PLANNED').map((r) => r.kind)).toEqual(['DOSSIER_PREPARED', 'PREDICTION_RECORDED', 'STARTED', 'CLOSED', 'PREDICTION_SCORED', 'REPORT_DRAFTED', 'NOTICE_DRAFTED', 'REPORT_ISSUED', 'RESTRICTION_RECOMMENDED', 'RESTRICTION_ROUTED', 'RESTRICTION_DECIDED']);
-    expect(rows.every((r) => r.scope_port === 'AEAUH')).toBe(true);
+    expect(rows.every((r) => r.scope_port === 'AEFJR')).toBe(true);
     expect(rows.find((r) => r.kind === 'RESTRICTION_ROUTED')!.source).toBe('BUS');
-    const cards = (await get('/stats/inspectionKpis')).body.data.cards as { label: string; value: string; sub: string; tone: string }[];
-    expect(cards.map((c) => c.label)).toEqual(['Dossier before boarding', 'Reports first drafted by AI', 'Notices drafted within the window', 'Predictions that matched the findings', 'Report time reduced', 'Restrictions routed within the hour', 'Programme', 'Surveys measured']);
-    const by = Object.fromEntries(cards.map((c) => [c.label, c]));
-    expect(by['Dossier before boarding']).toMatchObject({ value: '100%', tone: 'success' });
-    expect(by['Reports first drafted by AI']).toMatchObject({ value: '100%', tone: 'success' });
-    expect(by['Notices drafted within the window']).toMatchObject({ value: '100%' });
-    expect(by['Predictions that matched the findings']).toMatchObject({ value: '100%' });
+    const by = await read();
+    // each fact moved exactly one figure by exactly one survey — numerator and denominator together
+    const moved = (label: string) => ({ n: fraction(by[label]).n - fraction(before[label]).n, d: fraction(by[label]).d - fraction(before[label]).d });
+    for (const label of ['Dossier before boarding', 'Reports first drafted by AI', 'Notices drafted within the window', 'Predictions that matched the findings']) expect(moved(label), label).toEqual({ n: 1, d: 1 });
+    // no restriction had been recommended in this officer's view; this one was, and the bus routed it inside the hour
     expect(by['Restrictions routed within the hour']).toMatchObject({ value: '100%', tone: 'success' });
-    // no manual report on record and no configured baseline: the reduction is not captured, and says so
-    expect(by['Report time reduced']).toMatchObject({ value: 'not captured', tone: 'default' });
-    expect(by['Report time reduced'].sub).toContain('No baseline');
-    expect(by['Surveys measured'].value).toBe(1);
+    expect(fraction(by['Restrictions routed within the hour'])).toEqual({ n: 1, d: 1 });
+    expect(Number(by['Surveys measured'].value) - Number(before['Surveys measured'].value)).toBe(1);
+    // the reduction in report time is captured, measured against the manual-era median the seeded audits carry; this survey's report joins the measurement
+    expect(by['Report time reduced'].value).toMatch(/^-?\d+(\.\d+)?%$/);
+    expect(moved('Report time reduced')).toEqual({ n: 1, d: 1 });
+    // the national reader sees the whole seeded programme, this survey among it
+    const national = await read('admin');
+    expect(Number(national['Surveys measured'].value)).toBeGreaterThan(Number(by['Surveys measured'].value));
     expect((await get('/stats/inspectionKpis', 'agent')).status).toBe(403);
   });
 });

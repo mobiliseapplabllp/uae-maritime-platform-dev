@@ -32,6 +32,7 @@ const SELF_SERVICE_OR_ROW_GUARDED: Record<string, string> = {
 /** Routes served with no session at all, each with the reason the public may reach it. */
 const PUBLIC: Record<string, string> = {
   'services/instruments/src/public.controller.ts': 'certificate verification and the published signing key — the point of a verifiable instrument',
+  'services/legislation/src/public.controller.ts': 'the citable law portal: only instruments the administration has switched on for publication, served read-only with their citation, feed and sitemap',
   'services/documents/src/files.controller.ts': 'signed download links: the HMAC over id and expiry is the credential, compared in constant time',
   'services/mdm/src/settings.controller.ts': 'the jurisdiction profile the sign-in screen renders before anyone has signed in',
   'services/identity-access/src/auth/auth.controller.ts': 'sign-in and token refresh',
