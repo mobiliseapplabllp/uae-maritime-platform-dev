@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { buildWorld, isStatutory, stableId, type World } from '@maritime/world';
+import { buildWorld, geoFor, isStatutory, stableId, type World } from '@maritime/world';
 import { getJurisdiction } from '@maritime/contracts';
 import { makeEvent, EVENTS } from '@maritime/contracts';
 import { createDb, runMigrations, withTx, createCache } from '@maritime/service-kit';
@@ -84,6 +84,38 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
     }));
     await run('foreignSeafarer', [...ledger.values()]);
     for (const [kind, key] of [['inspection', 'inspections'], ['incident', 'incidents'], ['legalInstrument', 'legalInstruments'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
+    /* The survey desk's dated facts, as the events it would have published: the Smart Inspection KPI cards measure from this
+     * table, so the seeded world has to land here the way it lands on the desk. Keyed like the desk's own seed, so a live
+     * event for the same fact is never counted twice. */
+    const homePort = geoFor(world.profile).portCode;
+    const callById = new Map(world.portCalls.map((c) => [c.id, c]));
+    let timeline = 0;
+    for (const i of world.inspections) {
+      const call = i.portCallId ? callById.get(i.portCallId) : undefined;
+      const scope = call?.berthCode ? homePort : '';
+      const rows: { kind: string; at: string | null; source: string; meta: Record<string, unknown>; key: string }[] = [
+        { kind: 'PLANNED', at: i.plannedAt, source: 'DESK', meta: { regime: i.type, subjectKind: i.subjectKind }, key: 'planned' },
+        { kind: 'STARTED', at: i.startedAt, source: 'DESK', meta: {}, key: 'started' },
+        { kind: 'CLOSED', at: i.status === 'CLOSED' ? i.closedAt : null, source: 'DESK', meta: { findings: i.findings.length, open: i.findings.filter((f) => f.status === 'OPEN').length, result: i.result }, key: 'closed' },
+        { kind: 'DOSSIER_PREPARED', at: i.smart.dossierPreparedAt, source: i.smart.dossierSource, meta: {}, key: 'dossier' },
+        { kind: 'PREDICTION_RECORDED', at: i.smart.prediction?.predictedAt ?? null, source: i.smart.prediction?.source ?? '', meta: { band: i.smart.prediction?.band }, key: 'predicted' },
+        { kind: 'PREDICTION_SCORED', at: i.smart.prediction?.scoredAt ?? null, source: i.smart.prediction?.source ?? '', meta: { correlated: i.smart.prediction?.correlated }, key: 'scored' },
+        { kind: 'REPORT_DRAFTED', at: i.smart.report?.draftedAt ?? null, source: i.smart.report?.source ?? '', meta: {}, key: 'report' },
+        { kind: 'REPORT_ISSUED', at: i.smart.report?.issuedAt ?? null, source: i.smart.report?.source ?? '', meta: {}, key: 'report-issued' },
+        { kind: 'NOTICE_DRAFTED', at: i.smart.notice?.draftedAt ?? null, source: i.smart.notice?.source ?? '', meta: {}, key: 'notice' },
+        { kind: 'NOTICE_ISSUED', at: i.smart.notice?.issuedAt ?? null, source: i.smart.notice?.source ?? '', meta: {}, key: 'notice-issued' },
+        { kind: 'RESTRICTION_RECOMMENDED', at: i.smart.recommendation?.recommendedAt ?? null, source: 'RULES', meta: { recommendationId: stableId('recommendation', i.number), kind: i.smart.recommendation?.kind }, key: 'recommended' },
+        { kind: 'RESTRICTION_ROUTED', at: i.smart.recommendation?.routedAt ?? null, source: 'BUS', meta: { recommendationId: stableId('recommendation', i.number) }, key: 'routed' },
+        { kind: 'RESTRICTION_DECIDED', at: i.smart.recommendation?.decidedAt ?? null, source: 'DESK', meta: { recommendationId: stableId('recommendation', i.number), decision: i.smart.recommendation?.decision }, key: 'decided' },
+      ];
+      for (const r of rows) {
+        if (!r.at) continue;
+        await c.query('INSERT INTO rm_inspection_timeline(event_id, inspection_id, number, kind, at, source, meta, scope_port) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (event_id) DO NOTHING',
+          [`seed:${i.number}:${r.key}`, i.id, i.number, r.kind, r.at, r.source, JSON.stringify(r.meta), scope]);
+        timeline += 1;
+      }
+    }
+    counts.inspectionTimeline = timeline;
     const cats = new Map<string, number>(); for (const l of world.lookups) cats.set(l.category, (cats.get(l.category) ?? 0) + 1);
     for (const [category, entries] of cats) await c.query('INSERT INTO rm_lookup_counts(category, entries) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET entries = EXCLUDED.entries', [category, entries]);
     for (const r of REPORTS) await c.query('INSERT INTO report_definitions(key, name, name_ar, category, description, perm, params, columns, query_key) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name, name_ar = EXCLUDED.name_ar, category = EXCLUDED.category, description = EXCLUDED.description, perm = EXCLUDED.perm, params = EXCLUDED.params, columns = EXCLUDED.columns, query_key = EXCLUDED.query_key', [r.key, r.name, r.nameAr, r.category, r.description, r.perm, JSON.stringify(r.params), JSON.stringify(r.columns), r.queryKey]);

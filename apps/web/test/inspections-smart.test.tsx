@@ -189,7 +189,7 @@ describe('subjects beyond ships', () => {
     await waitFor(() => expect(calls.some((c) => c.url === '/inspections' && c.cfg?.params?.subjectKind === 'COMPANY')).toBe(true));
   });
   it('plans a facility inspection: the regime decides the subject kind, the subject comes from the register', async () => {
-    mockGet({ '/checklist-templates': ok([{ id: 'tpl-hse', name: 'HSE Walkabout — Terminal', inspectionType: 'HSE', items: [{ seq: 1, text: 'PPE', category: 'PPE', answerType: 'YES_NO', weight: 1, critical: false }], active: true, version: 1, passScorePct: 80 }]), '/inspections/subjects': (cfg) => ok(cfg?.params?.kind === 'PORT_FACILITY' ? subjects : []) });
+    mockGet({ '/checklist-templates': ok([{ id: 'tpl-hse', name: 'HSE Walkabout — Terminal', inspectionType: 'HSE', items: [{ seq: 1, text: 'PPE', category: 'PPE', answerType: 'YES_NO', weight: 1, critical: false }], active: true, version: 1, passScorePct: 80 }]), '/inspections/subjects': (cfg?: Call['cfg']) => ok(cfg?.params?.kind === 'PORT_FACILITY' ? subjects : []) });
     const post = vi.spyOn(api, 'post').mockResolvedValue(ok({ id: 'new', number: 'INS-2026-130' }) as never);
     const onPlanned = vi.fn();
     wrap(<PlanInspectionDialog open onClose={() => undefined} onPlanned={onPlanned} />);

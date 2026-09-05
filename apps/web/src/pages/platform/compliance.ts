@@ -4,7 +4,7 @@
 
 export const COMPLIANCE_URL = 'https://claude.ai/code/artifact/632eb64c-3d09-4f5f-a31f-b887a1396d20';
 export const PLAN_URL = 'https://claude.ai/code/artifact/75ef9d08-10f9-4e57-b6c3-c6585ed9b280';
-export const COMPLIANCE_COMPILED = '04 September 2026';
+export const COMPLIANCE_COMPILED = '05 September 2026';
 
 export type ComplianceStatus = 'built' | 'partial' | 'absent' | 'diverged';
 
@@ -18,8 +18,8 @@ export const statusColor = (s: string): string =>
 
 export const COMPLIANCE = {
   totals: [
-    { key: 'built' as const, count: 25 },
-    { key: 'partial' as const, count: 35 },
+    { key: 'built' as const, count: 30 },
+    { key: 'partial' as const, count: 30 },
     { key: 'absent' as const, count: 9 },
     { key: 'diverged' as const, count: 1 },
   ],
@@ -28,7 +28,9 @@ export const COMPLIANCE = {
     { key: 'stack', label: 'Technology stack', built: 6, partial: 3, absent: 0, diverged: 1 },
     { key: 'agentic', label: 'Agentic AI framework', built: 8, partial: 4, absent: 0, diverged: 0 },
     { key: 'lcnc', label: 'Low-code / no-code', built: 2, partial: 2, absent: 2, diverged: 0 },
-    { key: 'domains', label: 'The seven RFP domains', built: 0, partial: 7, absent: 0, diverged: 0 },
+    // Facilities & Companies, Ships, Seafarers & MET, Legislation and Inspection completed their feature lists in Phase 3;
+    // the National Maritime Centre and Ports still answer from stubs for their live counterparts
+    { key: 'domains', label: 'The seven RFP domains', built: 5, partial: 2, absent: 0, diverged: 0 },
     { key: 'cross', label: 'Cross-domain and non-functional', built: 5, partial: 5, absent: 2, diverged: 0 },
     { key: 'deliv', label: 'Deliverables and governance', built: 0, partial: 9, absent: 5, diverged: 0 },
   ],

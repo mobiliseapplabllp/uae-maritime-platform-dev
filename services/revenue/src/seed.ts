@@ -52,6 +52,8 @@ export async function seedRevenue(databaseUrl: string, profile = 'AE') {
       if (i.paidAt) history.push({ from: 'ISSUED', to: 'PAID', at: i.paidAt, by: 'Billing desk', note: `Settled — ${i.paymentRef}` });
       if (i.status === 'CANCELLED') history.push({ from: 'ISSUED', to: 'CANCELLED', at: i.issuedAt ?? i.createdAt, by: 'Billing desk', note: i.notes });
       const payments = i.paidAt ? [{ id: stableId('payment', i.id), at: i.paidAt, amount: i.total, ref: i.paymentRef, method: 'TRANSFER', by: 'Billing desk', note: '' }] : [];
+      // an invoice the desk issued in an earlier run may hold this number under another id; the world's invoice replaces it, so a re-seed lands the same world
+      await c.query('DELETE FROM invoices WHERE number = $1 AND id <> $2', [i.number, i.id]);
       await c.query(`INSERT INTO invoices(id, number, port_call_id, vcn, vessel_id, vessel_name, vessel_imo, bill_to, lines, subtotal, tax_name, tax_rate_pct, tax_amount, total, currency, status, proforma, issued_at, due_at, paid_at, paid_amount, payment_ref, payments, cancel_reason, notes, history, created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
         ON CONFLICT (id) DO UPDATE SET number = EXCLUDED.number, port_call_id = EXCLUDED.port_call_id, vcn = EXCLUDED.vcn, vessel_id = EXCLUDED.vessel_id, vessel_name = EXCLUDED.vessel_name, vessel_imo = EXCLUDED.vessel_imo, bill_to = EXCLUDED.bill_to, lines = EXCLUDED.lines,

@@ -78,6 +78,9 @@ export async function seedInspection(databaseUrl: string, profile = 'AE') {
       const recommendation = !closed ? '' : i.detention ? 'DETAIN' : i.findings.length >= 4 ? 'RESTRICT' : i.findings.length ? 'RECTIFY' : 'NONE';
       const subjectKey = `${i.subjectKind}:${i.subjectId}`; const prior = priorBySubject.get(subjectKey) ?? 0;
       const dossier = sm.dossierPreparedAt ? { seeded: true, source: sm.dossierSource, preparedAt: sm.dossierPreparedAt, subject: { kind: i.subjectKind, id: i.subjectId, name: i.subjectName, imo: vessel?.imo, flag: vessel?.flag, type: vessel?.type }, portCall: call ? { id: call.id, vcn: call.vcn, berthCode: call.berthCode } : null, history: { inspections: prior, openFindings: [], recurringCodes: [] }, prediction: sm.prediction ? { source: sm.prediction.source, band: sm.prediction.band, riskScore: sm.prediction.riskScore, predictedCodes: sm.prediction.predictedCodes } : null, checklist: { templateId: i.templateId, questions: checklist.length, critical: checklist.filter((x) => x.critical).length } } : null;
+      /* A survey the desk raised in an earlier run may hold this number under another id; the world's survey replaces it, so a re-seed lands the same world. */
+      await c.query('DELETE FROM detentions WHERE inspection_id IN (SELECT id FROM inspections WHERE number = $1 AND id <> $2)', [i.number, i.id]);
+      await c.query('DELETE FROM inspections WHERE number = $1 AND id <> $2', [i.number, i.id]);
       await c.query(`INSERT INTO inspections(id, number, vessel_id, vessel_name, vessel_imo, vessel_flag, vessel_type, port_call_id, vcn, type, template_id, template_version,
           inspector_id, inspector, planned_at, started_at, closed_at, status, result, score_pct, pass_score_pct, critical_fail, detention, checklist, remarks, created_at,
           subject_kind, subject_id, subject_name, dossier, dossier_prepared_at, dossier_source, severity, recommendation)

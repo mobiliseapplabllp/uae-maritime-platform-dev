@@ -76,6 +76,8 @@ export async function seedPorts(databaseUrl: string, profile = 'AE') {
       const agent = agentByCode.get(call.agentCode);
       const createdAt = new Date(new Date(call.eta).getTime() - 5 * D);
       const services = v ? servicesOf(call, v) : [];
+      // a call the desk raised in an earlier run may hold this VCN under another id; the world's call replaces it, so a re-seed lands the same world
+      await c.query('DELETE FROM port_calls WHERE vcn = $1 AND id <> $2', [call.vcn, call.id]);
       await c.query(`INSERT INTO port_calls(id, vcn, vessel_id, vessel_name, vessel_imo, vessel_type, vessel_flag, agent_code, agent_name, purpose, status, eta, etb, etd, ata, atb, atd, berth_id, berth_code, prev_port, next_port, draft_arrival, draft_departure, crew, remarks, services, cargo_ops, sof_entries, status_history, created_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,'',$25,$26,'[]'::jsonb,$27,$28)
         ON CONFLICT (id) DO UPDATE SET vcn = EXCLUDED.vcn, vessel_id = EXCLUDED.vessel_id, vessel_name = EXCLUDED.vessel_name, vessel_imo = EXCLUDED.vessel_imo, vessel_type = EXCLUDED.vessel_type, vessel_flag = EXCLUDED.vessel_flag, agent_code = EXCLUDED.agent_code, agent_name = EXCLUDED.agent_name,
