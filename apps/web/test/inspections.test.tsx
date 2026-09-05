@@ -21,7 +21,16 @@ class RO { observe() { /* noop */ } unobserve() { /* noop */ } disconnect() { /*
 
 const ok = <T,>(data: T, meta: Record<string, unknown> = {}) => ({ success: true as const, data, meta });
 const session = { user: { id: 'u1', name: 'Port State Control Officer', email: 'psc@maritime.example', active: true, kind: 'user', scope: { level: 'PORT' }, role: { id: 'r', name: 'Super Admin', permissions: ['*'] }, perms: ['*'] }, token: 't', refreshToken: 'r' };
-const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string) => (url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`)))) as never);
+/** The regimes come from the `inspectionRegime` master, so every screen test serves the master too. */
+const regimes = [
+  { id: 'r1', category: 'inspectionRegime', code: 'PSC', label: 'Port State Control', active: true, meta: { subjectKind: 'VESSEL' } },
+  { id: 'r2', category: 'inspectionRegime', code: 'ISM', label: 'ISM shipboard audit (SMC)', active: true, meta: { subjectKind: 'VESSEL' } },
+  { id: 'r3', category: 'inspectionRegime', code: 'HSE', label: 'HSE inspection', active: true, meta: { subjectKind: 'PORT_FACILITY' } },
+];
+const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string, cfg?: { params?: { category?: string; kind?: string } }) => {
+  if (url === '/lookups') return Promise.resolve(ok(cfg?.params?.category === 'inspectionRegime' ? regimes : []));
+  return url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`));
+}) as never);
 const wrap = (ui: React.ReactNode, path = '/') => render(<Provider store={store}><MemoryRouter initialEntries={[path]}><ThemeProvider theme={buildTheme('light')}>{ui}</ThemeProvider></MemoryRouter></Provider>);
 
 /* Every survey here is fictional. The shapes follow `inspectionApi`, `findingApi`, `templateApi` and
@@ -99,26 +108,29 @@ describe('Survey register', () => {
     const get = mockGet(registerRoutes);
     wrap(<InspectionsList />);
     await screen.findByText('INSP-2026-0091');
-    fireEvent.mouseDown(screen.getAllByLabelText('Type')[0]);
-    fireEvent.click(await screen.findByRole('option', { name: 'ISM' }));
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/inspections', { params: expect.objectContaining({ type: 'ISM', page: 1 }) }));
+    // the filter lists the master's labels and sends the master's code
+    fireEvent.mouseDown(screen.getAllByLabelText('Regime')[0]);
+    fireEvent.click(await screen.findByRole('option', { name: 'ISM shipboard audit (SMC)' }));
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/inspections', { params: expect.objectContaining({ regime: 'ISM', page: 1 }) }));
   });
 
   it('plans a survey against a ship and a checklist template', async () => {
-    mockGet({ ...registerRoutes, '/vessels': ok([{ id: 'v1', name: 'MV Coral Reach', imo: '9000001' }]), '/checklist-templates': ok([template]) });
+    mockGet({ ...registerRoutes, '/inspections/subjects': ok([{ kind: 'VESSEL', id: 'v1', code: '9000001', name: 'MV Coral Reach', status: 'ACTIVE' }]), '/checklist-templates': ok([template]) });
     const post = vi.spyOn(api, 'post').mockResolvedValue(ok({ id: 'in9', number: 'INSP-2026-0092' }) as never);
     wrap(<InspectionsList />);
     fireEvent.click(await screen.findByRole('button', { name: 'New inspection' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Plan inspection')).toBeInTheDocument();
-    fireEvent.mouseDown(within(dialog).getByLabelText(/^Vessel/));
+    // the regime comes first and decides the kind of subject; a ship regime lists the fleet
+    fireEvent.mouseDown(within(dialog).getByLabelText(/^Regime/));
+    fireEvent.click(await screen.findByRole('option', { name: 'Port State Control' }));
+    expect(await within(dialog).findByText('This regime applies to a Vessel')).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText(/^Vessel/), { target: { value: 'Coral' } });
     fireEvent.click(await screen.findByRole('option', { name: 'MV Coral Reach · IMO 9000001' }));
-    fireEvent.mouseDown(within(dialog).getByLabelText(/^Inspection type/));
-    fireEvent.click(await screen.findByRole('option', { name: 'PSC' }));
     fireEvent.mouseDown(within(dialog).getByLabelText('Checklist template'));
     fireEvent.click(await screen.findByRole('option', { name: 'PSC — general inspection (3 items)' }));
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/inspections', expect.objectContaining({ vesselId: 'v1', type: 'PSC', templateId: 'tpl1', inspector: 'Port State Control Officer' })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/inspections', expect.objectContaining({ vesselId: 'v1', subjectKind: 'VESSEL', type: 'PSC', templateId: 'tpl1', inspector: 'Port State Control Officer' })));
   });
 });
 
@@ -136,7 +148,7 @@ describe('Survey & audit dashboard', () => {
     expect(screen.getByText('18 findings still open')).toBeInTheDocument();
     expect(screen.getByText('91%')).toBeInTheDocument();
     const byType = screen.getByRole('table', { name: 'By survey type' });
-    expect(within(byType).getByText('PSC')).toBeInTheDocument();
+    expect(within(byType).getByText('Port State Control')).toBeInTheDocument();
     expect(within(byType).getByText('34')).toBeInTheDocument();
     expect(within(byType).getByText('—')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Deficiency analysis report' })).toBeInTheDocument();
@@ -151,7 +163,7 @@ describe('Survey record', () => {
     mockGet(detailRoutes);
     detailAt();
     expect(await screen.findByRole('heading', { name: /INSP-2026-0091/ })).toBeInTheDocument();
-    expect(screen.getByText(/^PSC inspection · Port State Control Officer · planned 01 Sep 2026/)).toBeInTheDocument();
+    expect(await screen.findByText(/^Port State Control · Vessel · Port State Control Officer · planned 01 Sep 2026/)).toBeInTheDocument();
     expect(screen.getByText('In progress')).toBeInTheDocument();
     expect(screen.getByText('Call VCN-2026-0041')).toBeInTheDocument();
     // question 2 carries weight 3 and is critical: answered NO it fails the survey outright
@@ -188,7 +200,7 @@ describe('Survey record', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Close inspection' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/1 open finding\(s\)/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/a critical question failed/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Critical item failed/)).toBeInTheDocument();
     fireEvent.change(within(dialog).getByLabelText('Closing remarks'), { target: { value: 'Detained pending renewal of the lifeboat falls' } });
     fireEvent.click(within(dialog).getAllByRole('button', { name: 'Close inspection' })[0]);
     await waitFor(() => expect(post).toHaveBeenCalledWith('/inspections/in1/close', { result: 'DETAINED', remarks: 'Detained pending renewal of the lifeboat falls' }));

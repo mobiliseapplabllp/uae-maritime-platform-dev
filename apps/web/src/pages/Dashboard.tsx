@@ -74,6 +74,7 @@ export default function Dashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<WorkspacePremiumRoundedIcon />} label="Certificates flagged" value={kpis.certsExpiring + kpis.certsExpired} sub={`${kpis.certsExpired} expired · ${kpis.certsExpiring} expiring`} tone="warning.main" /></Grid>
         <Grid item xs={12} lg={8}>
           <ChartCard title="Cargo throughput" sub="metric tonnes handled per month, by cargo group (containers converted at 12 t/TEU)">
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer>
               <BarChart data={data.throughputByMonth} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -84,10 +85,12 @@ export default function Dashboard() {
                 {SERIES_ORDER.map((key) => <Bar key={key} dataKey={key} stackId="mt" fill={C[key]} stroke={paper} strokeWidth={2} radius={key === 'other' ? [4, 4, 0, 0] : 0} />)}
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
           <ChartCard title="Cargo mix" sub="tonnage by commodity, last 12 months — share of total">
+            <Box dir="ltr">
             <ResponsiveContainer>
               <BarChart data={mix} layout="vertical" margin={{ left: 8, right: 44, top: 4 }} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -97,10 +100,12 @@ export default function Dashboard() {
                 <Bar dataKey="value" fill={C.container} radius={[0, 4, 4, 0]}><LabelList dataKey="pct" position="right" formatter={(v: number) => `${v}%`} style={{ fill: axis, fontSize: 11, fontVariantNumeric: 'tabular-nums' }} /></Bar>
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
           <ChartCard title="Billed revenue" sub={`issued invoices per month, ${profile.currency.code}`} h={240}>
+            <Box dir="ltr">
             <ResponsiveContainer>
               <LineChart data={data.revenueByMonth}>
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -110,6 +115,7 @@ export default function Dashboard() {
                 <Line type="monotone" dataKey="revenue" stroke={C.liquid} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
+            </Box>
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={8}>

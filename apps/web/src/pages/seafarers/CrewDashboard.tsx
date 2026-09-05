@@ -68,6 +68,7 @@ export default function CrewDashboard() {
         <Grid item xs={12} md={5}>
           <Card sx={{ p: 2, height: '100%' }}>
             <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.rankDistribution')}</Typography>
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={Math.max(220, data.byRank.length * 24)}>
               <BarChart data={data.byRank} layout="vertical" margin={{ top: 8, right: 24, left: 40, bottom: 0 }}>
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -77,12 +78,14 @@ export default function CrewDashboard() {
                 <Bar dataKey="count" fill={C.container} name={t('seafarers.seafarers')} radius={[0, 3, 3, 0]} barSize={13} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Card>
         </Grid>
         <Grid item xs={12} md={3.5}>
           <Card sx={{ p: 2, height: '100%' }}>
             <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.expiryFunnel')}</Typography>
             <Typography variant="caption" color="text.secondary">{t('seafarers.expiryFunnelSub')}</Typography>
+            <Box dir="ltr">
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={funnel} margin={{ top: 10, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -92,6 +95,7 @@ export default function CrewDashboard() {
                 <Bar dataKey="count" name={t('seafarers.documents')} radius={[3, 3, 0, 0]} barSize={30} fill={C.dryBulk} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
             <Divider sx={{ my: 1 }} />
             <Button size="small" onClick={() => navigate('/reports/view/certificate-expiry')}>{t('seafarers.fullExpiryReport')}</Button>
           </Card>

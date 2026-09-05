@@ -34,7 +34,16 @@ const FIELDS: Record<string, F[]> = {
     { k: 'autoNotifySeverity', label: 'Auto-notify from severity', type: 'select', options: ['MEDIUM', 'HIGH', 'CRITICAL'] },
     { k: 'reopenWindowDays', label: 'Reopen window (days)', type: 'number' }, { k: 'injuryReportHrs', label: 'Injury report deadline (hours)', type: 'number' },
   ],
-  inspect: [{ k: 'findingDueDays', label: 'Finding rectification default (days)', type: 'number' }, { k: 'detentionThreshold', label: 'Detainable findings for detention', type: 'number' }, { k: 'passScorePct', label: 'Checklist pass score (%)', type: 'number' }, { k: 'requireEvidencePhotos', label: 'Evidence photos mandatory on findings', type: 'switch' }],
+  inspect: [
+    { k: 'findingDueDays', label: 'Finding rectification default (days)', type: 'number' }, { k: 'detentionThreshold', label: 'Detainable findings for detention', type: 'number' }, { k: 'passScorePct', label: 'Checklist pass score (%)', type: 'number' }, { k: 'requireEvidencePhotos', label: 'Evidence photos mandatory on findings', type: 'switch' },
+    // the Smart Inspection programme and its six KPI targets — measured from the survey desk's events, graded against these
+    { k: 'kpiProgrammeStart', label: 'Programme start date (YYYY-MM-DD)', help: 'Empty means the day of the first instrumented survey' }, { k: 'kpiProgrammeMonths', label: 'Programme length (months)', type: 'number' },
+    { k: 'kpiDossierTargetPct', label: 'Dossier before boarding — target (%)', type: 'number' }, { k: 'kpiAiReportTargetPct', label: 'Reports first drafted by AI — target (%)', type: 'number' },
+    { k: 'kpiNoticeTargetPct', label: 'Notices AI-drafted in time — target (%)', type: 'number' }, { k: 'kpiNoticeMinutes', label: 'Notice window after closing (minutes)', type: 'number' },
+    { k: 'kpiPredictionTargetPct', label: 'Prediction correlation — target (%)', type: 'number' }, { k: 'kpiPredictionWindowMonths', label: 'Prediction window (months)', type: 'number' },
+    { k: 'kpiReportReductionTargetPct', label: 'Report time reduction — target (%)', type: 'number' }, { k: 'kpiReportBaselineMinutes', label: 'Report turnaround baseline (minutes)', type: 'number', help: '0 measures the baseline from manual reports on the platform' },
+    { k: 'kpiRestrictionTargetPct', label: 'Restrictions routed in time — target (%)', type: 'number' }, { k: 'kpiRestrictionMinutes', label: 'Restriction routing window (minutes)', type: 'number' },
+  ],
   facil: [{ k: 'licenceValidityYears', label: 'Licence validity (years)', type: 'number' }, { k: 'auditIntervalMonths', label: 'Audit interval (months)', type: 'number' }, { k: 'renewalReminderDays', label: 'Renewal reminder (days ahead)', type: 'number' }],
   finance: [{ k: 'invoicePrefix', label: 'Invoice number prefix', help: 'Applied to every NEW invoice' }, { k: 'paymentTermsDays', label: 'Payment terms (days)', type: 'number' }, { k: 'overdueReminderDays', label: 'Overdue reminder cadence (days)', type: 'number' }, { k: 'roundTotalsToWholeUnit', label: 'Round totals to the whole currency unit', type: 'switch' }],
   mis: [{ k: 'defaultPeriodMonths', label: 'Default report period (months)', type: 'number' }, { k: 'exportFooter', label: 'Export footer text', cols: 8 }],

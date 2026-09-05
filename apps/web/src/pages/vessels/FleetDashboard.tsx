@@ -64,6 +64,7 @@ export default function FleetDashboard() {
       <Grid container spacing={2}>
         <Grid item xs={12} md={5}>
           <Section title="Composition by type">
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={data.byType} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }}>
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -73,10 +74,12 @@ export default function FleetDashboard() {
                 <Bar dataKey="count" fill={C.container} name="Vessels" radius={[0, 3, 3, 0]} barSize={16} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Section>
         </Grid>
         <Grid item xs={12} md={4}>
           <Section title="Age profile" sub="Years since build">
+            <Box dir="ltr">
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={data.ageBands} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -86,6 +89,7 @@ export default function FleetDashboard() {
                 <Bar dataKey="count" fill={C.dryBulk} name="Vessels" radius={[3, 3, 0, 0]} barSize={28} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Section>
         </Grid>
         <Grid item xs={12} md={3}>

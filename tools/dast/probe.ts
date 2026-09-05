@@ -329,6 +329,69 @@ async function main() {
     return r.status === 403 || r.status === 404 ? null : `an agent moving an adapter answered ${r.status}`;
   });
 
+  // ---------------------------------------------------------------- Public portal
+  console.log('\nPublic portal — the law as published, and nothing else');
+  await probe('the public register answers without a session and carries no governance', 'A01', 'high', async () => {
+    const r = await http('/public/legislation?limit=5');
+    if (r.status !== 200) return `GET /api/public/legislation answered ${r.status} without a session`;
+    const rows: any[] = r.body?.data ?? [];
+    if (!rows.length) return 'SKIP: the published register is empty';
+    const leak = rows.find((i) => 'draftedBy' in i || 'acknowledgedBy' in i || 'approvedBy' in i || 'sourceNote' in i || 'body' in i);
+    if (leak) return `a public list row carries desk-only fields: ${Object.keys(leak).filter((k) => ['draftedBy', 'acknowledgedBy', 'approvedBy', 'sourceNote', 'body'].includes(k)).join(', ')}`;
+    if (!/public, max-age=\d+/.test(r.headers.get('cache-control') ?? '')) return `the public answer is not cacheable (Cache-Control: ${r.headers.get('cache-control')})`;
+    return null;
+  });
+  await probe('a draft never appears on the portal, even by its reference', 'A01', 'high', async () => {
+    const all = await http('/public/legislation?history=true&limit=200');
+    const draft = (all.body?.data ?? []).find((i: any) => i.status === 'DRAFT');
+    if (draft) return `the history view listed a draft: ${draft.refNo}`;
+    const desk = await http('/legislation/instruments?status=DRAFT&limit=1', { token: A });
+    const ref = desk.body?.data?.[0]?.refNo;
+    if (!ref) return 'SKIP: no draft on the register to test with';
+    const r = await http(`/public/legislation/${encodeURIComponent(ref)}`);
+    return r.status === 404 ? null : `the draft ${ref} answered ${r.status} on the public portal`;
+  });
+  await probe('the public instrument carries the text, the citation and a version, and nothing from the desk', 'A01', 'high', async () => {
+    const list = await http('/public/legislation?limit=1');
+    const slug = list.body?.data?.[0]?.slug;
+    if (!slug) return 'SKIP: the published register is empty';
+    const r = await http(`/public/legislation/${slug}`);
+    if (r.status !== 200) return `GET /api/public/legislation/${slug} answered ${r.status}`;
+    const i = r.body?.data ?? {};
+    for (const k of ['draftedBy', 'acknowledgedBy', 'approvedBy', 'sourceNote', 'reviewNote', 'clearanceNote', 'recipients', 'outstanding']) if (k in i) return `the public instrument carries the desk field ${k}`;
+    if (!i.citation?.en || !i.citation?.ar) return 'the citation is missing in one language';
+    if (!/^"[0-9a-f]{32}"$/.test(r.headers.get('etag') ?? '')) return `no content-version ETag (${r.headers.get('etag')})`;
+    const again = await http(`/public/legislation/${slug}`, { headers: { 'if-none-match': r.headers.get('etag')! } });
+    return again.status === 304 ? null : `If-None-Match with the current version answered ${again.status}, not 304`;
+  });
+  await probe('the public prefix is not a way into the desk', 'A01', 'high', async () => {
+    for (const path of ['/legislation/instruments', '/legislation/imo/items', '/legislation/meta', '/notices/pending']) {
+      const r = await http(path);
+      if (r.status !== 401) return `${path} answered ${r.status} without a session`;
+    }
+    const traversal = await http('/public/legislation/..%2F..%2Flegislation%2Finstruments');
+    if (traversal.status === 200 && Array.isArray(traversal.body?.data)) return 'a traversal through the public prefix reached the desk register';
+    const poll = await http('/legislation/imo/poll', { method: 'POST', token: G, body: '{"force":true}' });
+    return poll.status === 403 ? null : `an agent polling the IMO sources answered ${poll.status}`;
+  });
+  await probe('a quote in a public search does not reach SQL', 'A03', 'high', async () => {
+    for (const q of [`' OR 1=1 --`, `"; DROP TABLE legal_instruments; --`, `%' UNION SELECT 1,2,3 --`, '%\\_%']) {
+      const r = await http(`/public/legislation?q=${encodeURIComponent(q)}`);
+      if (r.status >= 500) return `q=${JSON.stringify(q)} answered ${r.status}`;
+    }
+    const unknown = await http('/public/legislation/NO-SUCH-1%2F2099');
+    return unknown.status === 404 ? null : `an unknown reference answered ${unknown.status}`;
+  });
+  await probe('the public feed and sitemap publish addresses, not identifiers', 'A01', 'medium', async () => {
+    const feed = await http('/public/legislation/feed?days=3650');
+    if (feed.status !== 200) return `the feed answered ${feed.status}`;
+    const items: any[] = feed.body?.data?.items ?? [];
+    if (items.some((i) => 'id' in i && /^[0-9a-f-]{36}$/.test(String(i.id)))) return 'a feed item is identified by a database id rather than its address';
+    const map = await http('/public/legislation/sitemap');
+    const urls: any[] = map.body?.data?.urls ?? [];
+    return urls.every((u) => /^https?:\/\/.+\/[a-z0-9-]+$/.test(u.url)) ? null : 'a sitemap entry is not a stable address';
+  });
+
   // ---------------------------------------------------------------- Result
   const bySeverity = (s: Severity) => findings.filter((f) => f.severity === s).length;
   console.log(`\n${'-'.repeat(80)}`);

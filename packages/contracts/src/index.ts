@@ -4,6 +4,7 @@ export * from './lifecycles';
 export * from './instruments';
 export * from './reference';
 export * from './events';
+export * from './inspection-kpis';
 export * from './api';
 export * from './jurisdiction';
 export * from './i18n';

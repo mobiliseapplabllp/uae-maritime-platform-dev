@@ -11,6 +11,10 @@ export const envSchema = baseEnvSchema.extend({
   PASS_SCORE_PCT: z.coerce.number().default(80),
   /** How long a finding gets to be rectified when the inspector does not set a date. */
   FINDING_DUE_DAYS: z.coerce.number().default(14),
+  /** Notice numbers read `${NOTICE_PREFIX}-YYYY-NNNN`, one atomic series per calendar year. */
+  NOTICE_PREFIX: z.string().default('NOT'),
+  /** How recent the Smart Inspection agent's judgement of a ship must be to be carried onto a survey as its prediction; older, and the desk's own history rules predict instead. */
+  PREDICTION_FRESH_DAYS: z.coerce.number().default(45),
 });
 export type Env = z.infer<typeof envSchema>;
 export const env = () => loadEnv(envSchema);

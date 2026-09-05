@@ -159,6 +159,7 @@ export default function AgentOperations() {
         <Card sx={{ p: 2 }}>
           <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('agents.performance')}</Typography>
           <Typography variant="caption" color="text.secondary">{t('agents.performanceSub')}</Typography>
+          <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
           <ResponsiveContainer width="100%" height={Math.max(240, dash.perAgent.length * 28)}>
             <BarChart data={dash.perAgent} layout="vertical" margin={{ top: 12, right: 24, left: 24, bottom: 0 }}>
               <CartesianGrid stroke={grid} horizontal={false} />
@@ -172,6 +173,7 @@ export default function AgentOperations() {
               <Bar dataKey="overridden" stackId="d" fill="#C14F33" name={t('agents.barOverturned')} barSize={14} radius={[0, 3, 3, 0]} />
             </BarChart>
           </ResponsiveContainer>
+          </Box>
         </Card>
       )}
 

@@ -74,6 +74,7 @@ export default function CraftServiceDrawer({ resource, onClose }: { resource: Cr
 
           <Heading sub="Jobs completed and hours run, last 12 months">Utilisation</Heading>
           <Box role="img" aria-label={`Utilisation by month — ${s.series.map((p) => `${p.label}: ${p.jobs} jobs, ${p.hours} hours`).join('; ')}`}>
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={190}>
               <ComposedChart data={s.series} margin={{ top: 6, right: 8, left: -20, bottom: 0 }}>
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -85,6 +86,7 @@ export default function CraftServiceDrawer({ resource, onClose }: { resource: Cr
                 <Line yAxisId="r" type="monotone" dataKey="hours" name="Hours" stroke={C.dryBulk} strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
+            </Box>
           </Box>
 
           <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: 'wrap' }} useFlexGap>

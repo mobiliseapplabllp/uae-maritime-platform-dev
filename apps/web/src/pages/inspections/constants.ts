@@ -1,11 +1,12 @@
-/* Survey & Audit Cell constants and pure helpers — survey types, answer types, the weighted compliance score and checklist editing. */
-import { INSPECTION_TYPES } from '@maritime/contracts';
-import type { Answer, AnswerType, ChecklistAnswer, ChecklistItem, ChecklistTemplate, InspectionResult } from './types';
+/* Survey & Audit Cell constants and pure helpers — the regime master the screens read, answer types, the weighted compliance score and checklist editing. */
+import type { Answer, AnswerType, ChecklistAnswer, ChecklistItem, ChecklistTemplate, InspectionResult, KpiStatus, SubjectKind } from './types';
 
-/** Survey types a vessel inspection can be planned as. */
-export const TYPES: readonly string[] = INSPECTION_TYPES;
-/** Checklist types include the HSE walkabouts and terminal audits that are not ship surveys. */
-export const CHECKLIST_TYPES: readonly string[] = [...INSPECTION_TYPES, 'HSE', 'TERMINAL'];
+/** The master every regime select and filter reads — a regime added in Data Studio appears on every screen without a release. */
+export const REGIME_LOOKUP = 'inspectionRegime';
+export const SUBJECT_KINDS: SubjectKind[] = ['VESSEL', 'COMPANY', 'PORT_FACILITY', 'MET_INSTITUTION'];
+/** How the dashboard colours a KPI's standing; the standing itself comes from the evaluator. */
+export const KPI_STATUS_COLOR: Record<KpiStatus, 'success' | 'info' | 'error' | 'default'> = { MET: 'success', ON_TRACK: 'info', BEHIND: 'error', NOT_CAPTURED: 'default' };
+export const RECOMMENDATION_STATUS_COLOR: Record<string, 'warning' | 'error' | 'success' | 'default' | 'info'> = { PENDING: 'warning', APPROVED: 'error', REJECTED: 'success', DEFERRED: 'info' };
 export const ANSWER_TYPES: [AnswerType, string][] = [['YES_NO', 'Yes / No'], ['YES_NO_NA', 'Yes / No / N.A.'], ['TEXT', 'Free text'], ['NUMBER', 'Number']];
 export const answerTypeLabel = (v: string) => (ANSWER_TYPES.find(([k]) => k === v) || [v, v])[1];
 export const DEFAULT_PASS_PCT = 80;

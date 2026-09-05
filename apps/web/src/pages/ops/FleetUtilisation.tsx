@@ -78,6 +78,7 @@ export default function FleetUtilisation({ onOpenCraft }: { onOpenCraft?: (c: Fl
               </TextField>
             )}>
             <Box role="img" aria-label={`Jobs per month — ${data.series.map((p) => `${p.label}: ${p.jobs} jobs, ${p.hours} hours`).join('; ')}`}>
+              <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
               <ResponsiveContainer width="100%" height={250}>
                 <ComposedChart data={data.series} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
                   <CartesianGrid stroke={grid} vertical={false} />
@@ -89,12 +90,14 @@ export default function FleetUtilisation({ onOpenCraft }: { onOpenCraft?: (c: Fl
                   <Line yAxisId="r" type="monotone" dataKey="hours" name="Assist hours" stroke={C.dryBulk} strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
+              </Box>
             </Box>
           </Section>
         </Grid>
         <Grid item xs={12} md={4}>
           <Section title="Work by craft type" sub={`${t.craft} units on strength`}>
             <Box role="img" aria-label={`Jobs by craft type — ${data.byType.map((x) => `${typeLabel(x.type)}: ${x.jobs}`).join('; ')}`}>
+              <Box dir="ltr">
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={data.byType} layout="vertical" margin={{ top: 0, right: 20, left: 8, bottom: 0 }}>
                   <CartesianGrid stroke={grid} horizontal={false} />
@@ -104,6 +107,7 @@ export default function FleetUtilisation({ onOpenCraft }: { onOpenCraft?: (c: Fl
                   <Bar dataKey="jobs" name="Jobs" fill={C.liquid} radius={[0, 3, 3, 0]} barSize={16} />
                 </BarChart>
               </ResponsiveContainer>
+              </Box>
             </Box>
           </Section>
         </Grid>

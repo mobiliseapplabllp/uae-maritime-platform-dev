@@ -142,17 +142,65 @@ jobs:
         run: pnpm --filter @maritime/web... build
       - if: hashFiles('apps/web/package.json') != ''
         run: pnpm --filter @maritime/web test
-      - name: playwright drives
-        if: hashFiles('apps/web/package.json') != '' && hashFiles('tests/e2e/package.json') != ''
+
+  e2e:
+    name: end-to-end drives
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: build-test
+    env:
+      EVENT_BUS: nats
+      NATS_URL: nats://127.0.0.1:4222
+      AUTH_MODE: local
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      # The drives run against the real stack: every service started natively from its build, seeded with
+      # the shared fictional world, behind the gateway the Vite dev server proxies to. Same NATS and
+      # PostgreSQL bring-up as the build job, for the same reasons.
+      - name: start NATS JetStream
         run: |
-          pnpm --filter @maritime/e2e exec playwright install --with-deps chromium
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 nats:2.11-alpine -js -m 8222
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8222/healthz >/dev/null && break; sleep 1; done
+          curl -fs http://127.0.0.1:8222/healthz
+      - name: start PostgreSQL with PostGIS and pgvector
+        run: |
+          docker build -t maritime/postgres:16-3.4 -f infra/docker/postgres.Dockerfile infra/docker
+          docker run -d --name postgres -p 5432:5432 \
+            -e POSTGRES_USER=maritime -e POSTGRES_PASSWORD=maritime -e POSTGRES_DB=postgres \
+            maritime/postgres:16-3.4
+          for i in $(seq 1 90); do docker exec postgres pg_isready -h 127.0.0.1 -U maritime -d postgres >/dev/null 2>&1 && break; sleep 1; done
+          docker exec postgres pg_isready -h 127.0.0.1 -U maritime -d postgres
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - name: seed the world and start every service
+        run: |
+          infra/local/services.sh seed
+          infra/local/services.sh start
+          # the gateway answers last, once every service behind it is up
+          for i in $(seq 1 60); do infra/local/services.sh status | grep -q "^gateway: up" && break; sleep 2; done
+          infra/local/services.sh status
+          infra/local/services.sh status | grep -q "down" && { echo "a service did not come up"; tail -n 40 .local/log/*.log; exit 1; } || true
+      - name: playwright drives
+        run: |
+          pnpm --filter @maritime/web exec playwright install --with-deps chromium
           pnpm e2e
       - name: upload playwright report
-        if: failure() && hashFiles('tests/e2e/package.json') != ''
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: tests/e2e/playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+            .local/log
           if-no-files-found: ignore
           retention-days: 7
 

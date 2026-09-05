@@ -35,6 +35,10 @@ export interface InspectionRow {
   inspector_id: string | null; inspector: string; planned_at: Date; started_at: Date | null; closed_at: Date | null;
   status: string; result: string; score_pct: number | null; pass_score_pct: number | null; critical_fail: boolean; detention: boolean;
   checklist: ChecklistAnswer[]; remarks: string; created_at: Date; updated_at: Date;
+  /** Who or what was inspected: a ship by default, or a company, a port facility or a training institution under a regime that applies to it. */
+  subject_kind: string; subject_id: string | null; subject_name: string;
+  /** Smart Inspection: the dossier the boarding party held, and what the close-out classified the survey as. */
+  dossier: Record<string, any> | null; dossier_prepared_at: Date | null; dossier_source: string; severity: string; recommendation: string;
 }
 export interface FindingRow {
   id: string; inspection_id: string; seq: number; deficiency_code: string; deficiency_label: string; category: string; severity: string;
@@ -81,7 +85,8 @@ export function inspectionApi(i: InspectionRow, extra: InspectionExtras = {}) {
   const checklist = (i.checklist ?? []).map(answerApi);
   return {
     id: i.id, number: i.number, vesselId: i.vessel_id, vesselName: i.vessel_name, vesselImo: i.vessel_imo, vesselFlag: i.vessel_flag, vesselType: i.vessel_type,
-    portCallId: i.port_call_id, vcn: i.vcn, type: i.type, templateId: i.template_id, templateVersion: i.template_version,
+    subjectKind: i.subject_kind ?? 'VESSEL', subjectId: i.subject_id ?? i.vessel_id, subjectName: i.subject_name || i.vessel_name,
+    portCallId: i.port_call_id, vcn: i.vcn, type: i.type, regime: i.type, templateId: i.template_id, templateVersion: i.template_version,
     inspectorId: i.inspector_id, inspector: i.inspector,
     plannedAt: iso(i.planned_at)!, startedAt: iso(i.started_at), closedAt: iso(i.closed_at),
     status: i.status, result: i.result, scorePct: i.score_pct, passScorePct: i.pass_score_pct, criticalFail: i.critical_fail, detention: i.detention,
@@ -89,6 +94,8 @@ export function inspectionApi(i: InspectionRow, extra: InspectionExtras = {}) {
     openFindings: findings.filter((f) => f.status === 'OPEN').length, totalFindings: findings.length,
     answered: checklist.filter((c) => c.answer).length, questions: checklist.length,
     detentionRecord: extra.detention ?? null,
+    dossierPreparedAt: iso(i.dossier_prepared_at), dossierSource: i.dossier_source ?? '', hasDossier: !!i.dossier_prepared_at,
+    severity: i.severity ?? '', recommendation: i.recommendation ?? '',
     remarks: i.remarks, createdAt: iso(i.created_at), updatedAt: iso(i.updated_at),
   };
 }
@@ -275,7 +282,7 @@ export function inspectionDashboard(all: DashboardInput[], now = new Date()) {
 export function inspectionCard(i: InspectionRow, findings: FindingApi[]) {
   const open = findings.filter((f) => f.status === 'OPEN').length;
   return {
-    kind: 'inspection', title: i.number, subtitle: `${i.type} · ${i.vessel_name || 'Unassigned vessel'}`, link: `/inspections/${i.id}`,
+    kind: 'inspection', title: i.number, subtitle: `${i.type} · ${i.subject_name || i.vessel_name || 'Unassigned subject'}`, link: `/inspections/${i.id}`,
     chips: [
       { label: i.status === 'CLOSED' ? 'Closed' : i.status === 'IN_PROGRESS' ? 'In progress' : 'Planned', tone: i.status === 'CLOSED' ? 'success' : i.status === 'IN_PROGRESS' ? 'info' : 'default' },
       ...(i.result ? [{ label: i.result === 'SATISFACTORY' ? 'Satisfactory' : i.result === 'DETAINED' ? 'Detained' : 'Deficiencies', tone: i.result === 'SATISFACTORY' ? 'success' : i.result === 'DETAINED' ? 'error' : 'warning' }] : []),

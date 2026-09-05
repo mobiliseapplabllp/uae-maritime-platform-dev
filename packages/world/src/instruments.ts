@@ -180,7 +180,7 @@ export function buildLicences(rng: Prng, profile: string, companies: WorldCompan
   // B2 — statutory certificates of the ships on the register, each carrying the survey endorsements its convention requires
   const onRegister = registry.filter((r) => r.state === 'REGISTERED' || r.state === 'PROVISIONAL');
   const ROs = ae ? ['TASNEEF', 'Lloyd\'s Register', 'DNV', 'Bureau Veritas', 'ClassNK'] : ['Indian Register of Shipping', 'Lloyd\'s Register', 'DNV', 'Bureau Veritas', 'ClassNK'];
-  const places = ae ? ['Khalifa Port', 'Jebel Ali', 'Fujairah', 'Singapore', 'Colombo'] : ['Harbour', 'Kandla', 'Mumbai', 'Kochi', 'Singapore'];
+  const places = ae ? ['Khalifa Port', 'Jebel Ali', 'Fujairah', 'Singapore', 'Colombo'] : ['Harbour', 'Nhava Sheva', 'Mumbai', 'Kochi', 'Singapore'];
   const endorse = (kind: EndorsementKind, anniversary: Date, completedOn: Date, ro: string, remarks: string): WorldEndorsement => ({ kind, anniversary: iso(anniversary), completedOn: iso(completedOn), surveyor: rng.pick(surveyors).name, organisation: ro, place: rng.pick(places), result: 'ENDORSED', remarks });
   const surveysFor = (type: string, term: { termStart: Date; renewals: Date[]; expiry: Date }, ro: string, lapsed: boolean): WorldEndorsement[] => {
     const out2: WorldEndorsement[] = [];

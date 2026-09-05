@@ -86,7 +86,7 @@ describe('world', () => {
     const between = (n: number, lo: number, hi: number, what: string) => { expect(n, what).toBeGreaterThanOrEqual(lo); expect(n, what).toBeLessThanOrEqual(hi); };
     between(w.vesselCertificates.length, 380, 420, 'certificates'); expect(w.tariffs).toHaveLength(11); expect(w.checklistTemplates).toHaveLength(8);
     between(w.berthOutages.length, 100, 250, 'outages'); expect(w.resources).toHaveLength(17); between(w.invoices.length, 600, 1100, 'invoices');
-    between(w.inspections.length, 140, 230, 'inspections'); expect(w.seafarers).toHaveLength(150); between(w.legalInstruments.length, 55, 70, 'instruments');
+    between(w.inspections.length, 150, 270, 'inspections'); expect(w.seafarers).toHaveLength(150); between(w.legalInstruments.length, 55, 70, 'instruments');
     between(w.licences.length, 220, 330, 'licences'); between(w.registrations.length, 18, 24, 'registrations'); expect(w.registry).toHaveLength(23);
     between(w.serviceDefinitions.length, 75, 85, 'definitions'); between(w.serviceRequests.length, 170, 240, 'requests'); expect(w.agentConfigs).toHaveLength(16);
     between(w.aiDecisions.length, 260, 340, 'decisions'); between(w.incidents.length, 110, 125, 'incidents'); between(w.positions.length, 12, 40, 'positions'); expect(w.mdaAlerts).toHaveLength(44);

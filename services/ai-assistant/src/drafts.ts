@@ -13,7 +13,7 @@ import { mayRead } from './retrieval';
  * A draft is never issued from here. It has no number, no signature and no effect — issuing is the instruments
  * service's business and a human's decision, and the status column says DRAFT for exactly that reason. */
 
-export const DRAFT_KINDS = ['NOTICE', 'DECISION_LETTER', 'INSPECTION_SUMMARY'] as const;
+export const DRAFT_KINDS = ['NOTICE', 'DECISION_LETTER', 'INSPECTION_SUMMARY', 'DEFICIENCY_NOTICE'] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
 /** What a reader must hold to have a draft of each kind prepared for them. */
@@ -21,6 +21,7 @@ export const DRAFT_PERMISSION: Record<DraftKind, string> = {
   NOTICE: 'legislation.manage',
   DECISION_LETTER: 'services.assess',
   INSPECTION_SUMMARY: 'inspections.view',
+  DEFICIENCY_NOTICE: 'inspections.edit',
 };
 
 export interface DraftRecord {
@@ -75,6 +76,36 @@ export async function prepareDraft(db: Queryable, input: DraftInput, preparedBy:
       title: `Inspection summary — ${i.number} (${i.vessel_name})`, body, facts: { number: i.number, result: i.result, openFindings: open.length, totalFindings: i.total_findings, detention: i.detention },
       subjectType: 'Inspection', subjectLabel: `${i.number} — ${i.vessel_name}`,
       citations: [cite(i.id, `Inspection ${i.number}`, 'inspection', i.number, `/inspections/${i.id}`), ...(i.vessel_id ? [cite(i.vessel_id, i.vessel_name, 'vessel', '', `/vessels/${i.vessel_id}`)] : [])],
+    };
+  }
+
+  if (input.kind === 'DEFICIENCY_NOTICE') {
+    const r = await db.query<Row>('SELECT * FROM inspections WHERE id = $1 OR number = $1 LIMIT 1', [input.subjectId]);
+    const i = r.rows[0];
+    if (!i) return null;
+    const findings: Row[] = (i.payload?.findings ?? []) as Row[];
+    const open = findings.filter((f) => f.status === 'OPEN');
+    const subject = i.payload?.subjectName ?? i.vessel_name;
+    const body = [
+      `${i.detention ? 'NOTICE OF DETENTION' : 'DEFICIENCY NOTICE'} — ${i.number}`,
+      '',
+      `To the owner, operator or master of: ${subject}`,
+      `Following the ${i.type} inspection carried out on ${dateOnly(i.closed_at ?? i.planned_at)}, the deficiencies below were recorded.`,
+      '',
+      ...(open.length
+        ? ['The following deficiencies are to be rectified within the period stated against each:', ...open.map((f, n) => `${n + 1}. ${f.deficiencyCode ?? ''} — ${f.description ?? f.deficiencyLabel ?? 'described on the file'}${f.actionCode ? ` (action code ${f.actionCode})` : ''}${f.dueDate ? `, by ${dateOnly(f.dueDate)}` : ''}`)]
+        : ['No deficiency remains open on the inspection file.']),
+      ...(i.detention ? ['', 'The vessel is detained until the detainable deficiencies are rectified and verified by the Authority.'] : []),
+      ...(input.note ? ['', `Officer's direction: ${input.note}`] : []),
+      '',
+      'Evidence of rectification is to be submitted to the Authority before the date stated. Failure to rectify may lead to further action under the applicable instruments.',
+      '',
+      `Prepared from the inspection record on ${today} by ${preparedBy}. This is a draft and has not been issued.`,
+    ].join('\n');
+    return {
+      title: `${i.detention ? 'Notice of detention' : 'Deficiency notice'} — ${i.number} (${subject})`, body, facts: { number: i.number, openFindings: open.length, totalFindings: i.total_findings, detention: i.detention },
+      subjectType: 'Inspection', subjectLabel: `${i.number} — ${subject}`,
+      citations: [cite(i.id, `Inspection ${i.number}`, 'inspection', i.number, `/inspections/${i.id}`)],
     };
   }
 

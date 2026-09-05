@@ -47,7 +47,7 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const berthOutages = buildBerthOutages(root.fork('outages'), profile, berths, now);
   const { registrations, registry, closureVesselId } = buildRegistrations(root.fork('registry'), profile, vessels, users, now);
   const invoices = buildInvoices(root.fork('invoices'), profile, portCalls, vessels, companies, tariffs, now, closureVesselId);
-  const inspections = buildInspections(root.fork('inspections'), portCalls, vessels, checklistTemplates, users, lookups, now);
+  const inspections = buildInspections(root.fork('inspections'), portCalls, vessels, checklistTemplates, users, lookups, now, { companies, berths });
   const seafarers = buildSeafarers(root.fork('seafarers'), profile, vessels, companies, now);
   const legalInstruments = buildLegalInstruments(root.fork('legislation'), profile, users, now);
   const imoWatch = buildImoWatch(root.fork('imowatch'), profile, lookups, legalInstruments, users, now);

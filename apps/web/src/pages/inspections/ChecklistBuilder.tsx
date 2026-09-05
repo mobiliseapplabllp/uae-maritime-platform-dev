@@ -18,7 +18,8 @@ import PageHeader from '../../components/common/PageHeader';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import ExportMenu from '../../components/common/ExportMenu';
 import { MONO } from '../../theme';
-import { ANSWER_TYPES, CHECKLIST_TYPES, DEFAULT_PASS_PCT, answerTypeLabel, groupSections, moveItem, newTemplate, reseq, slug, totalWeight, type IndexedItem } from './constants';
+import { ANSWER_TYPES, DEFAULT_PASS_PCT, REGIME_LOOKUP, answerTypeLabel, groupSections, moveItem, newTemplate, reseq, slug, totalWeight, type IndexedItem } from './constants';
+import { useLookups } from '../../hooks/useLookups';
 import type { ChecklistItem, ChecklistTemplate } from './types';
 
 /* Checklist Builder — create checklist types, then add / edit / delete / reorder questions with sections, answer types, weights and critical flags.
@@ -28,6 +29,7 @@ type QuestionDialog = { index?: number } | null;
 
 export default function ChecklistBuilder() {
   const { t } = useTranslation();
+  const regimes = useLookups(REGIME_LOOKUP);
   const dispatch = useAppDispatch();
   const user = useUser();
   const canManage = hasPerm(user, 'masters.manage') || hasPerm(user, 'inspections.edit');
@@ -133,7 +135,7 @@ export default function ChecklistBuilder() {
                 <Grid item xs={12} md={4}><TextField fullWidth size="small" label="Checklist name" required value={draft.name} disabled={!canManage} onChange={(e) => mutate((d) => { d.name = e.target.value; })} /></Grid>
                 <Grid item xs={6} md={2.5}>
                   <TextField select fullWidth size="small" label="Type" value={draft.inspectionType} disabled={!canManage} onChange={(e) => mutate((d) => { d.inspectionType = e.target.value; })}>
-                    {CHECKLIST_TYPES.map((x) => <MenuItem key={x} value={x}>{x}</MenuItem>)}
+                    {regimes.options.map((x) => <MenuItem key={x.value} value={x.value}>{x.label}</MenuItem>)}
                   </TextField>
                 </Grid>
                 <Grid item xs={6} md={2}><TextField fullWidth size="small" type="number" label="Pass score %" value={draft.passScorePct ?? DEFAULT_PASS_PCT} disabled={!canManage} onChange={(e) => mutate((d) => { d.passScorePct = Number(e.target.value); })} /></Grid>

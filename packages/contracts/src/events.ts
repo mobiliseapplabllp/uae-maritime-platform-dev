@@ -83,6 +83,12 @@ export const EVENTS = {
     planned: 'inspection.inspection.planned', updated: 'inspection.inspection.updated', started: 'inspection.inspection.started', deleted: 'inspection.inspection.deleted',
     detentionReleased: 'inspection.detention.released', deficiencyUpdated: 'inspection.deficiency.updated', deficiencyRectified: 'inspection.deficiency.rectified', deficiencyWithdrawn: 'inspection.deficiency.withdrawn',
     checklistScored: 'inspection.checklist.scored', templateCreated: 'inspection.template.created', templateUpdated: 'inspection.template.updated', templateActivated: 'inspection.template.activated', templateDeleted: 'inspection.template.deleted',
+    // Smart Inspection: the pre-inspection dossier, the report and the notices drafted on the survey, the restriction the rules
+    // recommend and the decision on it, the prediction made before boarding and how it scored, and a finding past its date
+    dossierPrepared: 'inspection.dossier.prepared', reportDrafted: 'inspection.report.drafted', reportIssued: 'inspection.report.issued',
+    noticeDrafted: 'inspection.notice.drafted', noticeIssued: 'inspection.notice.issued',
+    restrictionRecommended: 'inspection.restriction.recommended', restrictionDecided: 'inspection.restriction.decided',
+    predictionRecorded: 'inspection.prediction.recorded', predictionScored: 'inspection.prediction.scored', deficiencyOverdue: 'inspection.deficiency.overdue',
   },
   ports: {
     portCallScheduled: 'ports.portcall.scheduled', berthed: 'ports.portcall.berthed', socIssued: 'ports.soc.issued',
@@ -110,7 +116,7 @@ export const EVENTS = {
     invoiceDrafted: 'revenue.invoice.drafted', invoiceUpdated: 'revenue.invoice.updated', invoicePaid: 'revenue.invoice.paid', invoiceCancelled: 'revenue.invoice.cancelled', invoiceDeleted: 'revenue.invoice.deleted', invoiceOverdue: 'revenue.invoice.overdue', tariffChanged: 'revenue.tariff.changed',
   },
   integration: { externalSyncCompleted: 'integration.external-sync.completed' },
-  scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources' },
+  scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' },
   ai: {
     draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded',
     // added by the agentic runtime: the escalation the autonomy ladder forced, the human outcome on it, and every change to what an agent is allowed to do

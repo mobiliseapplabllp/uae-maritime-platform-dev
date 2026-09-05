@@ -30,7 +30,7 @@ export function buildLookups(profile: string): WorldLookup[] {
     lk('port', 'SAJED', 'Jeddah', { country: 'Saudi Arabia' }), lk('port', 'SADMM', 'Dammam', { country: 'Saudi Arabia' }), lk('port', 'SARTA', 'Ras Tanura', { country: 'Saudi Arabia' }),
     lk('port', 'OMSLL', 'Salalah', { country: 'Oman' }), lk('port', 'OMSOH', 'Sohar', { country: 'Oman' }), lk('port', 'QAHMD', 'Hamad Port', { country: 'Qatar' }),
     lk('port', 'KWKWI', 'Kuwait', { country: 'Kuwait' }), lk('port', 'IQBSR', 'Basrah', { country: 'Iraq' }), lk('port', 'IRBND', 'Bandar Abbas', { country: 'Iran' }),
-    lk('port', 'INNSA', 'Nhava Sheva', { country: 'India' }), lk('port', 'INMUN', 'Mundra', { country: 'India' }), lk('port', 'INCOK', 'Kochi', { country: 'India' }),
+    lk('port', 'INNSA', 'Nhava Sheva', { country: 'India' }), lk('port', 'INMRM', 'Mormugao', { country: 'India' }), lk('port', 'INCOK', 'Kochi', { country: 'India' }),
     lk('port', 'PKKHI', 'Karachi', { country: 'Pakistan' }), lk('port', 'LKCMB', 'Colombo', { country: 'Sri Lanka' }), lk('port', 'MYPKG', 'Port Klang', { country: 'Malaysia' }),
     lk('port', 'NLRTM', 'Rotterdam', { country: 'Netherlands' }), lk('port', 'DEHAM', 'Hamburg', { country: 'Germany' }), lk('port', 'EGPSD', 'Port Said', { country: 'Egypt' }),
     lk('port', 'KEMBA', 'Mombasa', { country: 'Kenya' }), lk('port', 'ZADUR', 'Durban', { country: 'South Africa' }), lk('port', 'AUHPT', 'Hay Point', { country: 'Australia' }),
@@ -60,7 +60,7 @@ export function buildLookups(profile: string): WorldLookup[] {
   countries.forEach(([c, l]) => out.push(lk('country', c, l)));
   const states: [string, string, string][] = ae
     ? [['AUH', 'Abu Dhabi', 'AE'], ['DXB', 'Dubai', 'AE'], ['SHJ', 'Sharjah', 'AE'], ['AJM', 'Ajman', 'AE'], ['UAQ', 'Umm Al Quwain', 'AE'], ['RAK', 'Ras Al Khaimah', 'AE'], ['FJR', 'Fujairah', 'AE']]
-    : [['GJ', 'Gujarat', 'IN'], ['MH2', 'Maharashtra', 'IN'], ['KL', 'Kerala', 'IN'], ['TN', 'Tamil Nadu', 'IN'], ['KA', 'Karnataka', 'IN'], ['GA', 'Goa', 'IN'], ['AP', 'Andhra Pradesh', 'IN'], ['WB', 'West Bengal', 'IN'], ['OD', 'Odisha', 'IN'], ['DL', 'Delhi (NCT)', 'IN']];
+    : [['PY', 'Puducherry', 'IN'], ['MH2', 'Maharashtra', 'IN'], ['KL', 'Kerala', 'IN'], ['TN', 'Tamil Nadu', 'IN'], ['KA', 'Karnataka', 'IN'], ['GA', 'Goa', 'IN'], ['AP', 'Andhra Pradesh', 'IN'], ['WB', 'West Bengal', 'IN'], ['OD', 'Odisha', 'IN'], ['DL', 'Delhi (NCT)', 'IN']];
   states.forEach(([c, l, co]) => out.push(lk('state', c, l, { country: co })));
   const cities: [string, string, string][] = ae
     ? [['ABUDHABI', 'Abu Dhabi', 'AUH'], ['DUBAI', 'Dubai', 'DXB'], ['SHARJAH', 'Sharjah', 'SHJ'], ['AJMAN', 'Ajman', 'AJM'], ['UAQ', 'Umm Al Quwain', 'UAQ'], ['RAK', 'Ras Al Khaimah', 'RAK'], ['FUJAIRAH', 'Fujairah', 'FJR'], ['KHORFAKKAN', 'Khor Fakkan', 'SHJ'], ['ALAIN', 'Al Ain', 'AUH'], ['RUWAIS', 'Ruwais', 'AUH']]
@@ -220,7 +220,8 @@ export function buildLookups(profile: string): WorldLookup[] {
   push('obligationKind', [['AUDIT_FINDING', 'Audit finding', 'ملاحظة تدقيق', { defaultDueDays: 30 }], ['VISIT_FINDING', 'Inspection visit finding', 'ملاحظة زيارة تفتيش', { defaultDueDays: 30 }], ['RENEWAL', 'Renewal due', 'تجديد مستحق', { defaultDueDays: 90 }], ['CONDITION', 'Condition to meet', 'شرط واجب الاستيفاء', { defaultDueDays: 30 }], ['DOCUMENT', 'Document to produce', 'وثيقة مطلوبة', { defaultDueDays: 14 }]]);
   push('auditType', [['INITIAL', 'Initial', 'أولي'], ['ANNUAL', 'Annual', 'سنوي'], ['INTERMEDIATE', 'Intermediate', 'مرحلي'], ['RENEWAL', 'Renewal', 'تجديد'], ['ADDITIONAL', 'Additional', 'إضافي']]);
   push('inspectionRegime', [['PSC', 'Port State Control', 'رقابة دولة الميناء', { subjectKind: 'VESSEL', intervalMonths: null, convention: 'Riyadh MoU' }], ['FSI', 'Flag State Inspection', 'تفتيش دولة العلم', { subjectKind: 'VESSEL', intervalMonths: 12, convention: 'SOLAS I/6' }],
-    ['ISM', 'ISM audit', 'تدقيق ISM', { subjectKind: 'COMPANY', intervalMonths: 12, convention: 'ISM Code' }], ['ISPS', 'ISPS verification', 'تحقق ISPS', { subjectKind: 'PORT_FACILITY', intervalMonths: 12, convention: 'ISPS Code' }], ['MLC', 'MLC inspection', 'تفتيش اتفاقية العمل البحري', { subjectKind: 'VESSEL', intervalMonths: 36, convention: 'MLC 2006' }],
+    ['ISM', 'ISM shipboard audit (SMC)', 'تدقيق ISM على متن السفينة', { subjectKind: 'VESSEL', intervalMonths: 12, convention: 'ISM Code' }], ['ISPS', 'ISPS ship security verification', 'تحقق أمن السفينة ISPS', { subjectKind: 'VESSEL', intervalMonths: 12, convention: 'ISPS Code' }], ['MLC', 'MLC inspection', 'تفتيش اتفاقية العمل البحري', { subjectKind: 'VESSEL', intervalMonths: 36, convention: 'MLC 2006' }],
+    ['ISM_DOC', 'ISM company audit (DOC)', 'تدقيق ISM للشركة', { subjectKind: 'COMPANY', intervalMonths: 12, convention: 'ISM Code' }], ['PFSP', 'Port facility security verification', 'تحقق أمن المرفق المينائي', { subjectKind: 'PORT_FACILITY', intervalMonths: 12, convention: 'ISPS Code' }],
     ['HSE', 'HSE inspection', 'تفتيش الصحة والسلامة والبيئة', { subjectKind: 'PORT_FACILITY', intervalMonths: 12, convention: '' }], ['TERMINAL', 'Terminal inspection', 'تفتيش المحطة', { subjectKind: 'PORT_FACILITY', intervalMonths: 12, convention: '' }],
     ['ACCREDITATION', 'Accreditation visit', 'زيارة اعتماد', { subjectKind: 'COMPANY', intervalMonths: 12, convention: '' }], ['MET', 'MET institution audit', 'تدقيق مؤسسة تعليم بحري', { subjectKind: 'MET_INSTITUTION', intervalMonths: 12, convention: 'STCW I/8' }]]);
   return out;

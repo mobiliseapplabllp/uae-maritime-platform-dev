@@ -65,6 +65,7 @@ export default function PlatformSlasPage() {
                 <Typography sx={{ fontFamily: MONO, fontSize: 10, color: 'text.secondary', mb: 1 }}>{s.path}</Typography>
                 <Box sx={{ height: 90 }}>
                   {pts.length > 1 ? (
+                    <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={pts} margin={{ top: 4, right: 4, bottom: 0, left: -24 }}>
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -74,6 +75,7 @@ export default function PlatformSlasPage() {
                         <Line type="monotone" dataKey="latencyP50" stroke="#0B74B0" strokeWidth={1.6} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>
+                    </Box>
                   ) : (
                     <Typography sx={{ fontSize: 11, color: 'text.secondary', pt: 3 }}>{t('platform.sla.building')}</Typography>
                   )}

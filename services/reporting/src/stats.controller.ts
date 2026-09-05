@@ -1,14 +1,14 @@
 import { Controller, Get, Inject, Param } from '@nestjs/common';
 import type { Pool } from 'pg';
-import { hasPerm } from '@maritime/contracts';
-import { CurrentUser, KIT_CACHE, KIT_ENV, KIT_POOL, forbidden, notFound, scopedKey, type BaseEnv, type Cache, type Principal } from '@maritime/service-kit';
+import { hasPerm, evaluateInspectionKpis, kpiTargetsFrom, type KpiTimelineRow } from '@maritime/contracts';
+import { CurrentUser, KIT_CACHE, KIT_ENV, KIT_POOL, KIT_SETTINGS, SettingsClient, forbidden, notFound, scopedKey, type BaseEnv, type Cache, type Principal } from '@maritime/service-kit';
 import { D, H, card, certStatus, count, many, money, monthYear, dayMonthYear, nf, one, type Card } from './queries';
 import {
   BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, CHECKLIST_SCOPE, INCIDENT_SCOPE, INSPECTION_SCOPE,
   INSTRUMENT_SCOPE, INVOICE_SCOPE, LEGISLATION_SCOPE, REGISTRATION_SCOPE, RESOURCE_SCOPE, SEAFARER_SCOPE,
   TARIFF_SCOPE, USER_SCOPE, VESSEL_SCOPE, from, MET_SCOPE, CREW_LIST_SCOPE, FOREIGN_SCOPE } from './scope';
 
-type Compute = (pool: Pool, user: Principal) => Promise<Card[]>;
+type Compute = (pool: Pool, user: Principal, ctx: { settings: SettingsClient | null }) => Promise<Card[]>;
 const avgH = (rows: { a: Date | null; b: Date | null }[]) => (rows.length ? Math.round(rows.reduce((s, r) => s + (new Date(r.b!).getTime() - new Date(r.a!).getTime()), 0) / rows.length / H * 10) / 10 : 0);
 
 /** Per-module stat cards — the eight small numbers shown at the top of every page. Each scope checks its own permission. */
@@ -183,6 +183,17 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Findings raised', nf(totalF), `${nf(totalF - openF)} rectified`), card('Satisfactory', `${satPct}%`, 'closed with no deficiency', 'success'),
     ];
   } },
+  /* The six Smart Inspection KPIs, measured here from the survey desk's events with the same evaluator the desk uses, against the
+   * targets the inspect module's settings hold — so the command centre and the desk never disagree about the programme. */
+  inspectionKpis: { perm: 'inspections.view', compute: async (pool, user, ctx) => {
+    const rows = await many<{ inspection_id: string; number: string; kind: string; at: Date; source: string; meta: Record<string, unknown> }>(pool, `SELECT inspection_id, number, kind, at, source, meta FROM ${from(user, 'rm_inspection_timeline', INSPECTION_SCOPE, 't')} ORDER BY at, id`);
+    const settings = ctx.settings ? await ctx.settings.moduleGet<Record<string, unknown>>('inspect', {}) : {};
+    const report = evaluateInspectionKpis(rows.map((r): KpiTimelineRow => ({ inspectionId: r.inspection_id, number: r.number, kind: r.kind, at: r.at, source: r.source, meta: r.meta })), kpiTargetsFrom(settings));
+    const tone = (s: string): Card['tone'] => (s === 'MET' ? 'success' : s === 'ON_TRACK' ? 'info' : s === 'BEHIND' ? 'error' : 'default');
+    const value = (k: { value: number | null; unit: string }) => (k.value === null ? 'not captured' : `${k.value}${k.unit}`);
+    return report.kpis.map((k) => card(k.label, value(k), k.status === 'NOT_CAPTURED' ? k.detail : `target ${k.target}${k.unit} · ${k.numerator}/${k.denominator}`, tone(k.status)))
+      .concat([card('Programme', `${report.programme.pct}%`, `month ${Math.ceil(report.programme.monthsElapsed)} of ${report.programme.monthsTotal}`, 'default'), card('Surveys measured', new Set(rows.map((r) => r.inspection_id)).size, 'with a dated timeline')]);
+  } },
   incidents: { perm: 'incidents.view', compute: async (pool, user) => {
     const now = new Date();
     const inc = await many<{ status: string; severity: string; closed_at: Date | null; reported_at: Date; type: string }>(pool, `SELECT status, severity, closed_at, reported_at, type FROM ${from(user, 'rm_incidents', INCIDENT_SCOPE)}`);
@@ -281,7 +292,7 @@ export const STATS_CACHE_PREFIX = 'stats';
 
 @Controller('stats')
 export class StatsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_CACHE) private readonly cache: Cache, @Inject(KIT_ENV) private readonly env: BaseEnv) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_CACHE) private readonly cache: Cache, @Inject(KIT_ENV) private readonly env: BaseEnv, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
   @Get(':scope')
   async get(@Param('scope') scope: string, @CurrentUser() user: Principal) {
     const s = SCOPES[scope]; if (!s) throw notFound(`Unknown stats scope "${scope}"`);
@@ -291,7 +302,7 @@ export class StatsController {
     /* The key carries the reader's scope and permissions, so one tenant's numbers cannot be served to
      * another. See `scopedKey` — the scope is hashed into the key rather than trusted to the caller. */
     const key = scopedKey(user, STATS_CACHE_PREFIX, scope);
-    const cards = await this.cache.wrap(key, this.env.CACHE_TTL_SEC, () => s.compute(this.pool, user));
+    const cards = await this.cache.wrap(key, this.env.CACHE_TTL_SEC, () => s.compute(this.pool, user, { settings: this.settings }));
     return { cards };
   }
 }

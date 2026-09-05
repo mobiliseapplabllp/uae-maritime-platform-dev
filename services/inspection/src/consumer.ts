@@ -6,6 +6,7 @@ import type { Env } from './env';
 import { inspectionApi, publishInspection, type FindingRow, type InspectionRow, type Row } from './inspections';
 import { findingApi } from './inspections';
 import { projectSnapshot, refreshOpenInspections } from './subjects';
+import { draftNotice, draftReport, routeRecommendation, sweepOverdueFindings } from './smart';
 
 /* What the survey desk learns from the rest of the platform.
  *
@@ -21,8 +22,57 @@ async function findingsOf(c: PoolClient, id: string) {
   return r.rows.map(findingApi);
 }
 
+/* The Smart Inspection agent's judgement of a ship, kept as the latest per ship so a survey planned against her carries it. */
+async function rememberAgentJudgement(c: PoolClient, event: EventEnvelope): Promise<boolean> {
+  const d = (event.data ?? {}) as Row;
+  if (event.type !== EVENTS.ai.decisionRecorded || d.agentId !== 'a5_smart_inspection') return false;
+  const decision: Row = d.decision ?? {};
+  const vesselId = d.entityId ?? decision.entityId;
+  if (!vesselId || String(d.entityType ?? decision.entityType ?? 'Vessel') !== 'Vessel') return false;
+  const out: Row = decision.output ?? {};
+  const codes = Array.isArray(out.predictedDeficiencies) ? (out.predictedDeficiencies as Row[]).map((p) => String(p.code ?? p)).filter(Boolean) : [];
+  await c.query(`INSERT INTO vessel_predictions(vessel_id, decision_id, agent_id, predicted_at, risk_score, band, predicted_codes, dossier) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    ON CONFLICT (vessel_id) DO UPDATE SET decision_id = EXCLUDED.decision_id, agent_id = EXCLUDED.agent_id, predicted_at = EXCLUDED.predicted_at, risk_score = EXCLUDED.risk_score, band = EXCLUDED.band, predicted_codes = EXCLUDED.predicted_codes, dossier = EXCLUDED.dossier, updated_at = now()
+    WHERE vessel_predictions.predicted_at <= EXCLUDED.predicted_at`,
+    [String(vesselId), d.decisionId ?? decision.id ?? null, String(d.agentId), decision.createdAt ?? decision.at ?? event.time, out.riskScore == null ? null : Number(out.riskScore), String(out.band ?? ''), JSON.stringify(codes), out.dossier ? JSON.stringify(out.dossier) : null]);
+  return true;
+}
+/* A draft the assistant prepared on a survey: the report, or the deficiency notice, first written by the machine. */
+async function recordAssistantDraft(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<boolean> {
+  const d = (event.data ?? {}) as Row;
+  if (event.type !== EVENTS.ai.draftPrepared || String(d.subjectType ?? '') !== 'Inspection') return false;
+  const kind = String(d.kind ?? '');
+  if (kind !== 'INSPECTION_SUMMARY' && kind !== 'DEFICIENCY_NOTICE') return false;
+  const draft: Row = d.draft ?? {};
+  const r = await c.query<InspectionRow>('SELECT * FROM inspections WHERE id::text = $1 OR number = $1 FOR UPDATE', [String(d.subjectId ?? '')]);
+  const i = r.rows[0];
+  if (!i) return true;
+  const draftedAt = new Date(draft.createdAt ?? event.time);
+  const by = { id: null, name: String(d.preparedBy ?? 'Assistant') };
+  if (kind === 'INSPECTION_SUMMARY') {
+    const dup = await c.query('SELECT 1 FROM inspection_reports WHERE inspection_id = $1 AND draft_id = $2', [i.id, String(d.draftId)]);
+    if (dup.rowCount) return true;
+    await draftReport(c, deps.env, i, { source: 'AI', draftId: String(d.draftId), title: String(d.title ?? draft.title ?? ''), summary: String(draft.facts?.summary ?? ''), body: String(draft.body ?? ''), by, at: draftedAt }, { cause: event });
+  } else {
+    const dup = await c.query('SELECT 1 FROM inspection_notices WHERE inspection_id = $1 AND draft_id = $2', [i.id, String(d.draftId)]);
+    if (dup.rowCount) return true;
+    const findings = await c.query<{ id: string }>(`SELECT id FROM findings WHERE inspection_id = $1 AND status = 'OPEN'`, [i.id]);
+    await draftNotice(c, deps.env, i, { kind: i.detention ? 'DETENTION' : 'DEFICIENCY', source: 'AI', draftId: String(d.draftId), subject: String(d.title ?? draft.title ?? ''), body: String(draft.body ?? ''), findingIds: findings.rows.map((f) => f.id), by, at: draftedAt }, { cause: event });
+  }
+  return true;
+}
+
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
   if (await applyLookupEvent(c, event)) return; // deficiency codes, action codes and regimes
+  if (await rememberAgentJudgement(c, event)) return;
+  if (await recordAssistantDraft(c, deps, event)) return;
+  // our own recommendation coming back off the bus is the proof it reached the officers who subscribe to it
+  if (event.type === EVENTS.inspection.restrictionRecommended) { const d = (event.data ?? {}) as Row; if (d.recommendationId) await routeRecommendation(c, String(d.recommendationId), new Date(), event.id); return; }
+  if (event.type === EVENTS.scheduler.sweepFindings) {
+    const swept = await sweepOverdueFindings(c, deps.env, new Date(), event);
+    if (swept.inspections) await deps.audit.record(c, { action: 'FINDINGS_OVERDUE_SWEEP', entity: 'Inspection', entityId: 'sweep', entityLabel: 'Overdue findings sweep', after: swept, actor: { id: 'scheduler', name: 'Scheduler', kind: 'system' } });
+    return;
+  }
   const relevant = await projectSnapshot(c, event);
   if (!relevant) return;
   const d = (event.data ?? {}) as Row;
@@ -51,6 +101,7 @@ export async function snapshotOf(c: PoolClient, id: string) {
 
 export const SUBJECTS = [
   subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.vesselUpserted), ...LOOKUP_SUBJECTS,
+  subjectFor(EVENTS.ai.decisionRecorded), subjectFor(EVENTS.ai.draftPrepared), subjectFor(EVENTS.inspection.restrictionRecommended), subjectFor(EVENTS.scheduler.sweepFindings),
 ];
 
 @Injectable()

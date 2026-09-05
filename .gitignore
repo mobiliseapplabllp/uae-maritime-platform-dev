@@ -25,3 +25,6 @@ __pycache__/
 # mobile
 apps/mobile/build/
 apps/mobile/.dart_tool/
+# playwright
+apps/web/playwright-report/
+apps/web/test-results/

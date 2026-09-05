@@ -345,6 +345,38 @@ describe('ai-assistant — preparing a draft from the record', () => {
     expect((await outbox(EVENTS.readModel.upserted)).some((e) => e.data.kind === 'aiDraft')).toBe(true);
     expect((await outbox(EVENTS.audit.recorded)).some((e) => e.data.action === 'AI_DRAFT_PREPARED')).toBe(true);
   });
+  it('drafts a deficiency notice from the findings on the file, for an officer who may edit the survey', async () => {
+    const inspection = (await pool.query<{ id: string; number: string }>(`SELECT id, number FROM inspections WHERE status = 'CLOSED' AND open_findings > 0 ORDER BY closed_at DESC LIMIT 1`)).rows[0];
+    const r = await post('/ai/drafts', { kind: 'DEFICIENCY_NOTICE', subjectId: inspection.id, note: 'Evidence by photograph is acceptable.' }, admin);
+    expect(r.status).toBe(201);
+    expect(r.body.data.body).toMatch(/DEFICIENCY NOTICE|NOTICE OF DETENTION/);
+    expect(r.body.data.body).toContain('to be rectified within the period stated');
+    expect(r.body.data.body).toContain('Evidence by photograph is acceptable.');
+    expect(r.body.data.facts.openFindings).toBeGreaterThan(0);
+    expect((await post('/ai/drafts', { kind: 'DEFICIENCY_NOTICE', subjectId: inspection.id }, surveyor)).status).toBe(403); // inspections.view is not enough to write to a shipowner
+  });
+  it('drafts the report and the notice unasked when a survey closes, once, and publishes both as prepared', async () => {
+    await clearOutbox();
+    const id = 'ins-closed-1';
+    const entity = { id, number: 'INS-2026-901', vesselId: 'v-901', vesselName: 'Coral Reach (test)', subjectName: 'Coral Reach (test)', type: 'PSC', status: 'CLOSED', result: 'DEFICIENCIES', detention: false, closedAt: new Date().toISOString(), plannedAt: new Date().toISOString(), totalFindings: 2, openFindings: 2,
+      findings: [{ deficiencyCode: '11101', description: 'Lifeboat falls beyond renewal date', status: 'OPEN', actionCode: '17', dueDate: '2026-10-01' }, { deficiencyCode: '01101', description: 'Certificate not endorsed', status: 'OPEN', actionCode: '17', dueDate: '2026-10-01' }] };
+    const closed = makeEvent({ type: EVENTS.inspection.closed, source: 'inspection', subject: id, data: { inspectionId: id, number: entity.number, totalFindings: 2, openFindings: 2, result: 'DEFICIENCIES', inspection: entity } });
+    const client = await pool.connect();
+    try { await applyEvent(client, { env, audit }, closed); await applyEvent(client, { env, audit }, closed); } finally { client.release(); }
+    const drafts = (await pool.query<{ kind: string; prepared_by: string; body: string }>(`SELECT kind, prepared_by, body FROM drafts WHERE subject_type = 'Inspection' AND subject_id = $1 ORDER BY kind`, [id])).rows;
+    expect(drafts.map((d) => d.kind)).toEqual(['DEFICIENCY_NOTICE', 'INSPECTION_SUMMARY']);
+    expect(drafts.every((d) => d.prepared_by === 'Assistant')).toBe(true);
+    expect(drafts[1].body).toContain('Deficiencies raised: 2');
+    expect(drafts[0].body).toContain('11101');
+    const prepared = await outbox(EVENTS.ai.draftPrepared);
+    expect(prepared.map((e) => e.data.kind).sort()).toEqual(['DEFICIENCY_NOTICE', 'INSPECTION_SUMMARY']);
+    expect(prepared.every((e) => e.data.subjectType === 'Inspection' && e.data.subjectId === id)).toBe(true);
+    // a survey closed clean gets its report and no notice
+    const clean = makeEvent({ type: EVENTS.inspection.closed, source: 'inspection', subject: 'ins-closed-2', data: { inspectionId: 'ins-closed-2', number: 'INS-2026-902', totalFindings: 0, openFindings: 0, result: 'SATISFACTORY', inspection: { ...entity, id: 'ins-closed-2', number: 'INS-2026-902', result: 'SATISFACTORY', totalFindings: 0, openFindings: 0, findings: [] } } });
+    const client2 = await pool.connect();
+    try { await applyEvent(client2, { env, audit }, clean); } finally { client2.release(); }
+    expect((await pool.query(`SELECT kind FROM drafts WHERE subject_id = 'ins-closed-2'`)).rows.map((r) => r.kind)).toEqual(['INSPECTION_SUMMARY']);
+  });
   it('drafts a notice to a shipowner from the vessel\'s own standing', async () => {
     const vessel = (await pool.query<{ id: string; name: string; imo: string }>(
       `SELECT v.id, v.name, v.imo FROM vessels v WHERE NOT v.real AND EXISTS (SELECT 1 FROM vessel_certificates c WHERE c.vessel_id = v.id AND c.state = 'EXPIRED') LIMIT 1`)).rows[0];

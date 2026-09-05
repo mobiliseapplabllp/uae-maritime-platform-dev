@@ -49,12 +49,14 @@ export default function BerthOutageDrawer({ berth, onClose }: { berth: BerthLite
           <Typography variant="h6" sx={{ fontSize: 14, mt: 2.5 }}>Days out of service by month</Typography>
           <Typography variant="caption" color="text.secondary">Last 12 months — windows split across month boundaries</Typography>
           <Box sx={{ mt: 1.5 }}>
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={180}>
               <BarChart data={s.series} margin={{ top: 6, right: 8, left: -22, bottom: 0 }}>
                 <CartesianGrid stroke={grid} vertical={false} /><XAxis dataKey="label" tick={{ fontSize: 10.5, fill: axis }} axisLine={{ stroke: grid }} tickLine={false} /><YAxis tick={{ fontSize: 10.5, fill: axis }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip contentStyle={tooltipStyle} cursor={{ fill: grid, opacity: 0.35 }} formatter={(v: number) => `${v} days`} /><Bar dataKey="days" name="Days out" fill={C.other} radius={[3, 3, 0, 0]} barSize={18} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Box>
           <Stack direction="row" spacing={0.75} sx={{ mt: 1, flexWrap: 'wrap' }} useFlexGap>
             {s.byKind.map((k) => <Chip key={k.kind} size="small" variant="outlined" color={OUTAGE_KIND_META[k.kind]?.color || 'default'} label={`${OUTAGE_KIND_META[k.kind]?.label || k.kind} · ${k.outages} × ${fmtNum(k.days)} d`} sx={{ height: 22, fontSize: 11, fontWeight: 600 }} />)}

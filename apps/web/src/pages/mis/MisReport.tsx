@@ -96,6 +96,7 @@ export default function MisReport() {
                 <Section title={t('mis.cargoByMonth')} sub={t('mis.cargoByMonthSub')} csvLabel="CSV"
                   onCsv={() => csv('mis-cargo-by-month', rows, [{ key: 'month', label: t('mis.month') }, { key: 'container', label: 'Container MT' }, { key: 'dryBulk', label: 'Dry bulk MT' }, { key: 'liquid', label: 'Liquid MT' }, { key: 'other', label: 'Other MT' }, { key: 'cargoMT', label: 'Total MT' }, { key: 'teu', label: 'TEU' }, { key: 'calls', label: t('mis.calls') }])}>
                   <Box sx={{ height: 300 }}>
+                    <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
                     <ResponsiveContainer>
                       <BarChart data={rows} barCategoryGap="28%">
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -106,12 +107,14 @@ export default function MisReport() {
                         {SERIES_ORDER.map((key) => <Bar key={key} dataKey={key} stackId="mt" fill={C[key]} stroke={paper} strokeWidth={2} radius={key === 'other' ? [4, 4, 0, 0] : 0} />)}
                       </BarChart>
                     </ResponsiveContainer>
+                    </Box>
                   </Box>
                 </Section>
               </Grid>
               <Grid item xs={12} lg={4}>
                 <Section title={t('mis.callsByMonth')} sub={t('mis.callsByMonthSub', { hours: avgOf(rows, 'avgWaitH') })}>
                   <Box sx={{ height: 300 }}>
+                    <Box dir="ltr">
                     <ResponsiveContainer>
                       <BarChart data={rows} margin={{ top: 18 }} barCategoryGap="30%">
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -121,6 +124,7 @@ export default function MisReport() {
                         <Bar dataKey="calls" fill={C.liquid} radius={[4, 4, 0, 0]} name={t('mis.calls')} />
                       </BarChart>
                     </ResponsiveContainer>
+                    </Box>
                   </Box>
                 </Section>
               </Grid>
@@ -148,6 +152,7 @@ export default function MisReport() {
                 <Section title={t('mis.billedVsCollected')} sub={t('mis.billedVsCollectedSub', { currency: data.currency || profile.currency.code })} csvLabel="CSV"
                   onCsv={() => csv('mis-revenue-by-month', rows, [{ key: 'month', label: t('mis.month') }, { key: 'revenue', label: t('mis.billed') }, { key: 'collected', label: t('mis.collected') }])}>
                   <Box sx={{ height: 300 }}>
+                    <Box dir="ltr">
                     <ResponsiveContainer>
                       <LineChart data={rows}>
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -159,6 +164,7 @@ export default function MisReport() {
                         <Line type="monotone" dataKey="collected" stroke={C.container} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
                       </LineChart>
                     </ResponsiveContainer>
+                    </Box>
                   </Box>
                 </Section>
               </Grid>
@@ -184,6 +190,7 @@ export default function MisReport() {
                 <Section title={t('mis.inspectionsByMonth')} sub={t('mis.inspectionsByMonthSub', { inspections: totals.inspections, detentions: totals.detentions })} csvLabel="CSV"
                   onCsv={() => csv('mis-compliance', rows, [{ key: 'month', label: t('mis.month') }, { key: 'inspections', label: t('mis.inspections') }, { key: 'detentions', label: t('mis.detentions') }, { key: 'findings', label: t('mis.findings') }, { key: 'incidents', label: t('mis.incidents') }, { key: 'highIncidents', label: t('mis.highIncidents') }])}>
                   <Box sx={{ height: 260 }}>
+                    <Box dir="ltr">
                     <ResponsiveContainer>
                       <BarChart data={rows} barCategoryGap="26%">
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -196,12 +203,14 @@ export default function MisReport() {
                         <Bar dataKey="findings" name={t('mis.findings')} fill={C.dryBulk} radius={[3, 3, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
+                    </Box>
                   </Box>
                 </Section>
               </Grid>
               <Grid item xs={12} md={5}>
                 <Section title={t('mis.incidentsByMonth')} sub={t('mis.incidentsByMonthSub', { count: totals.incidents })}>
                   <Box sx={{ height: 260 }}>
+                    <Box dir="ltr">
                     <ResponsiveContainer>
                       <BarChart data={rows} barCategoryGap="30%">
                         <CartesianGrid stroke={grid} vertical={false} />
@@ -213,6 +222,7 @@ export default function MisReport() {
                         <Bar dataKey="highIncidents" name={t('mis.highIncidents')} stackId="i" fill={C.other} radius={[3, 3, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
+                    </Box>
                   </Box>
                 </Section>
               </Grid>

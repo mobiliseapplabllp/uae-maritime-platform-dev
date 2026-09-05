@@ -67,6 +67,7 @@ export default function IncidentDashboard() {
       <Grid container spacing={2}>
         <Grid item xs={12} lg={7.5}>
           <Section title={t('incidents.byMonth')} sub={t('incidents.byMonthSub')}>
+            <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={data.byMonth} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -77,10 +78,12 @@ export default function IncidentDashboard() {
                 {SEV_ORDER.map((s) => <Bar key={s} dataKey={s} stackId="sev" fill={SEV[s]} name={SEVERITY_META[s].label} radius={s === 'CRITICAL' ? [3, 3, 0, 0] : 0} />)}
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Section>
         </Grid>
         <Grid item xs={12} lg={4.5}>
           <Section title={t('incidents.ageing')} sub={t('incidents.ageingSub')}>
+            <Box dir="ltr">
             <ResponsiveContainer width="100%" height={170}>
               <BarChart data={data.aging} layout="vertical" margin={{ top: 0, right: 18, left: 4, bottom: 0 }}>
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -90,6 +93,7 @@ export default function IncidentDashboard() {
                 <Bar dataKey="count" fill={SEV.HIGH} name="Open cases" radius={[0, 3, 3, 0]} barSize={16} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
             <Divider sx={{ my: 1.5 }} />
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               {data.byStatus.map((s) => (
@@ -100,6 +104,7 @@ export default function IncidentDashboard() {
         </Grid>
         <Grid item xs={12} md={7}>
           <Section title={t('incidents.byType')} sub={t('incidents.trailing12')}>
+            <Box dir="ltr">
             <ResponsiveContainer width="100%" height={Math.max(200, data.byType.length * 26)}>
               <BarChart data={data.byType} layout="vertical" margin={{ top: 0, right: 24, left: 24, bottom: 0 }}>
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -109,6 +114,7 @@ export default function IncidentDashboard() {
                 <Bar dataKey="count" fill={SEV.LOW} name="Cases" radius={[0, 3, 3, 0]} barSize={14} />
               </BarChart>
             </ResponsiveContainer>
+            </Box>
           </Section>
         </Grid>
         <Grid item xs={12} md={5}>

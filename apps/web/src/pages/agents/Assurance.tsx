@@ -102,6 +102,7 @@ export default function Assurance() {
                     <Chip size="small" color={a.drifting ? 'error' : 'default'} variant={a.drifting ? 'filled' : 'outlined'}
                       label={a.agreementDelta == null ? t('agents.chipNoBaseline') : t('agents.chipDelta', { v: `${a.agreementDelta > 0 ? '+' : ''}${a.agreementDelta}` })} sx={{ height: 22, fontSize: 11 }} />
                   </Stack>
+                  <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
                   <ResponsiveContainer width="100%" height={190}>
                     <LineChart data={a.buckets.map((b) => ({ ...b, label: fmtD(b.from) }))} margin={{ top: 6, right: 8, left: -22, bottom: 0 }}>
                       <CartesianGrid stroke={grid} vertical={false} />
@@ -113,8 +114,10 @@ export default function Assurance() {
                       <Line type="monotone" dataKey="escalationRate" stroke="#B98A2F" strokeWidth={2} dot={{ r: 2 }} connectNulls name={t('agents.seriesEscalation')} />
                     </LineChart>
                   </ResponsiveContainer>
+                  </Box>
                   <Divider sx={{ my: 1 }} />
                   <Typography sx={{ fontSize: 11, color: 'text.secondary', mb: 0.5 }}>{t('agents.confidenceDistribution')}</Typography>
+                  <Box dir="ltr">
                   <ResponsiveContainer width="100%" height={150}>
                     <BarChart data={a.confidence} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
                       <CartesianGrid stroke={grid} vertical={false} />
@@ -124,6 +127,7 @@ export default function Assurance() {
                       <Bar dataKey="decisions" fill="#75479C" name={t('agents.seriesDecisions')} radius={[3, 3, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
+                  </Box>
                 </Section>
               </Grid>
             ))}

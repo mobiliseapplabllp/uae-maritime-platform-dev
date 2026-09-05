@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { EVENTS, type EventEnvelope } from '@maritime/contracts';
 import type { Queryable } from '@maritime/service-kit';
 import type { Row } from './inspections';
+import { upsertSubject } from './smart';
 
 /* Local snapshots of the facts other domains own. A survey is raised against a ship the register owns and is
  * usually attached to a call the harbour desk owns; the deficiency and action codes come from the master data
@@ -31,6 +32,8 @@ export async function deficiencyMaster(c: Queryable, code: string): Promise<{ la
 }
 
 const DELETE_TABLE: Record<string, string> = { vessel: 'vessels', portCall: 'port_calls' };
+/** Read-model kinds that are subjects a survey can be raised against, and the subject kind each one becomes. */
+const SUBJECT_OF: Record<string, 'COMPANY' | 'PORT_FACILITY' | 'MET_INSTITUTION'> = { company: 'COMPANY', berth: 'PORT_FACILITY', metInstitution: 'MET_INSTITUTION' };
 
 /** Applies a read-model event to the local snapshots. Returns whether the event was relevant. */
 export async function projectSnapshot(c: PoolClient, event: EventEnvelope): Promise<boolean> {
@@ -41,10 +44,14 @@ export async function projectSnapshot(c: PoolClient, event: EventEnvelope): Prom
     switch (d.kind) {
       case 'vessel': await upsertVessel(c, e); return true;
       case 'portCall': await upsertPortCall(c, e); return true;
+      case 'company': await upsertSubject(c, 'COMPANY', { id: String(e.id), code: e.code, name: e.name, status: e.status, detail: { nameAr: e.nameAr, category: e.category, types: e.types } }); return true;
+      case 'berth': await upsertSubject(c, 'PORT_FACILITY', { id: String(e.id), code: e.code, name: e.name, status: e.status, detail: { nameAr: e.nameAr, terminal: e.terminal, berthType: e.berthType } }); return true;
+      case 'metInstitution': await upsertSubject(c, 'MET_INSTITUTION', { id: String(e.id), code: e.code, name: e.name, status: e.status, detail: { nameAr: e.nameAr, institutionType: e.institutionType, city: e.city, accreditation: e.accreditation?.status ?? e.accreditationStatus } }); return true;
       default: return false;
     }
   }
   if (event.type === EVENTS.readModel.deleted && DELETE_TABLE[d.kind] && d.id) { await c.query(`DELETE FROM ${DELETE_TABLE[d.kind]} WHERE id = $1`, [String(d.id)]); return true; }
+  if (event.type === EVENTS.readModel.deleted && SUBJECT_OF[d.kind] && d.id) { await c.query('DELETE FROM subjects WHERE kind = $1 AND id = $2', [SUBJECT_OF[d.kind], String(d.id)]); return true; }
   if (event.type === EVENTS.mdm.vesselUpserted && d.vesselId) { await upsertVessel(c, { id: String(d.vesselId), imo: d.imo, name: d.name, status: d.status }); return true; }
   return false;
 }

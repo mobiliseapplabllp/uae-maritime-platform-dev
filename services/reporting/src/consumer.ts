@@ -44,9 +44,46 @@ export const PROJECTIONS: Record<string, (c: PoolClient, e: Row) => Promise<void
 };
 const TABLES: Record<string, string> = { user: 'rm_users', berth: 'rm_berths', vessel: 'rm_vessels', vesselCertificate: 'rm_vessel_certificates', portCall: 'rm_port_calls', invoice: 'rm_invoices', inspection: 'rm_inspections', incident: 'rm_incidents', seafarer: 'rm_seafarers', company: 'rm_companies', instrument: 'rm_instruments', legalInstrument: 'rm_legal_instruments', registration: 'rm_registrations', tariff: 'rm_tariffs', resource: 'rm_resources', checklistTemplate: 'rm_checklists', agentDecision: 'rm_agent_decisions', metInstitution: 'rm_met_institutions', crewList: 'rm_crew_lists', foreignSeafarer: 'rm_foreign_seafarers' };
 
+/* The survey desk's dated facts, one timeline row per event. The recommendation coming off the bus is itself the
+ * proof of routing, so the same event writes two rows: the recommendation as dated by the desk, and its arrival here. */
+const TIMELINE: Record<string, (d: Row, e: EventEnvelope) => { kind: string; at: string | Date; source?: string; meta?: Row; suffix?: string }[]> = {
+  [EVENTS.inspection.planned]: (d, e) => [{ kind: 'PLANNED', at: e.time, source: 'DESK', meta: { regime: d.regime ?? d.type, subjectKind: d.subjectKind } }],
+  [EVENTS.inspection.started]: (d, e) => [{ kind: 'STARTED', at: d.inspection?.startedAt ?? e.time, source: 'DESK' }],
+  [EVENTS.inspection.closed]: (d, e) => [{ kind: 'CLOSED', at: d.inspection?.closedAt ?? e.time, source: 'DESK', meta: { findings: d.totalFindings ?? d.inspection?.totalFindings ?? 0, open: d.openFindings ?? 0, result: d.result, severity: d.severity, recommendation: d.recommendation } }],
+  [EVENTS.inspection.dossierPrepared]: (d) => [{ kind: 'DOSSIER_PREPARED', at: d.preparedAt, source: String(d.source ?? ''), meta: { openFindings: d.openFindings, prior: d.priorInspections } }],
+  [EVENTS.inspection.reportDrafted]: (d) => [{ kind: 'REPORT_DRAFTED', at: d.draftedAt, source: String(d.source ?? ''), meta: { reportId: d.reportId, version: d.version } }],
+  [EVENTS.inspection.reportIssued]: (d) => [{ kind: 'REPORT_ISSUED', at: d.issuedAt, source: String(d.source ?? ''), meta: { reportId: d.reportId, minutesAfterClose: d.minutesAfterClose } }],
+  [EVENTS.inspection.noticeDrafted]: (d) => [{ kind: 'NOTICE_DRAFTED', at: d.draftedAt, source: String(d.source ?? ''), meta: { noticeId: d.noticeId, kind: d.kind, minutesAfterClose: d.minutesAfterClose } }],
+  [EVENTS.inspection.noticeIssued]: (d) => [{ kind: 'NOTICE_ISSUED', at: d.issuedAt, source: String(d.source ?? ''), meta: { noticeId: d.noticeId, kind: d.kind } }],
+  [EVENTS.inspection.restrictionRecommended]: (d, e) => [
+    { kind: 'RESTRICTION_RECOMMENDED', at: d.recommendedAt, source: String(d.source ?? 'RULES'), meta: { recommendationId: d.recommendationId, kind: d.kind } },
+    { kind: 'RESTRICTION_ROUTED', at: new Date(), source: 'BUS', meta: { recommendationId: d.recommendationId, via: 'bus', eventTime: e.time }, suffix: ':routed' },
+    ...(d.decidedAt ? [{ kind: 'RESTRICTION_DECIDED', at: d.decidedAt as string, source: 'DESK', meta: { recommendationId: d.recommendationId, decision: d.decision }, suffix: ':decided' }] : []),
+  ],
+  [EVENTS.inspection.restrictionDecided]: (d) => [{ kind: 'RESTRICTION_DECIDED', at: d.decidedAt, source: 'DESK', meta: { recommendationId: d.recommendationId, decision: d.decision, minutesToDecide: d.minutesToDecide } }],
+  [EVENTS.inspection.predictionRecorded]: (d) => [{ kind: 'PREDICTION_RECORDED', at: d.predictedAt, source: String(d.source ?? ''), meta: { band: d.band, riskScore: d.riskScore } }],
+  [EVENTS.inspection.predictionScored]: (d) => [{ kind: 'PREDICTION_SCORED', at: d.scoredAt, source: String(d.source ?? ''), meta: { correlated: d.correlated, matched: d.matched, band: d.band, findings: d.findings } }],
+};
+async function projectTimeline(c: PoolClient, event: EventEnvelope): Promise<boolean> {
+  const make = TIMELINE[event.type];
+  if (!make) return false;
+  const d = (event.data ?? {}) as Row;
+  const inspectionId = String(d.inspectionId ?? d.inspection?.id ?? event.subject ?? '');
+  if (!inspectionId) return true;
+  const number = String(d.number ?? d.inspection?.number ?? '');
+  const scopePort = String(d.scope?.port ?? d.inspection?.scope?.port ?? '');
+  for (const row of make(d, event)) {
+    if (!row.at) continue;
+    await c.query('INSERT INTO rm_inspection_timeline(event_id, inspection_id, number, kind, at, source, meta, scope_port) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (event_id) DO NOTHING',
+      [`${event.id}${row.suffix ?? ''}`, inspectionId, number, row.kind, row.at, row.source ?? '', JSON.stringify(row.meta ?? {}), scopePort]);
+  }
+  return true;
+}
+
 /** Applies one event to the read models. Exported so the seed and the tests can drive it without a bus. */
 export async function project(c: PoolClient, event: EventEnvelope): Promise<void> {
   const d = (event.data ?? {}) as Row;
+  if (await projectTimeline(c, event)) return;
   if (event.type === EVENTS.readModel.upserted && PROJECTIONS[d.kind]) { await PROJECTIONS[d.kind](c, d.entity ?? {}); return; }
   if (event.type === EVENTS.readModel.deleted && TABLES[d.kind]) { await c.query(`DELETE FROM ${TABLES[d.kind]} WHERE id = $1`, [d.id]); return; }
   if (event.type === EVENTS.audit.recorded) {

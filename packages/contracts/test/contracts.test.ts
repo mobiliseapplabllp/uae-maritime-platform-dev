@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_KPI_TARGETS, evaluateInspectionKpis, kpiTargetsFrom, requiredToday, type KpiTimelineRow } from '../src/inspection-kpis';
 import {
   ALL_PERMISSIONS, PERMISSION_GROUPS, ROLE_CATALOGUE, hasPerm, isKnownPermission,
   canTransition, PORTCALL_TRANSITIONS, INSTRUMENT_TRANSITIONS, REQUEST_TRANSITIONS, REGISTRATION_TRANSITIONS, INCIDENT_TRANSITIONS, LICENSE_TRANSITIONS,
@@ -151,5 +152,65 @@ describe('password policy', () => {
 
   it('treats a missing password as a problem, not as a pass', () => {
     for (const bad of [undefined, null, '', 42, {}]) expect(passwordProblems(bad)).not.toEqual([]);
+  });
+});
+
+describe('the six Smart Inspection KPIs, measured from a timeline', () => {
+  const now = new Date('2026-09-05T12:00:00Z');
+  const t = (inspectionId: string, kind: string, at: string, source = '', meta: Record<string, unknown> = {}): KpiTimelineRow => ({ inspectionId, kind, at, source, meta });
+  const targets = kpiTargetsFrom({ kpiProgrammeStart: '2025-06-01', kpiProgrammeMonths: 18, kpiNoticeMinutes: 30, kpiRestrictionMinutes: 60, kpiReportBaselineMinutes: 0 });
+  it('reads its targets from the module settings and falls back to the programme defaults', () => {
+    expect(kpiTargetsFrom(null)).toEqual(DEFAULT_KPI_TARGETS);
+    expect(kpiTargetsFrom({ kpiAiReportTargetPct: '75', kpiProgrammeStart: 'not a date', kpiNoticeMinutes: 0 })).toMatchObject({ aiReportTargetPct: 75, programmeStart: null, noticeMinutes: 30 });
+  });
+  it('says "not captured" for every figure when nothing has happened', () => {
+    const r = evaluateInspectionKpis([], targets, now);
+    expect(r.kpis.every((k) => k.status === 'NOT_CAPTURED' && k.value === null)).toBe(true);
+    expect(r.programme).toMatchObject({ monthsTotal: 18, monthsElapsed: 15.1, pct: 84 });
+    expect(r.trend).toHaveLength(12);
+  });
+  it('measures each figure from the dated facts, and grades it against the linear ramp', () => {
+    const rows = [
+      // survey A: dossier before boarding, AI report 8 min after close, AI notice 12 min after close, prediction agreed, detention routed in 3 min
+      t('A', 'PLANNED', '2026-08-01T06:00:00Z'), t('A', 'DOSSIER_PREPARED', '2026-08-01T07:00:00Z', 'AUTO'), t('A', 'PREDICTION_RECORDED', '2026-08-01T07:05:00Z', 'A5'),
+      t('A', 'STARTED', '2026-08-02T08:00:00Z'), t('A', 'CLOSED', '2026-08-02T14:00:00Z', 'DESK', { findings: 3, result: 'DETAINED' }),
+      t('A', 'REPORT_DRAFTED', '2026-08-02T14:08:00Z', 'AI'), t('A', 'REPORT_ISSUED', '2026-08-02T18:00:00Z', 'AI'), t('A', 'NOTICE_DRAFTED', '2026-08-02T14:12:00Z', 'AI'),
+      t('A', 'PREDICTION_SCORED', '2026-08-02T14:01:00Z', 'A5', { correlated: true }),
+      t('A', 'RESTRICTION_RECOMMENDED', '2026-08-02T14:00:00Z', 'RULES', { recommendationId: 'r1' }), t('A', 'RESTRICTION_ROUTED', '2026-08-02T14:03:00Z', 'BUS', { recommendationId: 'r1' }),
+      // survey B: boarded without a dossier, manual report two days later, manual notice, prediction disagreed, restriction routed after 90 min
+      t('B', 'STARTED', '2026-08-10T08:00:00Z'), t('B', 'DOSSIER_PREPARED', '2026-08-10T09:00:00Z', 'DESK'), t('B', 'CLOSED', '2026-08-10T15:00:00Z', 'DESK', { findings: 2, result: 'DEFICIENCIES' }),
+      t('B', 'REPORT_DRAFTED', '2026-08-12T15:00:00Z', 'MANUAL'), t('B', 'REPORT_ISSUED', '2026-08-12T16:00:00Z', 'MANUAL'), t('B', 'NOTICE_DRAFTED', '2026-08-10T15:20:00Z', 'MANUAL'),
+      t('B', 'PREDICTION_SCORED', '2026-08-10T15:01:00Z', 'RULES', { correlated: false }),
+      t('B', 'RESTRICTION_RECOMMENDED', '2026-08-10T15:00:00Z', 'RULES', { recommendationId: 'r2' }), t('B', 'RESTRICTION_ROUTED', '2026-08-10T16:30:00Z', 'BUS', { recommendationId: 'r2' }),
+      // survey C: closed clean, no findings, no report yet
+      t('C', 'STARTED', '2026-08-20T08:00:00Z'), t('C', 'DOSSIER_PREPARED', '2026-08-20T07:00:00Z', 'AUTO'), t('C', 'CLOSED', '2026-08-20T12:00:00Z', 'DESK', { findings: 0, result: 'SATISFACTORY' }),
+      // survey D: before the programme started — a manual report five days after close sets the baseline, and nothing else counts
+      t('D', 'STARTED', '2025-02-01T08:00:00Z'), t('D', 'CLOSED', '2025-02-01T16:00:00Z', 'DESK', { findings: 1 }), t('D', 'REPORT_DRAFTED', '2025-02-06T16:00:00Z', 'MANUAL'), t('D', 'REPORT_ISSUED', '2025-02-06T17:00:00Z', 'MANUAL'),
+    ];
+    const r = evaluateInspectionKpis(rows, targets, now);
+    const by = Object.fromEntries(r.kpis.map((k) => [k.key, k]));
+    expect(by.dossierCoverage).toMatchObject({ value: 66.7, numerator: 2, denominator: 3, status: 'BEHIND' });          // A and C before boarding; B after
+    expect(by.aiReports).toMatchObject({ value: 50, numerator: 1, denominator: 2, status: 'BEHIND' });                  // A machine-first, B manual; C has no report
+    expect(by.noticeSpeed).toMatchObject({ value: 50, numerator: 1, denominator: 2 });                                   // A's AI notice in 12 min; B's was manual
+    expect(by.predictionCorrelation).toMatchObject({ value: 50, numerator: 1, denominator: 2 });
+    expect(by.restrictionRouting).toMatchObject({ value: 50, numerator: 1, denominator: 2, status: 'BEHIND' });        // A in 3 min, B in 90
+    // turnaround: A 240 min and B 2,940 min → median 1,590; the manual baseline is B's 2,940 and D's 7,260 → median 5,100; reduction 68.8 %
+    expect(by.reportTurnaround).toMatchObject({ currentMinutes: 1590, baselineMinutes: 5100, value: 68.8, status: 'MET' });
+    expect(by.reportTurnaround.detail).toContain('measured from manual reports');
+    // a configured baseline wins over the measured one
+    const configured = evaluateInspectionKpis(rows, { ...targets, reportBaselineMinutes: 2000 }, now).kpis.find((k) => k.key === 'reportTurnaround')!;
+    expect(configured).toMatchObject({ baselineMinutes: 2000, value: 20.5, status: 'BEHIND' });
+    expect(configured.detail).toContain('(configured)');
+    // the required figure on the day is the target scaled by how far the programme has run
+    expect(by.aiReports.required).toBe(58.7); expect(requiredToday(100, r.programme)).toBe(83.9);
+    // the trend carries August's figures in the month they happened
+    const aug = r.trend.find((p) => p.key === '2026-08')!;
+    expect(aug).toMatchObject({ closed: 3, dossierCoverage: 66.7, aiReports: 50, restrictionRouting: 50, reportTurnaroundMinutes: 1590 });
+  });
+  it('grades a figure at or above target as met, above the ramp as on track, and below it as behind', () => {
+    const rows = [t('A', 'STARTED', '2026-08-02T08:00:00Z'), t('A', 'DOSSIER_PREPARED', '2026-08-01T07:00:00Z', 'AUTO')];
+    expect(evaluateInspectionKpis(rows, targets, now).kpis[0]).toMatchObject({ value: 100, status: 'MET' });
+    const early = evaluateInspectionKpis([...rows, t('B', 'STARTED', '2026-08-03T08:00:00Z')], { ...targets, programmeStart: '2026-07-01' }, now).kpis[0];
+    expect(early).toMatchObject({ value: 50, status: 'ON_TRACK' }); // two months in, the ramp asks for 11 %
   });
 });

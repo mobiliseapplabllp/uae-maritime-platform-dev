@@ -63,7 +63,7 @@ describe('the public citable portal', () => {
   afterEach(() => { vi.restoreAllMocks(); calls.length = 0; });
 
   it('lists the published register without a session, with the facets the service computed, and opens an instrument at its address', async () => {
-    mockGet({ '/public/legislation': (cfg) => listing(cfg?.params?.q === 'ballast' ? [circular, old] : [circular, notice, old], cfg?.params?.q === 'ballast' ? 2 : 3), '/public/legislation/circ-02-2026': ok(circular) });
+    mockGet({ '/public/legislation': (cfg?: Call['cfg']) => listing(cfg?.params?.q === 'ballast' ? [circular, old] : [circular, notice, old], cfg?.params?.q === 'ballast' ? 2 : 3), '/public/legislation/circ-02-2026': ok(circular) });
     wrap(<PortalApp />, '/law');
     expect(await screen.findByRole('heading', { name: 'Legal instruments in force' })).toBeInTheDocument();
     expect(await screen.findByText('3 instrument(s)')).toBeInTheDocument();
@@ -169,7 +169,7 @@ const target = { id: 'i9', refNo: 'CIRC-02/2026', title: 'Ballast water record b
 describe('the IMO watch', () => {
   beforeAll(() => { store.dispatch(setSession(session as never)); });
   afterEach(() => { vi.restoreAllMocks(); calls.length = 0; });
-  const watch = () => mockGet({ '/legislation/imo/dashboard': ok(dashboard), '/legislation/imo/sources': ok(sources), '/legislation/imo/items': (cfg) => ok(cfg?.params?.status === 'NEW' ? [items[0]] : items, { total: cfg?.params?.status === 'NEW' ? 1 : 2 }), '/legislation/instruments': ok([target], { total: 1 }) });
+  const watch = () => mockGet({ '/legislation/imo/dashboard': ok(dashboard), '/legislation/imo/sources': ok(sources), '/legislation/imo/items': (cfg?: Call['cfg']) => ok(cfg?.params?.status === 'NEW' ? [items[0]] : items, { total: cfg?.params?.status === 'NEW' ? 1 : 2 }), '/legislation/instruments': ok([target], { total: 1 }) });
 
   it('shows the sources with the state of their last reading, the documents, and what needs attention', async () => {
     watch();
@@ -210,7 +210,7 @@ describe('the IMO watch', () => {
 
   it('records the desk’s assessment of a document, and transposes it to an instrument on the register', async () => {
     watch();
-    const post = vi.spyOn(api, 'post').mockImplementation(((url: string, body: Record<string, unknown>) => Promise.resolve(ok({ ...items[0], status: body.status, assessment: body.assessment ?? '', instrumentRef: body.instrumentRef ?? '' }))) as never);
+    const post = vi.spyOn(api, 'post').mockImplementation(((_url: string, body: Record<string, unknown>) => Promise.resolve(ok({ ...items[0], status: body.status, assessment: body.assessment ?? '', instrumentRef: body.instrumentRef ?? '' }))) as never);
     wrap(<ImoWatch />, '/legislation/imo');
     fireEvent.click(await screen.findByText('Guidance on fatigue on short-sea tankers'));
     const dialog = await screen.findByRole('dialog');

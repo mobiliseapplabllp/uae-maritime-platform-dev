@@ -9,6 +9,7 @@ import { buildAppModule } from '../src/app.module';
 import { seedInspection } from '../src/seed';
 import { applyEvent } from '../src/consumer';
 import { inspectionDashboard, mergeAnswers, monthsBack, scoreChecklist, type ChecklistAnswer, type DashboardInput } from '../src/inspections';
+import { classify, sweepOverdueFindings } from '../src/smart';
 
 const DB = 'maritime_inspection_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
@@ -504,6 +505,232 @@ describe('inspection — authorisation and the audit trail', () => {
 });
 
 /* ========================================================= tenancy in the survey and audit cell === */
+
+describe('inspection — Smart Inspection: subjects beyond ships, the dossier, the prediction, the close-out and the six KPIs', () => {
+  const MIN = 60_000;
+  const timeline = async (id: string) => (await pool.query<{ kind: string; source: string; meta: any; at: Date }>('SELECT kind, source, meta, at FROM inspection_timeline WHERE inspection_id = $1 ORDER BY at, id', [id])).rows;
+
+  it('classifies a closed survey by what was found, and the rules only say — they never decide', () => {
+    const f = (code: string, status = 'OPEN', severity = 'MINOR', actionCode = '17') => ({ id: code, seq: 1, deficiencyCode: code, deficiencyLabel: '', category: '', severity, description: '', actionCode, dueDate: null, status, closedAt: null, rectificationNote: '', detainable: actionCode === '30' || severity === 'DETAINABLE', overdue: false });
+    expect(classify([], { criticalFail: false }, 'SATISFACTORY')).toMatchObject({ severity: 'NONE', recommendation: 'NONE' });
+    expect(classify([f('11101')], { criticalFail: false }, 'DEFICIENCIES')).toMatchObject({ severity: 'MINOR', recommendation: 'RECTIFY' });
+    expect(classify([f('11101', 'OPEN', 'MAJOR'), f('01101', 'OPEN', 'MAJOR')], { criticalFail: false }, 'DEFICIENCIES')).toMatchObject({ severity: 'MAJOR', recommendation: 'RESTRICT' });
+    expect(classify([f('11101', 'OPEN', 'MINOR', '30')], { criticalFail: false }, 'DEFICIENCIES')).toMatchObject({ severity: 'CRITICAL', recommendation: 'DETAIN', codes: ['11101'] });
+    expect(classify([], { criticalFail: true }, 'DEFICIENCIES')).toMatchObject({ severity: 'CRITICAL', recommendation: 'DETAIN' });
+  });
+
+  it('seeds the world with its subjects, its dated timeline and the programme records the KPIs read', async () => {
+    const kinds = (await pool.query<{ kind: string; n: string }>('SELECT kind, count(*) AS n FROM subjects GROUP BY kind')).rows;
+    expect(Object.fromEntries(kinds.map((k) => [k.kind, Number(k.n)]))).toMatchObject({ COMPANY: expect.any(Number), PORT_FACILITY: expect.any(Number), MET_INSTITUTION: expect.any(Number) });
+    const subjects = (await pool.query<{ subject_kind: string; n: string }>('SELECT subject_kind, count(*) AS n FROM inspections GROUP BY subject_kind')).rows;
+    const bySubject = Object.fromEntries(subjects.map((k) => [k.subject_kind, Number(k.n)]));
+    expect(bySubject.VESSEL).toBeGreaterThan(100); expect(bySubject.PORT_FACILITY).toBeGreaterThan(10); expect(bySubject.COMPANY).toBeGreaterThan(5);
+    const tl = (await pool.query<{ kind: string; n: string }>('SELECT kind, count(*) AS n FROM inspection_timeline GROUP BY kind')).rows;
+    const byKind = Object.fromEntries(tl.map((k) => [k.kind, Number(k.n)]));
+    for (const k of ['PLANNED', 'STARTED', 'CLOSED', 'DOSSIER_PREPARED', 'REPORT_DRAFTED', 'REPORT_ISSUED', 'NOTICE_DRAFTED', 'RESTRICTION_RECOMMENDED', 'RESTRICTION_ROUTED', 'PREDICTION_RECORDED', 'PREDICTION_SCORED']) expect(byKind[k], k).toBeGreaterThan(0);
+    // re-seeding adds nothing twice
+    const before = Number((await pool.query('SELECT count(*) AS n FROM inspection_timeline')).rows[0].n);
+    await seedInspection(URL, 'AE');
+    expect(Number((await pool.query('SELECT count(*) AS n FROM inspection_timeline')).rows[0].n)).toBe(before);
+  });
+
+  it('measures the six KPIs from the timeline against the module targets, and says "not captured" rather than guessing', async () => {
+    const r = await g('/inspections/kpis'); expect(r.status).toBe(200);
+    const k = r.body.data;
+    expect(k.programme).toMatchObject({ monthsTotal: 18 }); expect(k.programme.monthsElapsed).toBeGreaterThan(0);
+    expect(k.kpis.map((x: any) => x.key)).toEqual(['dossierCoverage', 'aiReports', 'noticeSpeed', 'predictionCorrelation', 'reportTurnaround', 'restrictionRouting']);
+    for (const x of k.kpis) { expect(['MET', 'ON_TRACK', 'BEHIND', 'NOT_CAPTURED']).toContain(x.status); expect(x.target).toBeGreaterThan(0); expect(typeof x.detail).toBe('string'); }
+    // with no programme start in the settings (MDM is unreachable here) the window opens at the first fact on record — the paper era counts against the figures
+    const whole = Object.fromEntries(k.kpis.map((x: any) => [x.key, x]));
+    expect(whole.dossierCoverage.value).toBeLessThan(60); expect(whole.dossierCoverage.status).toBe('BEHIND');
+    expect(k.trend).toHaveLength(12); expect(k.targets).toMatchObject({ programmeMonths: 18, aiReportTargetPct: 70, programmeStart: null });
+    expect((await g('/inspections/kpis?programmeStart=not-a-date')).status).toBe(400);
+    // from the day the programme went live: dossiers nearly everywhere, most reports machine-first, restrictions routed inside the hour, a measured turnaround reduction
+    const live = (await g('/inspections/kpis?programmeStart=2025-06-01')).body.data;
+    const by = Object.fromEntries(live.kpis.map((x: any) => [x.key, x]));
+    expect(live.programme.start).toBe('2025-06-01T00:00:00.000Z');
+    expect(by.dossierCoverage.value).toBeGreaterThan(60); expect(by.aiReports.value).toBeGreaterThan(40);
+    // every seeded recommendation was routed inside the hour; the ones the earlier tests raised are never routed, because no bus runs here
+    expect(by.restrictionRouting.value).toBeGreaterThanOrEqual(80); expect(by.restrictionRouting.numerator).toBeGreaterThanOrEqual(3);
+    expect(by.reportTurnaround.baselineMinutes).toBeGreaterThan(by.reportTurnaround.currentMinutes); expect(by.reportTurnaround.value).toBeGreaterThan(50);
+    expect(by.predictionCorrelation.denominator).toBeGreaterThan(20);
+    // a port cell sees the programme as it stands at its port, and a role without the permission sees nothing
+    const port = await g('/inspections/kpis', khalifa); expect(port.status).toBe(200);
+    expect(port.body.data.kpis.find((x: any) => x.key === 'dossierCoverage').denominator).toBeLessThanOrEqual(whole.dossierCoverage.denominator);
+    expect((await g('/inspections/kpis', nobody)).status).toBe(403);
+  });
+
+  it('plans a survey against a port facility under a regime that applies to it, and refuses a regime that does not', async () => {
+    const facility = (await g('/inspections/subjects?kind=PORT_FACILITY&q=')).body.data[0];
+    expect(facility).toMatchObject({ kind: 'PORT_FACILITY', id: expect.any(String), name: expect.any(String) });
+    expect((await g('/inspections/subjects?kind=SHIPYARD')).status).toBe(400);
+    // a ship regime cannot be planned against a terminal, and an unknown regime is refused by the master
+    expect((await post('/inspections', { type: 'PSC', subjectKind: 'PORT_FACILITY', subjectId: facility.id, plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor' }, surveyor)).status).toBe(400);
+    expect((await post('/inspections', { type: 'NOT_A_REGIME', subjectId: facility.id, plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor' }, surveyor)).status).toBe(400);
+    expect((await post('/inspections', { type: 'HSE', plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor' }, surveyor)).status).toBe(400);
+    const tpl = await activeTemplate('HSE');
+    await clearOutbox();
+    const planned = await post('/inspections', { type: 'HSE', subjectId: facility.id, plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor', templateId: tpl.id }, surveyor);
+    expect(planned.status).toBe(201);
+    const doc = planned.body.data;
+    expect(doc).toMatchObject({ subjectKind: 'PORT_FACILITY', subjectId: facility.id, subjectName: facility.name, vesselId: null, type: 'HSE', regime: 'HSE', hasDossier: true });
+    // planning made the dossier and recorded a prediction before anyone looked
+    const full = (await g(`/inspections/${doc.id}`)).body.data;
+    expect(full.dossier).toMatchObject({ subject: { kind: 'PORT_FACILITY', name: facility.name }, source: 'AUTO' });
+    expect(full.prediction).toMatchObject({ source: 'RULES', band: expect.any(String), scoredAt: null });
+    expect((await outbox(EVENTS.inspection.dossierPrepared)).length).toBe(1);
+    expect((await outbox(EVENTS.inspection.predictionRecorded))[0].data).toMatchObject({ inspectionId: doc.id, source: 'RULES' });
+    expect((await timeline(doc.id)).map((t) => t.kind)).toEqual(['PLANNED', 'DOSSIER_PREPARED', 'PREDICTION_RECORDED']);
+    // the register lists it by subject kind and regime
+    const list = await g(`/inspections?subjectKind=PORT_FACILITY&regime=HSE&q=${encodeURIComponent(facility.name)}`);
+    expect(list.body.data.some((x: any) => x.id === doc.id)).toBe(true);
+    await del(`/inspections/${doc.id}`);
+  });
+
+  it('carries the Smart Inspection agent\'s judgement of a ship onto her survey, boards with the dossier, closes with a classification, routes the restriction inside the hour and scores the prediction', async () => {
+    const v = await freeVessel(); const tpl = await activeTemplate('PSC');
+    const client = await pool.connect();
+    try {
+      // the agent published its judgement of the ship two days ago
+      await applyEvent(client, { env, audit }, makeEvent({ type: EVENTS.ai.decisionRecorded, source: 'ai-agents', subject: 'dec-1', data: { decisionId: 'dec-1', agentId: 'a5_smart_inspection', entityType: 'Vessel', entityId: v.id, decision: { id: 'dec-1', entityType: 'Vessel', entityId: v.id, createdAt: new Date(Date.now() - 2 * D).toISOString(), output: { board: true, riskScore: 71, band: 'HIGH', predictedDeficiencies: [{ code: '11101', priorOccurrences: 2 }, { code: '07105', priorOccurrences: 1 }], dossier: { expiredCertificates: 1 } } } } }));
+    } finally { client.release(); }
+    await clearOutbox();
+    const planned = await post('/inspections', { vesselId: v.id, type: 'PSC', plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor', templateId: tpl.id }, surveyor);
+    expect(planned.status).toBe(201);
+    const id = planned.body.data.id;
+    let full = (await g(`/inspections/${id}`)).body.data;
+    expect(full.prediction).toMatchObject({ source: 'A5', decisionId: 'dec-1', band: 'HIGH', predictedCodes: ['11101', '07105'] });
+    expect(full.dossier.agentDossier).toMatchObject({ expiredCertificates: 1 });
+    expect(full.dossier.subject).toMatchObject({ kind: 'VESSEL', name: v.name });
+    // boarding: the timeline says when, after the dossier
+    await post(`/inspections/${id}/start`, {}, surveyor).expect(201);
+    const tl1 = await timeline(id);
+    expect(tl1.map((t) => t.kind)).toEqual(['PLANNED', 'DOSSIER_PREPARED', 'PREDICTION_RECORDED', 'STARTED']);
+    expect(tl1[1].at.getTime()).toBeLessThanOrEqual(tl1[3].at.getTime());
+    // a detainable deficiency is found
+    await post(`/inspections/${id}/findings`, { deficiencyCode: '11101', description: 'Lifeboat falls beyond renewal date', actionCode: '30' }, surveyor).expect(201);
+    await post(`/inspections/${id}/findings`, { deficiencyCode: '01101', description: 'Certificate not endorsed', actionCode: '17' }, surveyor).expect(201);
+    await clearOutbox();
+    const closed = await post(`/inspections/${id}/close`, { result: 'DETAINED' }, surveyor);
+    expect(closed.status).toBe(201);
+    expect(closed.body.data).toMatchObject({ status: 'CLOSED', severity: 'CRITICAL', recommendation: 'DETAIN' });
+    // closing as detained is a restriction the closing officer decided on the spot: recommended, routed and decided in one breath
+    expect(closed.body.data.recommendations).toHaveLength(1);
+    expect(closed.body.data.recommendations[0]).toMatchObject({ kind: 'DETENTION', status: 'APPROVED', decision: 'APPROVED', routedMinutes: 0, detentionId: expect.any(String) });
+    // the prediction scored: a predicted code was raised, the band agreed
+    expect(closed.body.data.prediction).toMatchObject({ correlated: true, outcome: { matched: ['11101'], bandAgrees: true } });
+    expect((await outbox(EVENTS.inspection.predictionScored))[0].data).toMatchObject({ correlated: true, matched: ['11101'] });
+    expect((await outbox(EVENTS.inspection.restrictionRecommended))[0].data).toMatchObject({ kind: 'DETENTION', status: 'APPROVED' });
+    expect((await outbox(EVENTS.inspection.closed))[0].data).toMatchObject({ severity: 'CRITICAL', recommendation: 'DETAIN', findingCodes: ['11101', '01101'] });
+    const kinds = (await timeline(id)).map((t) => t.kind);
+    expect(kinds).toEqual(expect.arrayContaining(['CLOSED', 'RESTRICTION_RECOMMENDED', 'RESTRICTION_ROUTED', 'RESTRICTION_DECIDED', 'PREDICTION_SCORED']));
+
+    // the assistant drafted the report and the notice from the closed record; the desk records them as the machine's first draft
+    const client2 = await pool.connect();
+    try {
+      const at = new Date(Date.now() + 5 * MIN).toISOString();
+      await applyEvent(client2, { env, audit }, makeEvent({ type: EVENTS.ai.draftPrepared, source: 'ai-assistant', subject: 'draft-1', data: { draftId: 'draft-1', kind: 'INSPECTION_SUMMARY', subjectType: 'Inspection', subjectId: id, title: 'Inspection summary', preparedBy: 'Assistant', draft: { id: 'draft-1', body: 'INSPECTION SUMMARY — drafted', createdAt: at } } }));
+      await applyEvent(client2, { env, audit }, makeEvent({ type: EVENTS.ai.draftPrepared, source: 'ai-assistant', subject: 'draft-2', data: { draftId: 'draft-2', kind: 'DEFICIENCY_NOTICE', subjectType: 'Inspection', subjectId: id, title: 'Notice of detention', preparedBy: 'Assistant', draft: { id: 'draft-2', body: 'NOTICE OF DETENTION — drafted', createdAt: at } } }));
+      // redelivered, it changes nothing twice
+      await applyEvent(client2, { env, audit }, makeEvent({ type: EVENTS.ai.draftPrepared, source: 'ai-assistant', subject: 'draft-1', data: { draftId: 'draft-1', kind: 'INSPECTION_SUMMARY', subjectType: 'Inspection', subjectId: id, title: 'Inspection summary', preparedBy: 'Assistant', draft: { id: 'draft-1', body: 'again', createdAt: at } } }));
+    } finally { client2.release(); }
+    full = (await g(`/inspections/${id}`)).body.data;
+    expect(full.reports).toHaveLength(1); expect(full.reports[0]).toMatchObject({ source: 'AI', aiDrafted: true, status: 'DRAFT', draftId: 'draft-1', version: 1 });
+    expect(full.notices).toHaveLength(1); expect(full.notices[0]).toMatchObject({ source: 'AI', kind: 'DETENTION', status: 'DRAFT', number: expect.stringMatching(/^NOT-\d{4}-\d{4}$/), findingIds: expect.any(Array) });
+    // the officer issues the notice and the report; a reader cannot
+    expect((await post(`/inspections/${id}/notices/${full.notices[0].id}/issue`, {}, viewer)).status).toBe(403);
+    const issuedNotice = await post(`/inspections/${id}/notices/${full.notices[0].id}/issue`, {}, surveyor); expect(issuedNotice.status).toBe(201); expect(issuedNotice.body.data).toMatchObject({ status: 'ISSUED', issuedBy: 'Marine Surveyor' });
+    expect((await post(`/inspections/${id}/notices/${full.notices[0].id}/issue`, {}, surveyor)).status).toBe(404);
+    const issuedReport = await post(`/inspections/${id}/report/${full.reports[0].id}/issue`, {}, surveyor); expect(issuedReport.status).toBe(201); expect(issuedReport.body.data).toMatchObject({ status: 'ISSUED' });
+    expect((await outbox(EVENTS.inspection.reportIssued))[0].data).toMatchObject({ inspectionId: id, source: 'AI', minutesAfterClose: expect.any(Number) });
+    // an officer's own report supersedes nothing that was issued, and counts as manual
+    const manual = await post(`/inspections/${id}/report`, { body: 'The officer\'s own account.' }, surveyor); expect(manual.status).toBe(201); expect(manual.body.data).toMatchObject({ source: 'MANUAL', version: 2, status: 'DRAFT' });
+    const finalKinds = (await timeline(id)).map((t) => t.kind);
+    expect(finalKinds.filter((k) => k === 'REPORT_DRAFTED')).toHaveLength(2); expect(finalKinds).toContain('NOTICE_ISSUED'); expect(finalKinds).toContain('REPORT_ISSUED');
+    // the survey's timeline is readable on its own
+    expect((await g(`/inspections/${id}/timeline`)).body.data.map((t: any) => t.kind)).toEqual(finalKinds);
+    // release the ship so the world is left as it was found
+    await put(`/inspections/${id}/findings/${full.findings[0].id}`, { status: 'CLOSED', rectificationNote: 'Falls renewed' }, surveyor).expect(200);
+    await post(`/inspections/${id}/detention/release`, { note: 'Rectified' }, surveyor).expect(201);
+  });
+
+  it('routes a recommendation short of detention to the deciding officer, and measures the time to the decision', async () => {
+    const v = await freeVessel(); const tpl = await activeTemplate('PSC');
+    const planned = await post('/inspections', { vesselId: v.id, type: 'PSC', plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor', templateId: tpl.id }, surveyor);
+    const id = planned.body.data.id;
+    for (const code of ['01101', '04103', '07105', '10111', '13101']) await post(`/inspections/${id}/findings`, { deficiencyCode: code, description: `${code} observed`, actionCode: '17' }, surveyor).expect(201);
+    await clearOutbox();
+    const closed = await post(`/inspections/${id}/close`, { result: 'DEFICIENCIES' }, surveyor);
+    expect(closed.body.data).toMatchObject({ severity: 'MAJOR', recommendation: 'RESTRICT' });
+    const rec = closed.body.data.recommendations[0];
+    expect(rec).toMatchObject({ kind: 'RESTRICTION', status: 'PENDING', routedAt: null });
+    // the recommendation reaches the deciding officers when it comes back off the bus — the consumer stamps the routing
+    const ev = (await outbox(EVENTS.inspection.restrictionRecommended))[0];
+    const client = await pool.connect();
+    try { await applyEvent(client, { env, audit }, ev as never); } finally { client.release(); }
+    const worklist = await g('/inspections/recommendations?status=PENDING');
+    const mine = worklist.body.data.find((x: any) => x.id === rec.id);
+    expect(mine).toMatchObject({ number: closed.body.data.number, routedMinutes: 0, status: 'PENDING' });
+    // a reader may not decide; the closing officer may, and a second decision is refused
+    expect((await post(`/inspections/${id}/recommendations/${rec.id}/decide`, { decision: 'REJECTED', note: 'Rectification plan accepted' }, viewer)).status).toBe(403);
+    const decided = await post(`/inspections/${id}/recommendations/${rec.id}/decide`, { decision: 'REJECTED', note: 'Rectification plan accepted instead' }, surveyor);
+    expect(decided.status).toBe(201); expect(decided.body.data).toMatchObject({ status: 'REJECTED', decidedBy: 'Marine Surveyor', decidedMinutes: expect.any(Number) });
+    expect((await post(`/inspections/${id}/recommendations/${rec.id}/decide`, { decision: 'APPROVED' }, surveyor)).status).toBe(409);
+    expect((await outbox(EVENTS.inspection.restrictionDecided))[0].data).toMatchObject({ recommendationId: rec.id, decision: 'REJECTED' });
+    // an officer may also recommend outside the rules, and approving a detention orders it
+    const own = await post(`/inspections/${id}/recommendations`, { kind: 'DETENTION', grounds: 'Repeat offender; deficiencies unrectified', codes: ['01101'] }, surveyor);
+    expect(own.status).toBe(201); expect(own.body.data).toMatchObject({ source: 'MANUAL', status: 'PENDING' });
+    const approved = await post(`/inspections/${id}/recommendations/${own.body.data.id}/decide`, { decision: 'APPROVED', note: 'Detain' }, surveyor);
+    expect(approved.body.data).toMatchObject({ status: 'APPROVED', detentionId: expect.any(String) });
+    expect((await g(`/inspections/${id}`)).body.data).toMatchObject({ detention: true, detentionRecord: { status: 'ORDERED' } });
+    expect((await outbox(EVENTS.inspection.detention)).length).toBe(1);
+    // and the manual notice path
+    const notice = await post(`/inspections/${id}/notices`, { kind: 'DEFICIENCY', body: 'Rectify within 14 days.', findingIds: [(await g(`/inspections/${id}`)).body.data.findings[0].id] }, surveyor);
+    expect(notice.status).toBe(201); expect(notice.body.data).toMatchObject({ source: 'MANUAL', aiDrafted: false, status: 'DRAFT' });
+    expect((await post(`/inspections/${id}/notices`, { body: 'x', findingIds: ['00000000-0000-0000-0000-000000000000'] }, surveyor)).status).toBe(400);
+    for (const f of (await g(`/inspections/${id}`)).body.data.findings) await put(`/inspections/${id}/findings/${f.id}`, { status: 'CLOSED' }, surveyor).expect(200);
+    await post(`/inspections/${id}/detention/release`, { note: 'Rectified' }, surveyor).expect(201);
+  });
+
+  it('refreshes the dossier on request, keeps a closed survey read-only, and sweeps overdue findings once a week', async () => {
+    const v = await freeVessel();
+    const planned = await post('/inspections', { vesselId: v.id, type: 'FSI', plannedAt: new Date().toISOString(), inspector: 'Marine Surveyor' }, surveyor);
+    const id = planned.body.data.id;
+    const refreshed = await post(`/inspections/${id}/dossier`, {}, surveyor);
+    expect(refreshed.status).toBe(201); expect(refreshed.body.data).toMatchObject({ source: 'DESK', dossier: { subject: { name: v.name } } });
+    expect((await g(`/inspections/${id}/dossier`)).body.data).toMatchObject({ source: 'DESK', preparedAt: expect.any(String) });
+    expect((await timeline(id)).filter((t) => t.kind === 'DOSSIER_PREPARED')).toHaveLength(2);
+    // an overdue finding
+    await post(`/inspections/${id}/findings`, { deficiencyCode: '01101', description: 'Overdue', actionCode: '17', dueDate: new Date(Date.now() - 3 * D).toISOString() }, surveyor).expect(201);
+    await clearOutbox();
+    const client = await pool.connect();
+    try {
+      const swept = await sweepOverdueFindings(client, env, new Date());
+      expect(swept.inspections).toBeGreaterThanOrEqual(1);
+      const again = await sweepOverdueFindings(client, env, new Date());
+      expect(again.inspections).toBe(0); // flagged this week already
+    } finally { client.release(); }
+    const overdue = await outbox(EVENTS.inspection.deficiencyOverdue);
+    expect(overdue.some((e) => e.data.inspectionId === id && e.data.count === 1)).toBe(true);
+    // the scheduler's tick reaches the same sweep through the consumer
+    const client2 = await pool.connect();
+    try { await applyEvent(client2, { env, audit }, makeEvent({ type: EVENTS.scheduler.sweepFindings, source: 'scheduler', data: { jobKey: 'finding-overdue-sweep' } })); } finally { client2.release(); }
+    await put(`/inspections/${id}/findings/${(await g(`/inspections/${id}`)).body.data.findings[0].id}`, { status: 'CLOSED' }, surveyor).expect(200);
+    await post(`/inspections/${id}/close`, { result: 'SATISFACTORY' }, surveyor).expect(201);
+    expect((await post(`/inspections/${id}/dossier`, {}, surveyor)).status).toBe(409);
+    expect((await post(`/inspections/${id}/report/00000000-0000-0000-0000-000000000000/issue`, {}, surveyor)).status).toBe(404);
+  });
+
+  it('projects a company from its register into the subjects a survey can be planned against, and forgets it when it goes', async () => {
+    const client = await pool.connect();
+    try {
+      await applyEvent(client, { env, audit }, makeEvent({ type: EVENTS.readModel.upserted, source: 'facilities', subject: 'co-x', data: { kind: 'company', entity: { id: 'co-x', code: 'COX', name: 'Coral Offshore Services (test)', status: 'ACTIVE', category: 'SERVICE_PROVIDER' } } }));
+      expect((await g('/inspections/subjects?kind=COMPANY&q=Coral%20Offshore')).body.data).toEqual([expect.objectContaining({ id: 'co-x', code: 'COX' })]);
+      await applyEvent(client, { env, audit }, makeEvent({ type: EVENTS.readModel.deleted, source: 'facilities', subject: 'co-x', data: { kind: 'company', id: 'co-x' } }));
+      expect((await g('/inspections/subjects?kind=COMPANY&q=Coral%20Offshore')).body.data).toEqual([]);
+    } finally { client.release(); }
+  });
+});
 
 describe('inspection — tenancy', () => {
   /** Two calls in two ports, and a survey raised against each, so the rule is tested in both directions. */
