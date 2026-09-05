@@ -9,6 +9,22 @@ import { buildAppModule } from '../src/app.module';
 import { seedLegislation, seriesOf } from '../src/seed';
 import { applyEvent } from '../src/consumer';
 import { canApprove, canSupersede, canTransition, registerDashboard, type DashboardRow } from '../src/instruments';
+import { citationOf, contentHash, slugOf, standingOf } from '../src/portal';
+import { watchDashboard, type FeedItem, type SourceFeed, type SourceRef } from '../src/imo';
+
+/* A feed the tests control: what each source answers, and a source that fails. Nothing here reaches the IMO. */
+const feedState = { calls: [] as { source: string; since: string }[], failing: new Set<string>(), extra: new Map<string, FeedItem[]>() };
+const stubFeed: SourceFeed = {
+  async fetch(source: SourceRef, since: Date) {
+    feedState.calls.push({ source: source.code, since: since.toISOString() });
+    if (feedState.failing.has(source.code)) throw new Error(`${source.body} did not answer`);
+    return { mode: 'stub', items: [
+      { reference: `${source.series}SIM-TEST-01`, title: `Test document one from ${source.body}`, subject: 'Amendments', published: '2026-08-01', entryIntoForce: '2028-01-01', url: `https://stub.local/${source.body}/1` },
+      { reference: `${source.series}SIM-TEST-02`, title: `Test document two from ${source.body}`, subject: 'Guidance', published: '2026-08-15', entryIntoForce: null, url: `https://stub.local/${source.body}/2` },
+      ...(feedState.extra.get(source.code) ?? []),
+    ] };
+  },
+};
 
 const DB = 'maritime_legislation_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let audit: AuditClient; let env: ReturnType<typeof loadEnv<typeof envSchema>>;
@@ -48,7 +64,7 @@ beforeAll(async () => {
     [draft.drafted_by_id]: { ...base, id: draft.drafted_by_id, sub: draft.drafted_by_id, name: draft.drafted_by, roleName: 'Legal Officer', perms: ['legislation.view', 'legislation.manage', 'legislation.approve'] },
   };
   admin = tok('admin'); clerk = tok('clerk'); approver = tok('approver'); nobody = tok('nobody'); reader = tok(staff.id); drafterTok = tok(draft.drafted_by_id);
-  app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: new StaticPrincipalResolver(people) }) });
+  app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: new StaticPrincipalResolver(people) }, stubFeed) });
   await app.init(); server = app.getHttpServer(); audit = app.get(AuditClient);
 });
 afterAll(async () => { await pool?.end(); await app?.close(); });
@@ -496,5 +512,187 @@ describe('legislation — tenancy', () => {
     const one = withRoll[0];
     expect((await g(`/legislation/instruments/${one.id}/acknowledgements`, agentgss)).status).toBe(404);
     expect((await g(`/legislation/instruments/${one.id}/acknowledgements`, admin)).status).toBe(200);
+  });
+});
+
+
+/* ------------------------------------------------------------- phase 3: the public portal --- */
+
+describe('legislation — the public citable portal', () => {
+  const pub = (p: string) => request(server as never).get(p);
+  it('slugs, hashes and states the standing of an instrument without a database', () => {
+    expect(slugOf('MSA-CIRC-02/2025')).toBe('msa-circ-02-2025');
+    expect(slugOf('MARPOL-73/78')).toBe('marpol-73-78');
+    const base = { ref_no: 'X-1/2026', title: 'T', title_ar: null, type: 'CIRCULAR', category: 'Safety', status: 'IN_FORCE', issued_date: new Date('2026-01-01'), effective_date: new Date('2026-01-15'), expiry_date: null, summary: 's', body: 'b', supersedes: '', superseded_by: '', attachments: [], withdrawn_at: null, updated_at: new Date('2026-02-01') } as never;
+    const h1 = contentHash(base); const h2 = contentHash({ ...(base as object), body: 'b2' } as never);
+    expect(h1).toHaveLength(32); expect(h2).not.toBe(h1);
+    expect(standingOf(base, new Date('2026-03-01')).code).toBe('IN_FORCE');
+    expect(standingOf({ ...(base as object), effective_date: new Date('2027-01-01') } as never, new Date('2026-03-01')).code).toBe('NOT_YET_IN_FORCE');
+    expect(standingOf({ ...(base as object), status: 'SUPERSEDED', superseded_by: 'X-2/2027' } as never).code).toBe('SUPERSEDED');
+    const c = citationOf(env, { ...(base as object), content_hash: h1, public_slug: 'x-1-2026' } as never, { typeLabel: 'Circular', typeLabelAr: 'تعميم', now: new Date('2026-03-01') });
+    expect(c.plain).toContain('Circular X-1/2026, "T" (in force from 15 January 2026). https://maritime.example/law/x-1-2026 [version ');
+    expect(citationOf(env, { ...(base as object), content_hash: h1, public_slug: 'x-1-2026' } as never, { typeLabel: 'Circular', typeLabelAr: 'تعميم', lang: 'ar' }).plain).toContain('تعميم X-1/2026');
+  });
+  it('publishes the in-force register to anyone, without a session, with facets from the masters and a cache policy', async () => {
+    const r = await pub('/public/legislation?limit=10'); expect(r.status).toBe(200);
+    expect(r.headers['cache-control']).toContain('max-age=300');
+    expect(r.body.data.length).toBe(10); expect(r.body.meta.total).toBeGreaterThan(20);
+    for (const i of r.body.data) { expect(i.status).toBe('IN_FORCE'); expect(i.body).toBeUndefined(); expect(i.url).toMatch(/^https:\/\/maritime\.example\/law\/[a-z0-9-]+$/); expect(i).not.toHaveProperty('draftedBy'); expect(i).not.toHaveProperty('acknowledgedBy'); }
+    expect(r.body.facets.types.every((t: any) => t.label && t.count > 0)).toBe(true);
+    expect(r.body.facets.types.map((t: any) => t.code)).not.toContain('INTERNAL');
+    expect(r.body.facets.subjects.length).toBeGreaterThan(2); expect(r.body.facets.years.length).toBeGreaterThan(2);
+    const history = await pub('/public/legislation?history=true&limit=200');
+    expect(history.body.meta.total).toBeGreaterThan(r.body.meta.total);
+    expect(history.body.data.some((i: any) => i.status === 'SUPERSEDED')).toBe(true);
+    expect(history.body.data.some((i: any) => i.status === 'DRAFT')).toBe(false);
+    const circulars = await pub('/public/legislation?type=CIRCULAR&limit=200'); expect(circulars.body.data.every((i: any) => i.type === 'CIRCULAR')).toBe(true);
+    const q = await pub(`/public/legislation?q=${encodeURIComponent('ballast')}`); expect(q.body.data.length).toBeGreaterThan(0);
+    const types = await pub('/public/legislation/types'); expect(types.body.data.map((t: any) => t.code)).toContain('CIRCULAR'); expect(types.body.data.map((t: any) => t.code)).not.toContain('INTERNAL');
+  });
+  it('answers an instrument by its reference or its slug with the text, the links and a citation in both languages, and revalidates by ETag', async () => {
+    // a published instrument whose effective date is still ahead answers too, but says "not yet in force"; cite one that is
+    const listed = (await pub('/public/legislation?type=CIRCULAR&limit=50&sort=refNo')).body.data;
+    expect(listed.some((i: any) => i.standing === 'NOT_YET_IN_FORCE' && !i.inForce)).toBe(true);
+    const one = listed.find((i: any) => i.inForce);
+    const byRef = await pub(`/public/legislation/${encodeURIComponent(one.refNo)}`); expect(byRef.status).toBe(200);
+    expect(byRef.body.data).toMatchObject({ refNo: one.refNo, slug: one.slug, inForce: true, standing: 'IN_FORCE' });
+    expect(byRef.body.data.body).toBeDefined(); expect(byRef.body.data.citation.en).toContain(one.refNo); expect(byRef.body.data.citation.ar).toContain(one.refNo);
+    expect(byRef.body.data).not.toHaveProperty('acknowledgedBy'); expect(byRef.body.data).not.toHaveProperty('approvedBy'); expect(byRef.body.data).not.toHaveProperty('sourceNote');
+    const etag = byRef.headers.etag; expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    const bySlug = await pub(`/public/legislation/${one.slug}`); expect(bySlug.body.data.refNo).toBe(one.refNo);
+    const cached = await request(server as never).get(`/public/legislation/${one.slug}`).set('if-none-match', etag); expect(cached.status).toBe(304);
+    const cite = await pub(`/public/legislation/${one.slug}/citation?lang=ar`); expect(cite.body.data.lang).toBe('ar'); expect(cite.body.data.url).toBe(one.url);
+  });
+  it('keeps a superseded instrument at its address, pointing at its successor, and hides drafts and internal instructions', async () => {
+    const superseded = (await pool.query(`SELECT ref_no, superseded_by FROM legal_instruments WHERE status = 'SUPERSEDED' AND superseded_by <> '' LIMIT 1`)).rows[0];
+    const r = await pub(`/public/legislation/${encodeURIComponent(superseded.ref_no)}`); expect(r.status).toBe(200);
+    expect(r.body.data).toMatchObject({ standing: 'SUPERSEDED', inForce: false, supersededBy: superseded.superseded_by });
+    expect(r.body.data.citation.en).toContain(`superseded by ${superseded.superseded_by}`);
+    expect(r.body.data.links.some((l: any) => l.refNo === superseded.superseded_by)).toBe(true);
+    expect((await pub(`/public/legislation/${encodeURIComponent(draft.ref_no)}`)).status).toBe(404);
+    // an internal instruction is on the register but the master keeps the type off the portal
+    const internal = (await post('/legislation/instruments', { title: 'Desk instruction on file naming', type: 'INTERNAL', category: 'Administration', issuedBy: 'Registrar', summary: 'Internal', status: 'IN_FORCE' }, admin)).body.data;
+    expect(internal.portal).toMatchObject({ citable: false, url: null });
+    expect((await pub(`/public/legislation/${encodeURIComponent(internal.refNo)}`)).status).toBe(404);
+    // the desk may keep one in-force instrument off the portal without changing its type
+    const shown = (await pub('/public/legislation?type=NOTICE&limit=1')).body.data[0];
+    await put(`/legislation/instruments/${encodeURIComponent(shown.refNo)}`, { public: false }, admin).expect(200);
+    expect((await pub(`/public/legislation/${shown.slug}`)).status).toBe(404);
+    await put(`/legislation/instruments/${encodeURIComponent(shown.refNo)}`, { public: true }, admin).expect(200);
+    expect((await pub(`/public/legislation/${shown.slug}`)).status).toBe(200);
+    expect((await pub('/public/legislation/NO-SUCH-1/2099')).status).toBe(404);
+  });
+  it('serves a change feed and a sitemap, and hands the desk the public address and citation of every instrument it opens', async () => {
+    const feed = await pub('/public/legislation/feed?days=3650'); expect(feed.status).toBe(200);
+    expect(feed.body.data.version).toBe('https://jsonfeed.org/version/1.1'); expect(feed.body.data.items.length).toBeGreaterThan(5);
+    expect(feed.body.data.items.every((i: any) => i.url.startsWith('https://maritime.example/law/') && i._maritime.refNo)).toBe(true);
+    expect(feed.body.data.items.some((i: any) => i._maritime.change === 'superseded')).toBe(true);
+    const sitemap = await pub('/public/legislation/sitemap'); expect(sitemap.body.data.urls.length).toBeGreaterThan(20);
+    const one = (await g('/legislation/instruments?status=IN_FORCE&type=CIRCULAR&limit=1&sort=refNo')).body.data[0];
+    const full = (await g(`/legislation/instruments/${one.id}`)).body.data;
+    expect(full.portal).toMatchObject({ citable: true, url: `https://maritime.example/law/${slugOf(one.refNo)}` });
+    expect(full.portal.citation).toContain(one.refNo); expect(full.portal.citationAr).toContain(one.refNo);
+    expect(full.slug).toBe(slugOf(one.refNo)); expect(full.contentHash).toHaveLength(32);
+    // the hash follows the text
+    await put(`/legislation/instruments/${one.id}`, { summary: `${one.summary} (amended)` }, admin).expect(200);
+    expect((await g(`/legislation/instruments/${one.id}`)).body.data.contentHash).not.toBe(full.contentHash);
+  });
+  it('reads the types, the series and the link kinds from the masters', async () => {
+    const meta = (await g('/legislation/meta')).body.data;
+    expect(meta.typeOptions.find((t: any) => t.code === 'CIRCULAR')).toMatchObject({ label: 'Circular', citable: true, refPrefix: 'CIRC' });
+    expect(meta.typeOptions.find((t: any) => t.code === 'INTERNAL')).toMatchObject({ citable: false });
+    expect(meta.linkKindOptions.map((l: any) => l.code)).toContain('CONSOLIDATES');
+    expect((await post('/legislation/instruments', { title: 'No such type', type: 'DECREE', category: 'x', issuedBy: 'x', summary: 'x' }, clerk)).status).toBe(400);
+    const guidance = (await post('/legislation/instruments', { title: 'Guidance on something', type: 'GUIDANCE', category: 'Safety', issuedBy: 'Registrar', summary: 'g' }, clerk)).body.data;
+    expect(guidance.refNo).toMatch(/^GN-\d{2}\/\d{4}$/);
+    const target = (await g('/legislation/instruments?status=IN_FORCE&limit=1')).body.data[0];
+    expect((await post(`/legislation/instruments/${guidance.id}/links`, { kind: 'MENTIONS', targetRef: target.refNo }, clerk)).status).toBe(400);
+    const linked = (await post(`/legislation/instruments/${guidance.id}/links`, { kind: 'CONSOLIDATES', targetRef: target.refNo }, clerk)).body.data;
+    expect(linked.links.some((l: any) => l.kind === 'CONSOLIDATES' && l.refNo === target.refNo)).toBe(true);
+    expect((await g(`/legislation/instruments/${target.id}`)).body.data.links.some((l: any) => l.kind === 'CONSOLIDATED_BY' && l.refNo === guidance.refNo)).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------- phase 3: the IMO watch --- */
+
+describe('legislation — the IMO watch', () => {
+  it('seeds the sources from the master with their poll state, the items they produced and the desk\'s decisions', async () => {
+    const sources = (await g('/legislation/imo/sources')).body.data;
+    expect(sources.length).toBeGreaterThanOrEqual(8);
+    expect(sources.find((s: any) => s.source === 'MSC')).toMatchObject({ body: 'MSC', series: 'MSC.1/Circ.', pollHours: 24, lastStatus: 'OK', mode: 'stub' });
+    const items = (await g('/legislation/imo/items?limit=200')).body;
+    expect(items.meta.total).toBeGreaterThan(15);
+    expect(items.data.every((i: any) => /SIM-/.test(i.reference))).toBe(true);
+    expect(new Set(items.data.map((i: any) => i.status)).size).toBeGreaterThanOrEqual(3);
+    const transposed = items.data.find((i: any) => i.status === 'TRANSPOSED');
+    expect(transposed.instrumentRef).toBeTruthy(); expect(transposed.instrumentId).toBeTruthy();
+    const dash = (await g('/legislation/imo/dashboard')).body.data;
+    expect(dash.kpis.sources).toBe(sources.length); expect(dash.kpis.items).toBe(items.meta.total); expect(dash.kpis.new).toBeGreaterThan(0);
+    expect(dash.bySource.find((s: any) => s.source === 'MSC').items).toBeGreaterThan(0);
+    expect((await g('/legislation/imo/items?status=NEW')).body.data.every((i: any) => i.status === 'NEW')).toBe(true);
+    expect((await g('/legislation/imo/items?source=MEPC')).body.data.every((i: any) => i.source === 'MEPC')).toBe(true);
+    expect((await g('/legislation/imo/sources', nobody)).status).toBe(403);
+  });
+  it('polls the sources through the feed: new documents become items once, a second reading counts the sighting, a failing source is recorded and retried sooner', async () => {
+    await clearOutbox(); feedState.calls = [];
+    const before = (await g('/legislation/imo/items?limit=500')).body.meta.total;
+    const run = (await post('/legislation/imo/poll', { force: true }, clerk)).body.data;
+    expect(run.polled.length).toBeGreaterThanOrEqual(8); expect(run.polled.every((p: any) => p.status === 'OK' && p.items === 2 && p.newItems === 2)).toBe(true);
+    expect(run.newItems).toBe(run.polled.length * 2);
+    expect(feedState.calls.length).toBe(run.polled.length);
+    expect((await g('/legislation/imo/items?limit=500')).body.meta.total).toBe(before + run.newItems);
+    expect((await outbox(EVENTS.legislation.sourceItemReceived)).length).toBe(run.newItems);
+    const polled = await outbox(EVENTS.legislation.sourcePolled); expect(polled.length).toBe(run.polled.length); expect(polled[0].data).toMatchObject({ newItems: 2, mode: 'stub' });
+    // a second forced reading finds nothing new and counts the sighting
+    const again = (await post('/legislation/imo/poll', { force: true, source: 'MSC' }, clerk)).body.data;
+    expect(again.polled).toEqual([expect.objectContaining({ source: 'MSC', status: 'OK', items: 2, newItems: 0 })]);
+    const seen = (await g('/legislation/imo/items?source=MSC&q=SIM-TEST-01')).body.data[0]; expect(seen.seenCount).toBe(2);
+    // not due yet: nothing is read until the source's own cadence comes round
+    const idle = (await post('/legislation/imo/poll', {}, clerk)).body.data; expect(idle.polled.every((p: any) => p.status === 'SKIPPED')).toBe(true);
+    // a source that does not answer
+    feedState.failing.add('LEG');
+    const failed = (await post('/legislation/imo/poll', { source: 'LEG' }, clerk)).body.data;
+    expect(failed.polled[0]).toMatchObject({ source: 'LEG', status: 'FAILED' }); expect(failed.polled[0].error).toContain('did not answer');
+    const leg = (await g('/legislation/imo/sources')).body.data.find((s: any) => s.source === 'LEG'); expect(leg.lastStatus).toBe('FAILED'); expect(leg.lastError).toContain('did not answer');
+    feedState.failing.delete('LEG');
+    expect((await post('/legislation/imo/poll', { source: 'NOPE' }, clerk)).status).toBe(400);
+    expect((await post('/legislation/imo/poll', { force: true }, reader)).status).toBe(403);
+    // the scheduler's tick does the same through the consumer
+    const client = await pool.connect();
+    try { feedState.calls = []; await applyEvent(client, { env, audit, feed: stubFeed }, makeEvent({ type: EVENTS.scheduler.pollImoSources, source: 'scheduler', data: { jobKey: 'imo-source-poll' } })); } finally { client.release(); }
+    expect(feedState.calls.map((c) => c.source)).toEqual(['LEG']); // LEG's failure made it due at the next sweep; the others keep their cadence
+  });
+  it('lets the desk assess an item, transpose it to an instrument on the register, or dismiss it — and refuses the shortcuts', async () => {
+    const item = (await g('/legislation/imo/items?status=NEW&limit=1&sort=publishedOn')).body.data[0];
+    expect((await post(`/legislation/imo/items/${item.id}/assess`, { status: 'NEW' }, clerk)).status).toBe(400);
+    expect((await post(`/legislation/imo/items/${item.id}/assess`, { status: 'ASSESSED' }, clerk)).status).toBe(400);
+    expect((await post(`/legislation/imo/items/${item.id}/assess`, { status: 'TRANSPOSED' }, clerk)).status).toBe(400);
+    expect((await post(`/legislation/imo/items/${item.id}/assess`, { status: 'TRANSPOSED', instrumentRef: 'NO-SUCH-9/2099' }, clerk)).status).toBe(404);
+    await clearOutbox();
+    const assessed = (await post(`/legislation/imo/items/${item.id}/assess`, { status: 'ASSESSED', assessment: 'A national circular is required', dueOn: '2027-01-31' }, clerk)).body.data;
+    expect(assessed).toMatchObject({ status: 'ASSESSED', assessment: 'A national circular is required', dueOn: '2027-01-31', assessedBy: 'Legal Clerk', overdue: false });
+    const target = (await g('/legislation/instruments?status=IN_FORCE&type=CIRCULAR&limit=1')).body.data[0];
+    const transposed = (await post(`/legislation/imo/items/${item.id}/assess`, { status: 'TRANSPOSED', assessment: 'Implemented', instrumentRef: target.refNo }, clerk)).body.data;
+    expect(transposed).toMatchObject({ status: 'TRANSPOSED', instrumentRef: target.refNo, instrumentId: target.id });
+    expect((await outbox(EVENTS.legislation.sourceItemAssessed)).map((e) => e.data.status)).toEqual(['ASSESSED', 'TRANSPOSED']);
+    expect((await outbox(EVENTS.audit.recorded)).some((e) => e.data.action === 'IMO_ITEM_TRANSPOSED')).toBe(true);
+    const other = (await g('/legislation/imo/items?status=NEW&limit=1')).body.data[0];
+    expect((await post(`/legislation/imo/items/${other.id}/assess`, { status: 'DISMISSED', assessment: 'Already covered' }, reader)).status).toBe(403);
+    expect((await post(`/legislation/imo/items/${other.id}/assess`, { status: 'DISMISSED', assessment: 'Already covered' }, clerk)).body.data.status).toBe('DISMISSED');
+    expect((await g(`/legislation/imo/items/${item.id}`)).body.data.instrumentRef).toBe(target.refNo);
+    expect((await g('/legislation/imo/items/00000000-0000-4000-a000-000000000000')).status).toBe(404);
+  });
+  it('reads the watch dashboard from its inputs', () => {
+    const now = new Date('2026-09-05T00:00:00Z');
+    const items = [
+      { id: '1', source: 'MSC', status: 'NEW', overdue: true, publishedOn: '2026-07-01', firstSeenAt: '2026-07-02T00:00:00Z', instrumentId: null },
+      { id: '2', source: 'MSC', status: 'TRANSPOSED', overdue: false, publishedOn: '2026-08-01', firstSeenAt: '2026-08-20T00:00:00Z', instrumentId: 'x' },
+      { id: '3', source: 'FAL', status: 'ASSESSED', overdue: false, publishedOn: '2026-08-10', firstSeenAt: '2026-08-30T00:00:00Z', instrumentId: null },
+    ] as never[];
+    const polls = [{ source: 'MSC', lastStatus: 'OK' }, { source: 'FAL', lastStatus: 'FAILED' }, { source: 'LEG', lastStatus: 'NEVER' }] as never[];
+    const d = watchDashboard(items, polls, now);
+    expect(d.kpis).toMatchObject({ sources: 3, polledOk: 1, failed: 1, neverPolled: 1, items: 3, new: 1, assessed: 1, transposed: 1, overdue: 1, last30Days: 2, withInstrument: 1 });
+    expect(d.bySource.find((s: any) => s.source === 'MSC')).toMatchObject({ items: 2, new: 1 });
+    expect(d.attention.map((a: any) => a.id)).toEqual(['1']);
   });
 });

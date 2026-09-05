@@ -14,7 +14,17 @@ import type { LegalInstrument, PendingNotice } from '../src/pages/legislation/ty
 
 const ok = <T,>(data: T, meta: Record<string, unknown> = {}) => ({ success: true as const, data, meta });
 const session = { user: { id: 'u1', name: 'Director of Maritime Affairs', email: 'legal@maritime.example', active: true, kind: 'user', scope: { level: 'NATIONAL' }, role: { id: 'r', name: 'Super Admin', permissions: ['*'] }, perms: ['*'] }, token: 't', refreshToken: 'r' };
-const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string) => (url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`)))) as never);
+/** The instrument types come from the `legalInstrumentType` master, so every screen test serves the master too. */
+const typeMaster = [
+  { id: 't1', category: 'legalInstrumentType', code: 'ACT', label: 'Act', labelAr: 'قانون', active: true, meta: { citable: true, refPrefix: 'ACT', order: 1 } },
+  { id: 't2', category: 'legalInstrumentType', code: 'CIRCULAR', label: 'Circular', labelAr: 'تعميم', active: true, meta: { citable: true, refPrefix: 'CIRC', order: 3 } },
+  { id: 't3', category: 'legalInstrumentType', code: 'NOTICE', label: 'Notice', labelAr: 'إشعار', active: true, meta: { citable: true, refPrefix: 'NOTICE', order: 4 } },
+  { id: 't4', category: 'legalInstrumentType', code: 'INTERNAL', label: 'Internal instruction', active: true, meta: { citable: false, refPrefix: 'INS', order: 9 } },
+];
+const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string, cfg?: { params?: { category?: string } }) => {
+  if (url === '/lookups') return Promise.resolve(ok(cfg?.params?.category === 'legalInstrumentType' ? typeMaster : []));
+  return url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`));
+}) as never);
 const wrap = (ui: React.ReactNode) => render(<Provider store={store}><MemoryRouter><ThemeProvider theme={buildTheme('light')}>{ui}</ThemeProvider></MemoryRouter></Provider>);
 
 /* Every instrument below is fictional. The shapes follow `instrumentApi` in services/legislation/src/instruments.ts
@@ -90,8 +100,10 @@ describe('Notices & Circulars register', () => {
     const get = mockGet(register());
     wrap(<LegislationPage />);
     await screen.findByText('ACT-1981-01');
+    // the filter lists the master's labels, and sends the master's code
     fireEvent.mouseDown(screen.getByLabelText('Type'));
-    fireEvent.click(await screen.findByRole('option', { name: 'CIRCULAR' }));
+    expect(await screen.findByRole('option', { name: 'Internal instruction' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('option', { name: 'Circular' }));
     await waitFor(() => expect(get).toHaveBeenCalledWith('/legislation/instruments', { params: expect.objectContaining({ type: 'CIRCULAR', page: 1 }) }));
   });
 

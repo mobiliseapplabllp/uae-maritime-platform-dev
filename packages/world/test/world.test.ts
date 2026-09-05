@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/;
 const now = new Date('2026-09-02T12:00:00Z');
 const w = buildWorld({ profile: 'AE', now });
 const SECTIONS = ['users', 'companies', 'berths', 'vessels', 'portCalls', 'vesselCertificates', 'tariffs', 'checklistTemplates', 'berthOutages', 'resources', 'invoices', 'inspections', 'seafarers', 'legalInstruments', 'licences', 'registrations',
-  'serviceDefinitions', 'serviceRequests', 'agentConfigs', 'aiDecisions', 'incidents', 'positions', 'mdaAlerts', 'metInstitutions', 'metProgrammes', 'manningScales', 'crewLists'] as const;
+  'serviceDefinitions', 'serviceRequests', 'agentConfigs', 'aiDecisions', 'incidents', 'positions', 'mdaAlerts', 'metInstitutions', 'metProgrammes', 'manningScales', 'crewLists', 'imoWatch'] as const;
 const ids = (rows: { id: string }[]) => new Set(rows.map((r) => r.id));
 const realIds = new Set(w.vessels.filter((v) => v.real).map((v) => v.id));
 

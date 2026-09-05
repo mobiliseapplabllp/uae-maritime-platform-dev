@@ -26,6 +26,7 @@ export const SEED_JOBS: JobDefinition[] = [
   { key: 'document-retention', name: 'Document retention sweep', nameAr: 'مسح فترة الاحتفاظ بالوثائق', cron: '30 2 * * *', eventType: EVENTS.scheduler.sweepRetention, payload: {}, owner: 'documents' },
   { key: 'audit-verify', name: 'Audit chain verification', nameAr: 'التحقق من سلسلة سجل التدقيق', cron: '0 3 * * *', eventType: EVENTS.scheduler.verifyAudit, payload: {}, owner: 'audit-ledger' },
   { key: 'accreditation-renewal-sweep', name: 'Accreditation renewal sweep', nameAr: 'مسح تجديد الاعتمادات', cron: '15 7 * * *', eventType: EVENTS.scheduler.sweepAccreditations, payload: {}, owner: 'facilities' },
+  { key: 'imo-source-poll', name: 'IMO source monitoring', nameAr: 'رصد مصادر المنظمة البحرية الدولية', cron: '30 */6 * * *', eventType: EVENTS.scheduler.pollImoSources, payload: {}, owner: 'legislation' },
 ];
 
 export function validateSchedule(cron: string, timezone: string): void {

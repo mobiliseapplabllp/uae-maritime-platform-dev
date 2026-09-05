@@ -49,6 +49,8 @@ export const ADAPTERS: AdapterDefinition[] = [
       { key: 'submitRegistry', summary: 'Flag-state registry return', method: 'POST', path: '/v1/returns/registry', required: ['period', 'records'], idempotent: true },
       { key: 'submitCasualty', summary: 'Casualty and incident return', method: 'POST', path: '/v1/returns/casualty', required: ['period', 'records'], idempotent: true },
       { key: 'instruments', summary: 'IMO instrument adoptions and amendments since a date', method: 'GET', path: '/v1/instruments', required: ['since'], idempotent: false },
+      // the legislation desk's IMO watch: one monitored source (a committee's circular series, the Assembly's resolutions, GISIS notices) read since a date
+      { key: 'sourceItems', summary: 'Documents published by one monitored IMO body or series since a date', method: 'GET', path: '/v1/sources/{body}/documents', required: ['body', 'series', 'since'], idempotent: false },
     ],
   },
   {

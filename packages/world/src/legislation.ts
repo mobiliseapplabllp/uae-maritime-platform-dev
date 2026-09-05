@@ -153,3 +153,53 @@ export function buildLegalInstruments(rng: Prng, profile: string, users: WorldUs
     };
   }).sort((a, b) => a.issuedDate.localeCompare(b.issuedDate));
 }
+
+/* ------------------------------------------------------------------------ the IMO watch --- */
+
+/** One document a monitored IMO source produced, as the legislation desk's watch list holds it. References are marked SIM: they are not IMO document numbers. */
+export interface WorldImoWatchItem {
+  id: string; source: string; body: string; series: string; reference: string; title: string; subject: string; publishedOn: string; entryIntoForce: string | null; url: string;
+  status: 'NEW' | 'ASSESSED' | 'TRANSPOSED' | 'DISMISSED'; assessment: string; assessedById: string | null; assessedBy: string; assessedAt: string | null; dueOn: string | null; instrumentRef: string; firstSeenAt: string;
+}
+const WATCH_TOPICS: [string, string, string][] = [ // subject, title stem, the national instrument it bears on (a seeded reference, or blank)
+  ['Amendments', 'Amendments to the convention chapter on fire protection, adopted at the committee session', ''],
+  ['Guidance', 'Guidance on maritime cyber risk management for administrations and companies', 'MSA-CIRC-06/2024'],
+  ['Unified interpretation', 'Unified interpretation of the survey and certification provisions for electronic certificates', 'MSA-CIRC-02/2025'],
+  ['Amendments', 'Amendments to the ballast water record book form and its entries', 'MSA-CIRC-05/2025'],
+  ['Guidance', 'Guidelines on the medical examination of seafarers, revised', 'MSA-CIRC-08/2025'],
+  ['Circular', 'Facilitation — electronic submission of the FAL forms through a maritime single window', ''],
+  ['Resolution', 'Principles of minimum safe manning, consolidated', ''],
+  ['Circular', 'Casualty investigation reporting — revised data set for the global information system', ''],
+  ['Amendments', 'Amendments to the training, certification and watchkeeping code — table of competences', ''],
+  ['Guidance', 'Interim guidelines on shore power connection for ships in port', 'MSA-CIRC-14/2026'],
+];
+/** Every monitored source produced a few documents in the last year; the desk has dealt with the older ones and the recent ones wait. */
+export function buildImoWatch(rng: Prng, profile: string, lookups: { category: string; code: string; label: string; meta: Record<string, unknown> }[], instruments: WorldLegalInstrument[], users: WorldUser[], now: Date): WorldImoWatchItem[] {
+  const sources = lookups.filter((l) => l.category === 'imoSource');
+  const legal = usersByRole(users, 'Legal Officer')[0] ?? users[0];
+  const refs = new Set(instruments.map((i) => i.refNo));
+  const out: WorldImoWatchItem[] = [];
+  let n = 0;
+  for (const s of sources) {
+    const body = String(s.meta.body ?? s.code); const series = String(s.meta.series ?? `${body}/`);
+    const count = body === 'GISIS' ? 2 : 3;
+    for (let k = 0; k < count; k++) {
+      const [subject, stem, bearsOn] = WATCH_TOPICS[(n + k) % WATCH_TOPICS.length];
+      const ageDays = 20 + ((n * 37 + k * 61) % 330);
+      const published = new Date(now.getTime() - ageDays * D);
+      const reference = `${series}SIM-${published.getUTCFullYear()}-${String(10 + n).padStart(2, '0')}`;
+      const linked = bearsOn && refs.has(bearsOn) && (profile === 'AE' || !bearsOn.startsWith('MSA-')) ? bearsOn : '';
+      const status: WorldImoWatchItem['status'] = ageDays < 45 ? 'NEW' : linked ? 'TRANSPOSED' : ageDays % 3 === 0 ? 'DISMISSED' : 'ASSESSED';
+      const assessedAt = status === 'NEW' ? null : iso(published.getTime() + rng.int(3, 20) * D);
+      out.push({
+        id: stableId('imowatch', `${s.code}:${reference}`), source: s.code, body, series, reference, title: `${stem} (${body})`, subject, publishedOn: iso(published).slice(0, 10),
+        entryIntoForce: subject === 'Amendments' ? iso(published.getTime() + 540 * D).slice(0, 10) : null, url: `${String(s.meta.url ?? '')}#${encodeURIComponent(reference)}`,
+        status, assessment: status === 'NEW' ? '' : status === 'TRANSPOSED' ? `Transposed by ${linked}.` : status === 'DISMISSED' ? 'No national action needed — already covered by the instruments in force.' : 'Assessed: a national circular is required; drafting scheduled.',
+        assessedById: assessedAt ? legal.id : null, assessedBy: assessedAt ? legal.name : '', assessedAt, dueOn: status === 'ASSESSED' ? iso(published.getTime() + 120 * D).slice(0, 10) : null, instrumentRef: linked, firstSeenAt: iso(published.getTime() + D),
+      });
+      n += 1;
+    }
+  }
+  return out;
+}
+

@@ -1,8 +1,8 @@
 import { join } from 'node:path';
 import { buildWorld, stableId, type WorldLegalInstrument } from '@maritime/world';
-import { createDb, runMigrations, withTx, type Queryable } from '@maritime/service-kit';
+import { createDb, runMigrations, seedLookupMirror, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
-import { REF_PREFIX } from './instruments';
+import { REF_PREFIX, stampPublic, type InstrumentRow } from './instruments';
 import { upsertUser } from './subjects';
 
 /* Seeds the register from the shared world: the conventions the administration is party to, its acts
@@ -38,6 +38,7 @@ export async function seedLegislation(databaseUrl: string, profile = 'AE') {
   const byRef = new Map(world.legalInstruments.map((i) => [i.refNo, i]));
 
   const counts = await withTx(pool, async (c) => {
+    const lookups = await seedLookupMirror(c, world.lookups);
     for (const u of world.users) await upsertUser(c, { id: u.id, name: u.name, email: u.email, roleName: u.roleName, designation: u.designation, department: u.department, active: u.active });
 
     let acknowledgements = 0;
@@ -90,18 +91,42 @@ export async function seedLegislation(databaseUrl: string, profile = 'AE') {
       links += 1;
     }
 
+    // the portal's columns on every seeded instrument: slug, content hash, publication date
+    for (const row of (await c.query<InstrumentRow>('SELECT * FROM legal_instruments')).rows) await stampPublic(c, row);
+
     const series = new Map<string, number>();
     for (const i of world.legalInstruments) {
       const s = seriesOf(i.refNo);
       if (s) series.set(s.series, Math.max(series.get(s.series) ?? 0, s.value));
     }
-    // every type the register can allocate against carries a series for the current year, even where the world seeded none
+    // every type the register can allocate against carries a series for the current year, even where the world seeded none; the prefixes are the type master's
     const year = new Date(world.now).getUTCFullYear();
-    for (const prefix of Object.values(REF_PREFIX)) if (!series.has(`${prefix}-${year}`)) series.set(`${prefix}-${year}`, 0);
+    const prefixes = new Set<string>([...Object.values(REF_PREFIX), ...world.lookups.filter((l) => l.category === 'legalInstrumentType').map((l) => String(l.meta.refPrefix ?? '')).filter(Boolean)]);
+    for (const prefix of prefixes) if (!series.has(`${prefix}-${year}`)) series.set(`${prefix}-${year}`, 0);
     for (const [key, n] of series) await advance(c, key, n);
 
+    /* The IMO watch: what the monitored sources produced over the last year and what the desk did with each
+     * item, plus a poll state per source that says the source has been read and when it is next due. */
+    const instrumentByRef = new Map(world.legalInstruments.map((i) => [i.refNo, i.id]));
+    for (const w of world.imoWatch) {
+      await c.query(`INSERT INTO imo_watch_items(id, source, body, series, reference, title, subject, published_on, entry_into_force, url, status, assessment, assessed_by_id, assessed_by, assessed_at, due_on, instrument_id, instrument_ref, first_seen_at, last_seen_at, seen_count, raw)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$19,1,$20)
+        ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, subject = EXCLUDED.subject, published_on = EXCLUDED.published_on, entry_into_force = EXCLUDED.entry_into_force, url = EXCLUDED.url, status = EXCLUDED.status, assessment = EXCLUDED.assessment,
+          assessed_by_id = EXCLUDED.assessed_by_id, assessed_by = EXCLUDED.assessed_by, assessed_at = EXCLUDED.assessed_at, due_on = EXCLUDED.due_on, instrument_id = EXCLUDED.instrument_id, instrument_ref = EXCLUDED.instrument_ref, updated_at = now()`,
+        [w.id, w.source, w.body, w.series, w.reference, w.title, w.subject, w.publishedOn, w.entryIntoForce, w.url, w.status, w.assessment, w.assessedById, w.assessedBy, w.assessedAt, w.dueOn, w.instrumentRef ? instrumentByRef.get(w.instrumentRef) ?? null : null, w.instrumentRef, w.firstSeenAt, JSON.stringify({ seeded: true })]);
+    }
+    const now = new Date(world.now);
+    for (const src of world.lookups.filter((l) => l.category === 'imoSource')) {
+      const items = world.imoWatch.filter((w) => w.source === src.code);
+      const hours = Number(src.meta.pollHours) || 24;
+      const last = new Date(now.getTime() - (hours / 2) * 3_600_000);
+      await c.query(`INSERT INTO imo_source_polls(source, last_polled_at, last_status, last_error, last_items, new_items, next_due_at, polls, mode) VALUES ($1,$2,'OK','',$3,0,$4,$5,'stub')
+        ON CONFLICT (source) DO UPDATE SET last_polled_at = EXCLUDED.last_polled_at, last_status = 'OK', last_error = '', last_items = EXCLUDED.last_items, next_due_at = EXCLUDED.next_due_at, polls = EXCLUDED.polls, mode = EXCLUDED.mode, updated_at = now()`,
+        [src.code, last, items.length, new Date(last.getTime() + hours * 3_600_000), Math.max(1, Math.round(365 * 24 / hours))]);
+    }
+
     return {
-      profile: world.profile, instruments: world.legalInstruments.length, acknowledgements, supersessions: links,
+      profile: world.profile, lookups, instruments: world.legalInstruments.length, acknowledgements, supersessions: links, imoWatch: world.imoWatch.length,
       users: world.users.length, series: series.size,
       inForce: world.legalInstruments.filter((i) => i.status === 'IN_FORCE').length,
       drafts: world.legalInstruments.filter((i) => i.status === 'DRAFT').length,

@@ -4,7 +4,7 @@ import { EVENTS, STREAM_PREFIX, type EventEnvelope } from '@maritime/contracts';
 import { KIT_BUS, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 
 /** Turns selected domain events into notifications. Rules are data so the studio can extend them later. */
-export const RULES: Array<{ type: string; audiencePerm: string; severity: string; title: (d: Record<string, unknown>) => string; body?: (d: Record<string, unknown>) => string; link?: (d: Record<string, unknown>) => string }> = [
+export const RULES: Array<{ type: string; audiencePerm: string; severity: string; /** When given, the rule fires only for events it answers true for. */ when?: (d: Record<string, unknown>) => boolean; title: (d: Record<string, unknown>) => string; body?: (d: Record<string, unknown>) => string; link?: (d: Record<string, unknown>) => string }> = [
   { type: EVENTS.identity.roleChanged, audiencePerm: 'roles.view', severity: 'info', title: (d) => `Role updated: ${d.name}`, body: () => 'Permission matrix changed; it applies on the next request.', link: () => '/admin/roles' },
   { type: EVENTS.mdm.settingsChanged, audiencePerm: 'settings.view', severity: 'info', title: (d) => `Settings changed: ${d.key}`, link: () => '/admin/settings' },
   { type: EVENTS.ports.berthed, audiencePerm: 'portcalls.view', severity: 'success', title: (d) => `${d.vesselName} berthed at ${d.berthCode}`, link: (d) => `/port-calls/${d.portCallId}` },
@@ -25,6 +25,8 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
   // the crew desk: a list sent back to the agent, a provider's accreditation moving, a programme withdrawn
   { type: EVENTS.seafarers.crewListQueried, audiencePerm: 'seafarers.view', severity: 'warning', title: (d) => `Crew list ${d.number} queried — ${d.vesselName}`, body: (d) => String(d.note ?? ''), link: (d) => `/seafarers/crew-lists/${d.crewListId}` },
   { type: EVENTS.seafarers.metAccreditationChanged, audiencePerm: 'seafarers.view', severity: 'info', title: (d) => `MET accreditation ${String(d.status ?? '').toLowerCase()} — ${d.name}`, body: (d) => String(d.reason ?? ''), link: (d) => `/seafarers/met/${d.institutionId}` },
+  { type: EVENTS.legislation.sourcePolled, audiencePerm: 'legislation.view', severity: 'info', when: (d) => !!d.error || Number(d.newItems) > 0, title: (d) => (d.error ? `IMO watch — ${d.sourceLabel ?? d.source} could not be read` : `IMO watch — ${d.newItems} new document(s) from ${d.sourceLabel ?? d.source}`), body: (d) => String(d.error ?? d.firstTitle ?? ''), link: () => '/legislation/imo' },
+  { type: EVENTS.legislation.sourceItemAssessed, audiencePerm: 'legislation.view', severity: 'info', title: (d) => `${d.reference} ${String(d.status).toLowerCase()}${d.instrumentRef ? ` — implemented by ${d.instrumentRef}` : ''}`, link: () => '/legislation/imo' },
   { type: EVENTS.seafarers.programmeWithdrawn, audiencePerm: 'seafarers.view', severity: 'info', title: (d) => `Programme withdrawn — ${d.title} at ${d.name}`, body: (d) => String(d.reason ?? ''), link: (d) => `/seafarers/met/${d.institutionId}` },
 ];
 
@@ -36,6 +38,7 @@ export class Dispatcher implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy() { await this.sub?.stop(); }
   async handle(event: EventEnvelope) {
     const rule = RULES.find((r) => r.type === event.type); if (!rule) return;
+    if (rule.when && !rule.when((event.data ?? {}) as Record<string, unknown>)) return;
     const d = (event.data ?? {}) as Record<string, unknown>;
     await withInbox(this.pool, event, async (c) => {
       await c.query('INSERT INTO notifications(title, body, severity, link, audience_perm, source, event_type) VALUES ($1,$2,$3,$4,$5,$6,$7)', [rule.title(d), rule.body?.(d) ?? '', rule.severity, rule.link?.(d) ?? null, rule.audiencePerm, event.source, event.type]);

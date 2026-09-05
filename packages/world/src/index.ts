@@ -11,7 +11,7 @@ import { buildChecklistTemplates, buildInspections, type WorldChecklistTemplate,
 import { buildBerthOutages, buildResources, type WorldBerthOutage, type WorldResource } from './ports';
 import { buildSeafarers, type WorldSeafarer } from './crew';
 import { buildMet, type WorldMetInstitution, type WorldMetProgramme, type WorldManningScale, type WorldCrewList } from './met';
-import { buildLegalInstruments, type WorldLegalInstrument } from './legislation';
+import { buildLegalInstruments, buildImoWatch, type WorldLegalInstrument, type WorldImoWatchItem } from './legislation';
 import { buildLicences, type WorldLicence } from './instruments';
 import { buildRegistrations, type WorldRegistration, type WorldRegistryEntry } from './registry';
 import { buildServiceDefinitions, buildServiceRequests, type WorldServiceDefinition, type WorldServiceRequest } from './services';
@@ -26,7 +26,7 @@ export interface World {
   vesselCertificates: WorldVesselCertificate[]; tariffs: WorldTariff[]; checklistTemplates: WorldChecklistTemplate[]; berthOutages: WorldBerthOutage[]; resources: WorldResource[]; invoices: WorldInvoice[]; inspections: WorldInspection[];
   seafarers: WorldSeafarer[]; legalInstruments: WorldLegalInstrument[]; licences: WorldLicence[]; registrations: WorldRegistration[]; registry: WorldRegistryEntry[]; serviceDefinitions: WorldServiceDefinition[]; serviceRequests: WorldServiceRequest[]; ruleSets: WorldRuleSet[];
   agentConfigs: WorldAgentConfig[]; aiDecisions: WorldAiDecision[]; incidents: WorldIncident[]; positions: WorldPosition[]; mdaAlerts: WorldMdaAlert[];
-  metInstitutions: WorldMetInstitution[]; metProgrammes: WorldMetProgramme[]; manningScales: WorldManningScale[]; crewLists: WorldCrewList[];
+  metInstitutions: WorldMetInstitution[]; metProgrammes: WorldMetProgramme[]; manningScales: WorldManningScale[]; crewLists: WorldCrewList[]; imoWatch: WorldImoWatchItem[];
 }
 
 /** Builds the whole fictional world deterministically. Every section draws from its own forked stream, so every service seeds its own slice from one stable object. */
@@ -50,6 +50,7 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const inspections = buildInspections(root.fork('inspections'), portCalls, vessels, checklistTemplates, users, lookups, now);
   const seafarers = buildSeafarers(root.fork('seafarers'), profile, vessels, companies, now);
   const legalInstruments = buildLegalInstruments(root.fork('legislation'), profile, users, now);
+  const imoWatch = buildImoWatch(root.fork('imowatch'), profile, lookups, legalInstruments, users, now);
   const licences = buildLicences(root.fork('licences'), profile, companies, vessels, seafarers, berths, registry, users, now);
   const vesselCertificates = buildVesselCertificates(root.fork('certificates'), profile, vessels, licences, registry, now);
   const serviceDefinitions = buildServiceDefinitions(profile);
@@ -61,7 +62,7 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const { metInstitutions, metProgrammes, manningScales, crewLists } = buildMet(root.fork('met'), profile, companies, vessels, seafarers, portCalls, licences, lookups, now);
   const { agentConfigs, aiDecisions } = buildAgents(root.fork('agents'), profile, { users, vessels, vesselCertificates, inspections, licences, serviceDefinitions, serviceRequests, legalInstruments, incidents }, now);
   return { profile, seed, now: now.toISOString(), histStart: HIST_START.toISOString(), roles: ROLE_CATALOGUE, users, lookups, companies, berths, vessels, portCalls, settings,
-    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, ruleSets, agentConfigs, aiDecisions, incidents, positions, mdaAlerts, metInstitutions, metProgrammes, manningScales, crewLists };
+    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, ruleSets, agentConfigs, aiDecisions, incidents, positions, mdaAlerts, metInstitutions, metProgrammes, manningScales, crewLists, imoWatch };
 }
 export const DEMO_PASSWORD = 'Demo@2026';
 export * from './prng';

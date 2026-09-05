@@ -35,6 +35,9 @@ export function Guard({ perm, children }: { perm?: string; children: ReactNode }
 export const PUBLIC_ROUTES: RouteDef[] = [
   { path: '/login', element: L(() => import('../pages/Login')) },
   { path: '/verify/:licenseNo', element: L(() => import('../pages/public/VerifyLicense')) },
+  // the public legislation portal: the law as published, citable without a session
+  { path: '/law', element: L(() => import('../pages/public/LawPortal')) },
+  { path: '/law/:slug', element: L(() => import('../pages/public/LawInstrument')) },
 ];
 
 export const ROUTES: RouteDef[] = [

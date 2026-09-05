@@ -9,6 +9,7 @@ import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
 import SchoolRoundedIcon from '@mui/icons-material/SchoolRounded';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import GavelRoundedIcon from '@mui/icons-material/GavelRounded';
+import TravelExploreRoundedIcon from '@mui/icons-material/TravelExploreRounded';
 import RadarRoundedIcon from '@mui/icons-material/RadarRounded';
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
 import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
@@ -83,7 +84,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/seafarers/met', label: 'MET Institutions', icon: SchoolRoundedIcon, perm: 'seafarers.view' },
     ] }] },
   { key: 'legis', name: 'Notices & Circulars', short: 'Notices', color: '#8A5A2B', desc: 'Acts, rules, notices and circulars — with acknowledgments', icon: CampaignRoundedIcon, perm: 'legislation.view', home: '/legislation',
-    nav: [{ header: 'Instruments', items: [{ to: '/legislation', label: 'Notice Library', icon: GavelRoundedIcon, perm: 'legislation.view' }] }] },
+    nav: [{ header: 'Instruments', items: [{ to: '/legislation', label: 'Notice Library', icon: GavelRoundedIcon, perm: 'legislation.view' }, { to: '/legislation/imo', label: 'IMO Watch', icon: TravelExploreRoundedIcon, perm: 'legislation.view' }] }] },
   { key: 'incidents', name: 'Incident Desk', short: 'Incidents', color: '#B3452E', desc: 'HSE & marine incident case files — response, RCA and closure', icon: CrisisAlertRoundedIcon, perm: 'incidents.view', home: '/incidents',
     nav: [{ header: 'Case management', items: [
       { to: '/incidents/overview', label: 'Incident Dashboard', icon: MonitorHeartRoundedIcon, perm: 'incidents.view' },

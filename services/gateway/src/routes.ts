@@ -123,6 +123,8 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/registrations', service: 'ships' },
   { prefix: '/api/seafarers', service: 'seafarers' },
   { prefix: '/api/legislation', service: 'legislation' },
+  // the public citable portal: no session, longest prefix wins over the instruments service's /api/public
+  { prefix: '/api/public/legislation', service: 'legislation' },
   { prefix: '/api/notices', service: 'legislation' },
   { prefix: '/api/tracking', service: 'maritime-centre' },
   { prefix: '/api/incidents', service: 'maritime-centre' },

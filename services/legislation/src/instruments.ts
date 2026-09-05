@@ -1,5 +1,6 @@
 import { EVENTS, INSTRUMENT_STATUS, INSTRUMENT_TRANSITIONS, INSTRUMENT_TYPES, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable } from '@maritime/service-kit';
+import { createHash } from 'node:crypto';
+import { enqueue, eventFromContext, lookupByCode, nextNumber, type Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 
 /* The legal-instrument register and the governance that moves an instrument through it.
@@ -30,7 +31,9 @@ export type AckClass = (typeof ACK_CLASSES)[number];
 /** Link kinds, each with the name the other side of the link is read back under. */
 export const LINK_KINDS = ['AMENDS', 'SUPERSEDES', 'REFERS_TO', 'IMPLEMENTS', 'REVOKES'] as const;
 export type LinkKind = (typeof LINK_KINDS)[number];
-export const INVERSE_LINK: Record<LinkKind, string> = { AMENDS: 'AMENDED_BY', SUPERSEDES: 'SUPERSEDED_BY', REFERS_TO: 'REFERRED_TO_BY', IMPLEMENTS: 'IMPLEMENTED_BY', REVOKES: 'REVOKED_BY' };
+export const INVERSE_LINK: Record<string, string> = { AMENDS: 'AMENDED_BY', SUPERSEDES: 'SUPERSEDED_BY', REFERS_TO: 'REFERRED_TO_BY', IMPLEMENTS: 'IMPLEMENTED_BY', REVOKES: 'REVOKED_BY', CONSOLIDATES: 'CONSOLIDATED_BY' };
+/** The name a link reads under from the receiving end. Kinds the master adds later get the regular form. */
+export const inverseLink = (kind: string) => INVERSE_LINK[kind] ?? `${kind}_BY`;
 /** Reference-number prefixes the register allocates when a drafter does not bring one of their own. */
 export const REF_PREFIX: Record<string, string> = { ACT: 'ACT', RULES: 'RULES', CIRCULAR: 'CIRC', NOTICE: 'NOTICE', ORDER: 'ORD', CONVENTION: 'CONV' };
 
@@ -42,7 +45,7 @@ export interface InstrumentRow {
   cleared_by_id: string | null; cleared_by: string; cleared_at: Date | null; clearance_note: string;
   approved_by_id: string | null; approved_by: string; approved_at: Date | null;
   withdrawn_by_id: string | null; withdrawn_by: string; withdrawn_at: Date | null; withdrawal_reason: string;
-  source_note: string; created_at: Date; updated_at: Date;
+  source_note: string; public_slug: string | null; content_hash: string; published_at: Date | null; public: boolean; created_at: Date; updated_at: Date;
 }
 export interface AckRow { id: string; instrument_id: string; user_id: string; name: string; role_name: string; note: string; at: Date }
 export interface LinkRow { id: string; from_id: string; to_id: string | null; from_ref: string; to_ref: string; kind: string; note: string; by_id: string | null; by: string; at: Date }
@@ -56,7 +59,7 @@ export type AckApi = ReturnType<typeof ackApi>;
 export const linkApi = (l: LinkRow, selfId: string) => {
   const outgoing = l.from_id === selfId;
   return {
-    id: l.id, kind: outgoing ? l.kind : (INVERSE_LINK[l.kind as LinkKind] ?? l.kind), direction: outgoing ? 'OUTGOING' : 'INCOMING',
+    id: l.id, kind: outgoing ? l.kind : inverseLink(l.kind), direction: outgoing ? 'OUTGOING' : 'INCOMING',
     instrumentId: outgoing ? l.to_id : l.from_id, refNo: outgoing ? l.to_ref : l.from_ref, note: l.note, by: l.by, at: iso(l.at)!,
   };
 };
@@ -80,7 +83,7 @@ export function instrumentApi(i: InstrumentRow, extra: InstrumentExtras = {}) {
     clearedById: i.cleared_by_id, clearedBy: i.cleared_by, clearedAt: iso(i.cleared_at), clearanceNote: i.clearance_note,
     approvedById: i.approved_by_id, approvedBy: i.approved_by, approvedAt: iso(i.approved_at),
     withdrawnById: i.withdrawn_by_id, withdrawnBy: i.withdrawn_by, withdrawnAt: iso(i.withdrawn_at), withdrawalReason: i.withdrawal_reason,
-    sourceNote: i.source_note, links, year: new Date(i.issued_date).getUTCFullYear(),
+    sourceNote: i.source_note, links, year: new Date(i.issued_date).getUTCFullYear(), public: i.public !== false, publishedAt: iso(i.published_at), contentHash: i.content_hash || '', slug: i.public_slug || '',
     inForce: i.status === 'IN_FORCE' && !expired(i), expired: expired(i), governance: governanceOf(i),
     createdAt: iso(i.created_at), updatedAt: iso(i.updated_at),
   };
@@ -155,9 +158,25 @@ export function recipientWhere(cls: string, value: string): { sql: string; args:
 }
 
 /** `CIRC-14/2026` — one atomic series per type per calendar year, so two drafters never collide. */
+/** The series a type is numbered in: the legalInstrumentType master's prefix, with the register's own table behind it for a master that carries none. */
+export async function refPrefixOf(c: Queryable, type: string): Promise<string> {
+  const entry = await lookupByCode(c, 'legalInstrumentType', type);
+  const fromMaster = String(entry?.meta?.refPrefix ?? '').trim();
+  return fromMaster || REF_PREFIX[type] || 'INST';
+}
 export async function allocateRefNo(c: Queryable, type: string, year: number, pad = 2): Promise<string> {
-  const prefix = REF_PREFIX[type] ?? 'INST';
+  const prefix = await refPrefixOf(c, type);
   return `${prefix}-${await nextNumber(c, `${prefix}-${year}`, '', pad)}/${year}`;
+}
+
+/** Keeps the portal's columns current on every write: the slug is the reference, the hash names the text, the publication date is the first day the instrument stopped being a draft. */
+export async function stampPublic(c: Queryable, i: InstrumentRow): Promise<InstrumentRow> {
+  const attachments = (i.attachments ?? []).filter((a) => a.url).map((a) => `${a.name}|${a.url}`);
+  const payload = JSON.stringify([i.ref_no, i.title, i.title_ar ?? '', i.type, i.category, i.status, dateOnly(i.issued_date), dateOnly(i.effective_date), dateOnly(i.expiry_date), i.summary, i.body, i.supersedes, i.superseded_by, attachments]);
+  const hash = createHash('sha256').update(payload).digest('hex').slice(0, 32);
+  const slug = i.ref_no.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  const r = await c.query<InstrumentRow>(`UPDATE legal_instruments SET public_slug = $2, content_hash = $3, published_at = CASE WHEN status <> 'DRAFT' THEN COALESCE(published_at, approved_at, effective_date, issued_date) ELSE NULL END WHERE id = $1 RETURNING *`, [i.id, slug, hash]);
+  return r.rows[0] ?? i;
 }
 
 /* -------------------------------------------------------------------------- publishing --- */

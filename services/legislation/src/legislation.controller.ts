@@ -1,16 +1,17 @@
 import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
-import { EVENTS, INSTRUMENT_STATUS, INSTRUMENT_TRANSITIONS, INSTRUMENT_TYPES, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { EVENTS, INSTRUMENT_STATUS, INSTRUMENT_TRANSITIONS, type PageQuery } from '@maritime/contracts';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, lookupOptions, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import {
-  ACK_CLASSES, LINK_KINDS, allocateRefNo, ackApi, canApprove, canAcknowledge, canSupersede, canTransition, instrumentApi,
-  publishInstrument, publishInstrumentDeleted, registerDashboard,
+  ACK_CLASSES, allocateRefNo, ackApi, canApprove, canAcknowledge, canSupersede, canTransition, instrumentApi,
+  publishInstrument, publishInstrumentDeleted, registerDashboard, stampPublic,
   type AckRow, type Attachment, type DashboardRow, type InstrumentRow, type LinkRow, type Row,
 } from './instruments';
 import { acksOf, fullInstrument, loadInstrument, recipientCounts, recipientsIn, recipientsOf, type Q } from './read';
 import { maySeeAcknowledgements } from './scope';
+import { citationOf, portalUrl } from './portal';
 
 /* Notices and circulars — the legal-instrument register.
  *
@@ -24,12 +25,14 @@ const text = (max: number) => z.string().trim().max(max);
 const dateish = z.union([z.string().trim(), z.null()]).optional();
 const body = z.object({
   refNo: text(60).optional(), title: text(400).min(3), titleAr: text(400).nullish(),
-  type: z.enum(INSTRUMENT_TYPES), category: text(120).default('General'), status: z.enum(INSTRUMENT_STATUS).optional(),
+  type: text(40).min(1), category: text(120).default('General'), status: z.enum(INSTRUMENT_STATUS).optional(),
   issuedBy: text(160).default(''), issuedDate: dateish, effectiveDate: dateish, expiryDate: dateish,
   summary: text(2000).default(''), body: text(60_000).default(''), tags: z.array(text(60)).max(30).default([]),
   supersedes: text(60).default(''), ackRequired: z.coerce.boolean().default(false),
   ackClass: z.enum(ACK_CLASSES).default('ALL_STAFF'), ackClassValue: text(120).default(''), ackDueDays: z.coerce.number().int().min(1).max(365).nullish(),
   sourceNote: text(600).default(''), withdrawalReason: text(600).optional(),
+  /** Whether the public portal shows the instrument once it is in force; the type master decides whether the type is shown at all. */
+  public: z.coerce.boolean().optional(),
 });
 const patch = body.partial();
 const noteBody = z.object({ note: text(1000).default('') });
@@ -38,7 +41,7 @@ const withdrawBody = z.object({ reason: text(600).min(3), at: dateish });
 const supersedeBody = z.object({ successorId: text(80).optional(), successorRef: text(60).optional(), note: text(1000).default('') })
   .refine((b) => !!(b.successorId || b.successorRef), { message: 'A successor instrument is required' });
 const ackBody = z.object({ note: text(400).default('') });
-const linkBody = z.object({ kind: z.enum(LINK_KINDS), targetId: text(80).optional(), targetRef: text(60).optional(), note: text(600).default('') })
+const linkBody = z.object({ kind: text(40).min(1), targetId: text(80).optional(), targetRef: text(60).optional(), note: text(600).default('') })
   .refine((b) => !!(b.targetId || b.targetRef), { message: 'A target instrument is required' });
 const attachmentBody = z.object({ name: text(200).min(1), kind: text(60).default('DOCUMENT'), documentId: text(80).nullish(), url: text(600).nullish(), sizeBytes: z.coerce.number().int().min(0).nullish() });
 
@@ -55,9 +58,20 @@ export class LegislationController {
 
   private load(c: Q, id: string, lock = false) { return loadInstrument(c, id, lock); }
   private full(c: Q, row: InstrumentRow) { return fullInstrument(c, row); }
-  private async republish(c: PoolClient, row: InstrumentRow, event: string, data: Row = {}) {
+  private async republish(c: PoolClient, before: InstrumentRow, event: string, data: Row = {}) {
+    // every write refreshes the portal's slug, hash and publication date, so a citation always names the current text
+    const row = await stampPublic(c, before);
     const acks = (await acksOf(c, [row.id])).get(row.id) ?? [];
-    return publishInstrument(c, this.env, row, { acknowledgedBy: acks }, { event, data });
+    const entity = await publishInstrument(c, this.env, row, { acknowledgedBy: acks }, { event, data });
+    return { ...entity, portal: await this.portal(c, row) };
+  }
+  /** The public address and the citation of an instrument, for the desk to hand out. Drafts have neither. */
+  private async portal(c: PoolClient | Pool, row: InstrumentRow) {
+    if (row.status === 'DRAFT') return null;
+    const types = await lookupOptions(c, 'legalInstrumentType', { activeOnly: false });
+    const t = types.find((x) => x.code === row.type);
+    const citable = !!t && (t.meta.citable === true || t.meta.citable === 'true') && row.public !== false;
+    return { citable, url: citable ? portalUrl(this.env, row) : null, citation: citable ? citationOf(this.env, row, { typeLabel: t?.label ?? row.type, typeLabelAr: t?.labelAr ?? null }).plain : null, citationAr: citable ? citationOf(this.env, row, { typeLabel: t?.label ?? row.type, typeLabelAr: t?.labelAr ?? null, lang: 'ar' }).plain : null };
   }
 
   /* -------------------------------------------------------------------------- register --- */
@@ -93,8 +107,11 @@ export class LegislationController {
     const issuers = await this.pool.query<{ issued_by: string; n: string }>("SELECT issued_by, count(*) AS n FROM legal_instruments WHERE issued_by <> '' GROUP BY issued_by ORDER BY count(*) DESC, issued_by");
     const tags = await this.pool.query<{ tag: string; n: string }>('SELECT jsonb_array_elements_text(tags) AS tag, count(*) AS n FROM legal_instruments GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT 60');
     const years = await this.pool.query<{ year: string; n: string }>("SELECT date_part('year', issued_date)::int::text AS year, count(*) AS n FROM legal_instruments GROUP BY 1 ORDER BY 1 DESC");
+    const [typeRows, linkRows] = await Promise.all([lookupOptions(this.pool, 'legalInstrumentType'), lookupOptions(this.pool, 'legalLinkKind')]);
     return {
-      types: [...INSTRUMENT_TYPES], statuses: [...INSTRUMENT_STATUS], transitions: INSTRUMENT_TRANSITIONS, linkKinds: [...LINK_KINDS], ackClasses: [...ACK_CLASSES],
+      types: typeRows.map((t) => t.code), typeOptions: typeRows.map((t) => ({ code: t.code, label: t.label, labelAr: t.labelAr, citable: t.meta.citable === true || t.meta.citable === 'true', refPrefix: t.meta.refPrefix ?? '' })),
+      statuses: [...INSTRUMENT_STATUS], transitions: INSTRUMENT_TRANSITIONS, linkKinds: linkRows.map((l) => l.code), linkKindOptions: linkRows.map((l) => ({ code: l.code, label: l.label, labelAr: l.labelAr })), ackClasses: [...ACK_CLASSES],
+      portal: { baseUrl: this.env.PUBLIC_BASE_URL, path: this.env.PUBLIC_PORTAL_PATH },
       subjects: cats.rows.map((r) => ({ subject: r.category, count: Number(r.n) })),
       issuers: issuers.rows.map((r) => ({ issuedBy: r.issued_by, count: Number(r.n) })),
       keywords: tags.rows.map((r) => ({ tag: r.tag, count: Number(r.n) })),
@@ -116,7 +133,10 @@ export class LegislationController {
   }
 
   @RequirePerm('legislation.view') @Get('instruments/:id')
-  async get(@Param('id') id: string) { return this.full(this.pool, await this.load(this.pool, id)); }
+  async get(@Param('id') id: string) {
+    const row = await this.load(this.pool, id);
+    return { ...(await this.full(this.pool, row)), portal: await this.portal(this.pool, row) };
+  }
 
   @RequirePerm('legislation.view') @Get('instruments/:id/acknowledgements')
   async acknowledgements(@Param('id') id: string, @CurrentUser() user: Principal) {
@@ -145,6 +165,8 @@ export class LegislationController {
   @RequirePerm('legislation.manage') @Post('instruments')
   async create(@Body(zod(body)) b: z.infer<typeof body>, @CurrentUser() user?: Principal) {
     return withTx(this.pool, async (c) => {
+      const type = await assertLookup(c, 'legalInstrumentType', b.type, 'type');
+      b.type = type.code;
       const issued = at(b.issuedDate ?? null) ?? new Date();
       const refNo = b.refNo?.trim() || await allocateRefNo(c, b.type, issued.getUTCFullYear(), this.env.REF_PAD);
       const dupe = await c.query('SELECT id FROM legal_instruments WHERE upper(ref_no) = upper($1)', [refNo]);
@@ -153,11 +175,11 @@ export class LegislationController {
       const r = await c.query<InstrumentRow>(
         `INSERT INTO legal_instruments(ref_no, title, title_ar, type, category, status, issued_by, issued_date, effective_date, expiry_date, summary, body, tags,
            supersedes, ack_required, ack_class, ack_class_value, ack_due_days, drafted_by_id, drafted_by, source_note,
-           approved_by_id, approved_by, approved_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING *`,
+           approved_by_id, approved_by, approved_at, public)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) RETURNING *`,
         [refNo, b.title, b.titleAr ?? null, b.type, b.category, status, b.issuedBy, issued, at(b.effectiveDate ?? null), at(b.expiryDate ?? null), b.summary, b.body, JSON.stringify(b.tags),
           b.supersedes, b.ackRequired, b.ackClass, b.ackClassValue, b.ackDueDays ?? null, user?.id ?? null, user?.name ?? '', b.sourceNote,
-          status === 'DRAFT' ? null : user?.id ?? null, status === 'DRAFT' ? '' : user?.name ?? '', status === 'DRAFT' ? null : new Date()]);
+          status === 'DRAFT' ? null : user?.id ?? null, status === 'DRAFT' ? '' : user?.name ?? '', status === 'DRAFT' ? null : new Date(), b.public ?? true]);
       const row = r.rows[0];
       await this.audit.record(c, { action: 'CREATE', entity: 'LegalInstrument', entityId: row.id, entityLabel: row.ref_no, after: instrumentApi(row) });
       return this.republish(c, row, EVENTS.legislation.instrumentDrafted, { draftedBy: row.drafted_by });
@@ -183,18 +205,19 @@ export class LegislationController {
         const dupe = await c.query('SELECT id FROM legal_instruments WHERE upper(ref_no) = upper($1) AND id <> $2', [b.refNo, before.id]);
         if (dupe.rowCount) throw conflict(`An instrument with reference ${b.refNo} is already on the register`);
       }
+      if (b.type !== undefined) b.type = (await assertLookup(c, 'legalInstrumentType', b.type, 'type')).code;
       const keep = <T,>(v: T | undefined, cur: T) => (v === undefined ? cur : v);
       const r = await c.query<InstrumentRow>(
         `UPDATE legal_instruments SET ref_no=$2, title=$3, title_ar=$4, type=$5, category=$6, status=$7, issued_by=$8, issued_date=$9, effective_date=$10, expiry_date=$11,
            summary=$12, body=$13, tags=$14, supersedes=$15, ack_required=$16, ack_class=$17, ack_class_value=$18, ack_due_days=$19, source_note=$20,
-           withdrawn_by_id=$21, withdrawn_by=$22, withdrawn_at=$23, withdrawal_reason=$24, updated_at=now() WHERE id=$1 RETURNING *`,
+           withdrawn_by_id=$21, withdrawn_by=$22, withdrawn_at=$23, withdrawal_reason=$24, public=$25, updated_at=now() WHERE id=$1 RETURNING *`,
         [before.id, b.refNo?.trim() || before.ref_no, keep(b.title, before.title), b.titleAr === undefined ? before.title_ar : b.titleAr, keep(b.type, before.type), keep(b.category, before.category),
           next ?? before.status, keep(b.issuedBy, before.issued_by), b.issuedDate === undefined ? before.issued_date : at(b.issuedDate), b.effectiveDate === undefined ? before.effective_date : at(b.effectiveDate),
           b.expiryDate === undefined ? before.expiry_date : at(b.expiryDate), keep(b.summary, before.summary), keep(b.body, before.body), JSON.stringify(b.tags ?? before.tags ?? []),
           keep(b.supersedes, before.supersedes), keep(b.ackRequired, before.ack_required), keep(b.ackClass, before.ack_class), keep(b.ackClassValue, before.ack_class_value),
           b.ackDueDays === undefined ? before.ack_due_days : b.ackDueDays, keep(b.sourceNote, before.source_note),
           next === 'WITHDRAWN' ? user?.id ?? null : before.withdrawn_by_id, next === 'WITHDRAWN' ? user?.name ?? '' : before.withdrawn_by,
-          next === 'WITHDRAWN' ? new Date() : before.withdrawn_at, next === 'WITHDRAWN' ? (b.withdrawalReason ?? '').trim() : before.withdrawal_reason]);
+          next === 'WITHDRAWN' ? new Date() : before.withdrawn_at, next === 'WITHDRAWN' ? (b.withdrawalReason ?? '').trim() : before.withdrawal_reason, keep(b.public, before.public !== false)]);
       const row = r.rows[0];
       await this.audit.record(c, { action: next ? 'TRANSITION' : 'UPDATE', entity: 'LegalInstrument', entityId: row.id, entityLabel: row.ref_no, before: instrumentApi(before), after: instrumentApi(row) });
       return this.republish(c, row, next === 'WITHDRAWN' ? EVENTS.legislation.instrumentWithdrawn : EVENTS.legislation.instrumentUpdated, next === 'WITHDRAWN' ? { reason: row.withdrawal_reason } : {});
@@ -324,6 +347,7 @@ export class LegislationController {
     return withTx(this.pool, async (c) => {
       const from = await this.load(c, id, true);
       if (FINAL.includes(from.status)) throw conflict(`A ${from.status.toLowerCase()} instrument is a closed record and cannot be edited`);
+      b.kind = (await assertLookup(c, 'legalLinkKind', b.kind, 'kind')).code;
       const t = await c.query<InstrumentRow>('SELECT * FROM legal_instruments WHERE id::text = $1 OR upper(ref_no) = upper($2)',
         [b.targetId ?? '00000000-0000-0000-0000-000000000000', b.targetRef ?? b.targetId ?? '']);
       const to = t.rows[0];

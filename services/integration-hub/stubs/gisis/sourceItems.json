@@ -1,0 +1,14 @@
+{
+  "status": 200,
+  "body": {
+    "body": "{body}",
+    "series": "{series}",
+    "since": "{since}",
+    "note": "Stub answer: a recorded contract for the monitored source, not the IMO's own catalogue. Every reference below is marked SIM and is not an IMO document number.",
+    "documents": [
+      { "reference": "{series}SIM-2026-01", "title": "Simulated feed item — amendments adopted at the committee's spring session ({body})", "subject": "Amendments", "published": "2026-06-14", "entryIntoForce": "2028-01-01", "url": "https://stub.local/imo/{body}/SIM-2026-01" },
+      { "reference": "{series}SIM-2026-02", "title": "Simulated feed item — unified interpretation issued by the committee ({body})", "subject": "Unified interpretation", "published": "2026-07-02", "entryIntoForce": null, "url": "https://stub.local/imo/{body}/SIM-2026-02" },
+      { "reference": "{series}SIM-2026-03", "title": "Simulated feed item — guidance circular addressed to administrations ({body})", "subject": "Guidance", "published": "2026-08-21", "entryIntoForce": null, "url": "https://stub.local/imo/{body}/SIM-2026-03" }
+    ]
+  }
+}

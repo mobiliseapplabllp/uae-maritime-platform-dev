@@ -1,22 +1,29 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
 import { publishInstrument, type InstrumentRow, type Row } from './instruments';
 import { projectSnapshot } from './subjects';
 import { acksOf } from './read';
+import { IMO_FEED } from './feed.token';
+import { pollSources, type SourceFeed } from './imo';
 
 /* What the register learns from the rest of the platform.
  *
- * Only one thing: who is on the staff roll. An instrument that requires acknowledgement is addressed
- * to a class of people, and the size of that class changes when somebody joins, moves department or
- * is deactivated — which changes what is outstanding. When the roll moves, the in-force instruments
- * whose class it affects are republished so reporting's acknowledgement figures follow, and nothing
- * else in the register is touched: the text of an instrument is not a function of the staff list.
+ * Who is on the staff roll: an instrument that requires acknowledgement is addressed to a class of people,
+ * and the size of that class changes when somebody joins, moves department or is deactivated — which
+ * changes what is outstanding. When the roll moves, the in-force instruments whose class it affects are
+ * republished so reporting's acknowledgement figures follow, and nothing else in the register is touched:
+ * the text of an instrument is not a function of the staff list.
+ *
+ * The masters, into this service's mirror: the instrument types with their series and their standing on
+ * the public portal, the link kinds, and the IMO sources the watch reads. And the scheduler's tick for the
+ * watch itself, which reads every source that is due through the integration hub.
+ *
  * Consumption is idempotent through the inbox, so a redelivered event changes nothing twice. */
 
-export interface Deps { env: Env; audit: AuditClient }
+export interface Deps { env: Env; audit: AuditClient; feed?: SourceFeed }
 
 /** The mandatory instruments a change to this person's roll entry could affect. */
 async function affected(c: PoolClient, user: Row): Promise<InstrumentRow[]> {
@@ -32,6 +39,11 @@ async function affected(c: PoolClient, user: Row): Promise<InstrumentRow[]> {
 }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
+  if (await applyLookupEvent(c, event)) return;
+  if (event.type === EVENTS.scheduler.pollImoSources) {
+    if (deps.feed) await pollSources(c, deps.env, deps.audit, deps.feed, { cause: event });
+    return;
+  }
   const relevant = await projectSnapshot(c, event);
   if (!relevant) return;
   const d = (event.data ?? {}) as Row;
@@ -50,13 +62,13 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   }
 }
 
-export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.identity.userChanged)];
+export const SUBJECTS = [subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.identity.userChanged), subjectFor(EVENTS.scheduler.pollImoSources), ...LOOKUP_SUBJECTS];
 
 @Injectable()
 export class LegislationConsumer implements OnModuleInit, OnModuleDestroy {
   private sub?: Subscription;
-  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, @Inject(IMO_FEED) private readonly feed: SourceFeed, private readonly audit: AuditClient) {}
   async onModuleInit() { this.sub = await this.bus.subscribe('legislation-consumer', SUBJECTS, (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
-  async handle(event: EventEnvelope) { await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit }, event)); }
+  async handle(event: EventEnvelope) { await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit, feed: this.feed }, event)); }
 }
