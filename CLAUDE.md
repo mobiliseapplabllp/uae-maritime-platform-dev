@@ -70,6 +70,11 @@ pnpm e2e                                   # Playwright drives + parity diffs
 - Money is integer minor units; times are UTC in storage, local in rendering.
 - English strings are i18n keys; Arabic values live in the catalogues; every definition,
   instrument and notification carries `*_ar` fields.
+- External counterparts are adapters in `integration-hub`, configured at runtime (Settings →
+  Integrations, also `/platform/integrations`), never hard-wired: a service calls one through
+  `IntegrationClient` from service-kit (`POST /internal/call/:adapter`), credentials are sealed
+  and never read back, and inbound deliveries arrive signed on
+  `POST /api/integrations/inbound/:key` and reach services as `integration.inbound.received`.
 
 ## Verification bar
 Before calling a change done: unit and contract tests green, integration tests on the native

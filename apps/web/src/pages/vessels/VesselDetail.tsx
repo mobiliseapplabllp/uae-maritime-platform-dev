@@ -5,6 +5,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import NearMeRoundedIcon from '@mui/icons-material/NearMeRounded';
+import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -75,6 +76,10 @@ export default function VesselDetail() {
     const req = editingCertId ? api.put(`/vessels/${id}/certificates/${editingCertId}`, certVals) : api.post(`/vessels/${id}/certificates`, certVals);
     req.then(() => { dispatch(notify('Certificate saved')); setCertDlg(null); load(); }).catch(err).finally(() => setBusy(false));
   };
+  const refreshClass = () => {
+    setBusy(true);
+    api.post(`/vessels/${id}/class-status`).then(() => { dispatch(notify('Class standing refreshed from the society')); load(); }).catch(err).finally(() => setBusy(false));
+  };
   const titleNode = (
     <Stack direction="row" spacing={1.25} alignItems="center" flexWrap="wrap" useFlexGap>
       <span>{v.name}</span>
@@ -87,7 +92,8 @@ export default function VesselDetail() {
     <>
       {/* The header title is a node (name + status chips); PageHeader renders any node but types the prop as string. */}
       <PageHeader crumbs={[{ label: 'Vessel Register', to: '/vessels' }, { label: v.name }]} title={titleNode as unknown as string}
-        sub={`IMO ${v.imo} · ${v.type} · ${v.flag} flag · Class ${v.classSociety || '—'} · ${v.portOfRegistry && v.portOfRegistry !== '—' ? `Registry ${v.portOfRegistry}` : 'Foreign registry'}`} />
+        sub={`IMO ${v.imo} · ${v.type} · ${v.flag} flag · Class ${v.classSociety || '—'} · ${v.portOfRegistry && v.portOfRegistry !== '—' ? `Registry ${v.portOfRegistry}` : 'Foreign registry'}`}
+        actions={hasPerm(user, 'vessels.edit') && <Button size="small" variant="outlined" startIcon={<VerifiedRoundedIcon />} disabled={busy} onClick={refreshClass} data-testid="refresh-class">Refresh class status</Button>} />
       <Card sx={{ p: 2.5, mb: 2 }}>
         <Grid container spacing={2.5}>
           <Grid item xs={6} md={2.4}><Item label="GRT / DWT" value={`${fmtNum(v.grt)} / ${fmtNum(v.dwt)}`} /></Grid>
@@ -102,6 +108,7 @@ export default function VesselDetail() {
           <Grid item xs={6} md={2.4}><Item label="Local agent" value={v.agent ? <EntityHover type="agent" id={v.agent}><span>{v.agent}</span></EntityHover> : '—'} /></Grid>
           <Grid item xs={6} md={2.4}><Item label="Main engine" value={v.engine?.maker ? `${v.engine.maker} ${v.engine.model || ''} · ${fmtNum(v.engine.powerKW)} kW` : '—'} /></Grid>
           <Grid item xs={6} md={2.4}><Item label="Dry dock" value={v.lastDryDock ? `Last ${fmtD(v.lastDryDock)} · next ${fmtD(v.nextDryDock)}` : '—'} /></Grid>
+          <Grid item xs={12} md={4.8}><Item label="Class standing (society)" value={v.classStatus ? <span data-testid="class-status">{v.classStatus.society} · {v.classStatus.class} · {v.classStatus.status.replace(/_/g, ' ').toLowerCase()} · {v.classStatus.surveysDue.length} survey{v.classStatus.surveysDue.length === 1 ? '' : 's'} due · {v.classStatus.certificates.length} certificate{v.classStatus.certificates.length === 1 ? '' : 's'} on delegation · checked {fromNow(v.classStatus.checkedAt)}</span> : 'Not yet checked with the society'} /></Grid>
           {v.lastPosition && (
             <Grid item xs={12} md={4.8}>
               <Item label="Last known position" value={<Stack direction="row" spacing={0.75} alignItems="center">

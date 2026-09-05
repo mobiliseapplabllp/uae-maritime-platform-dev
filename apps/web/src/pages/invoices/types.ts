@@ -10,11 +10,13 @@ export interface InvoiceRow {
 }
 /** GET /invoices/:id — the row with its lines and, where the service joins them, the vessel and call particulars. */
 export interface Invoice extends InvoiceRow {
+  paymentIntent?: PaymentIntent | null;
   lines: InvoiceLine[];
   vessel?: { id: string; name: string; imo?: string; flag?: string; grt?: number } | null;
   portCall?: { id: string; vcn: string; eta?: string | null; atd?: string | null; agentName?: string } | null;
 }
 /** POST /invoices/:id/pay */
 export interface PayPayload { paymentRef: string }
+export interface PaymentIntent { reference: string; status: string; redirectUrl?: string | null; amountMinor: number; currency: string; mode: string; settledAt?: string | null; method?: string | null; updatedAt?: string }
 /** The billing organisation, from the org settings section where the role can read it. */
 export interface OrgSettings { portName?: string; operator?: string; address?: string; taxId?: string; taxIdLabel?: string; unlocode?: string }

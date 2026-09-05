@@ -31,17 +31,19 @@ export default function TrafficMap() {
   const [data, setData] = useState<TrafficPicture | null>(null);
   const [openCases, setOpenCases] = useState<OpenIncident[]>([]);
   const [selected, setSelected] = useState<TrackedPosition | null>(null);
+  const [feed, setFeed] = useState<{ lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number } | null>(null);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const user = useUser();
   const profile = useProfile();
   const mode = useAppSelector((s) => s.ui.mode);
+  const canAck = hasPerm(user, 'nmc.manage');
   const dark = mode === 'dark';
 
   const load = useCallback(() => Promise.all([
     api.get<TrafficPicture>('/tracking'),
     api.get<OpenIncident[]>('/incidents', { params: { open: 'true', limit: 50 } }).catch(() => ({ data: [] as OpenIncident[] })),
-  ]).then(([t, i]) => { setData(t.data); setOpenCases(i.data || []); })
+  ]).then(([t, i]) => { setData(t.data); setOpenCases(i.data || []); api.get<typeof feed>('/tracking/feed', { headers: { 'X-Quiet': '1' } }).then((f) => setFeed(f.data)).catch(() => setFeed(null)); })
     .catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' }))), [dispatch]);
   useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
 
@@ -57,8 +59,9 @@ export default function TrafficMap() {
   const ink = dark ? '#AAC1C7' : '#4A6472';
   const chan = dark ? '#57B0E3' : '#0B74B0';
   const amber = dark ? '#E8B155' : '#9C6412';
-  const canAck = hasPerm(user, 'nmc.manage');
   const onChart = data.positions.filter((p) => inBbox(bbox, p.lat, p.lon));
+  const readFeed = () => api.post<{ status: string; received: number; matched: number }>('/tracking/feed/poll').then((r) => { dispatch(notify(r.data.status === 'ok' ? `Feed read: ${r.data.received} fixes, ${r.data.matched} matched` : `Feed ${r.data.status}`)); load(); }).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
+  const feedLabel = feed ? (feed.lastStatus === 'never' ? 'AIS/LRIT feed not yet read' : `AIS/LRIT feed · ${feed.lastMode ?? ''} · ${feed.lastStatus}${feed.ageMinutes != null ? ` · read ${feed.ageMinutes} min ago` : ''} · ${feed.matched}/${feed.received} fixes matched · every ${feed.pollMinutes} min`) : null;
   const ack = (a: MdaAlert) => api.post(`/tracking/alerts/${a.id}/ack`).then(load).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
   const path = (pts: TrafficZone['points'], close: boolean) => pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.lon)},${Y(p.lat)}`).join(' ') + (close ? ' Z' : '');
   const anchor = (pts: TrafficZone['points']) => ({ x: Math.min(...pts.map((p) => X(p.lon))), y: Math.min(...pts.map((p) => Y(p.lat))) });
@@ -84,7 +87,11 @@ export default function TrafficMap() {
     <>
       <PageHeader icon={RadarRoundedIcon} iconColor="#0B4F8A" title="Live traffic picture"
         sub={`${data.positions.length} tracked targets · ${openCases.length} open incident${openCases.length === 1 ? '' : 's'} on the picture · ${data.coverage}`}
-        actions={<Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button>} />
+        actions={<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          {feedLabel && <Chip size="small" label={feedLabel} color={feed?.lastStatus === 'ok' ? 'success' : feed?.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid="feed-status" />}
+          {canAck && <Button size="small" variant="outlined" onClick={readFeed} data-testid="feed-read">Read feed now</Button>}
+          <Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button>
+        </Stack>} />
       <Grid container spacing={2}>
         <Grid item xs={12} lg={8.5}>
           <Card sx={{ p: 1.5 }}>

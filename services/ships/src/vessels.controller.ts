@@ -2,14 +2,13 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { CurrentUser, scopeWhere, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod } from '@maritime/service-kit';
+import { CurrentUser, scopeWhere, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, IntegrationClient, badGateway } from '@maritime/service-kit';
 import { VESSEL_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
   VESSEL_STATUS, agentNameOf, certApi, certsOf, fleetDashboard, findVessel, iso, movementEventsOf, publishCertificate, publishCertificateDeleted,
   publishVessel, publishVesselDeleted, surveyEvents, surveyWindow, vesselApi, vesselCard, voyagesOf,
-  type CallRow, type CertApi, type CertRow, type Row, type VesselRow,
-} from './vessels';
+  type CallRow, type CertApi, type CertRow, type Row, type VesselRow, type ClassStatus } from './vessels';
 import { registrationApi, transcriptOf, type RegistrationRow } from './registrations';
 import { computeScores } from './risk';
 
@@ -52,7 +51,7 @@ type ListQuery = PageQuery & { type?: string; flag?: string; status?: string; ag
 
 @Controller('vessels')
 export class VesselsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   private now() { return new Date(); }
   private async certsByVessel(ids: string[], now = new Date()): Promise<Map<string, CertApi[]>> {
@@ -182,6 +181,24 @@ export class VesselsController {
       crewOnBoard: crew.rows.map((s) => ({ id: s.id, name: s.name, rank: s.rank, cdcNo: s.cdc_no, nationality: s.nationality, status: s.status, certAlerts: s.cert_alerts })),
       lastPosition: pos ? { lat: Number(pos.lat), lon: Number(pos.lon), speed: Number(pos.speed), course: Number(pos.course), navStatus: pos.nav_status, receivedAt: iso(pos.received_at) } : null,
     };
+  }
+
+  /** Ask the classification society for the ship's standing: class, surveys due, conditions, and the certificates it holds on delegation. */
+  @RequirePerm('vessels.edit') @Post(':id/class-status')
+  async classStatus(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const v = await findVessel(this.pool, id, user.scope);
+    if (!v) throw notFound('Vessel not found');
+    const status = await this.hub.tryCall<{ society?: string; class?: string; status?: string; surveysDue?: { kind: string; dueBy: string }[]; conditions?: unknown[] }>('classification', 'vesselStatus', { imo: v.imo }, { correlationId: `vessel:${v.id}` });
+    if (status.status !== 'ok') throw badGateway(`classification society: ${status.error ?? status.status}`);
+    const certs = await this.hub.tryCall<{ certificates?: ClassStatus['certificates'] }>('classification', 'certificates', { imo: v.imo }, { correlationId: `vessel:${v.id}` });
+    const check: ClassStatus = {
+      checkedAt: new Date().toISOString(), checkedBy: user.name, mode: status.mode, callId: status.callId,
+      society: String(status.data?.society ?? v.class_society), class: String(status.data?.class ?? ''), status: String(status.data?.status ?? 'UNKNOWN'),
+      surveysDue: status.data?.surveysDue ?? [], conditions: status.data?.conditions ?? [], certificates: certs.status === 'ok' ? certs.data?.certificates ?? [] : [],
+    };
+    await this.pool.query('UPDATE vessels SET class_status = $2, updated_at = now() WHERE id = $1', [v.id, JSON.stringify(check)]);
+    await this.audit.record(this.pool, { action: 'CLASS_STATUS', entity: 'Vessel', entityId: v.id, entityLabel: v.name, after: { society: check.society, status: check.status, surveysDue: check.surveysDue.length, certificates: check.certificates.length, mode: check.mode } });
+    return this.get(v.id, user);
   }
 
   /** The voyage ledger and the trade lanes it adds up to. */

@@ -139,6 +139,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/platform/slas', label: 'Service Levels', icon: SpeedRoundedIcon, perm: 'platform.view' },
       { to: '/platform/incidents', label: 'Outage History', icon: HistoryRoundedIcon, perm: 'platform.view' },
       { to: '/platform/compliance', label: 'RFP Compliance', icon: RuleRoundedIcon, perm: 'platform.view' },
+      { to: '/platform/integrations', label: 'Integrations', icon: HubRoundedIcon, perm: 'platform.view' },
     ] }] },
   { key: 'admin', name: 'Administration', short: 'Admin', color: '#0A2239', desc: 'Users, roles, audit log and settings', icon: AdminPanelSettingsRoundedIcon, perm: 'users.view', home: '/admin/users',
     nav: [{ header: 'Administration', items: [

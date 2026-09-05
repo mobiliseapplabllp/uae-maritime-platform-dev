@@ -97,6 +97,10 @@ export default function SeafarerDetail() {
     const url = pending.kind === 'cert' ? `/seafarers/${id}/certificates/${pending.id}` : `/seafarers/${id}/service/${pending.id}`;
     api.delete(url).then(() => { dispatch(notify(pending.kind === 'cert' ? t('seafarers.certificateDeleted') : t('seafarers.serviceDeleted'))); setPending(null); load(); }).catch(err).finally(() => setBusy(false));
   };
+  const verifyEmployment = () => {
+    setBusy(true);
+    api.post(`/seafarers/${id}/verify-employment`).then(() => { dispatch(notify(t('seafarers.employmentVerified'))); load(); }).catch(err).finally(() => setBusy(false));
+  };
   const expiryNote = (c: SeafarerCertificate) => { const d = daysLeft(c.expiryDate); return d < 0 ? t('seafarers.lapsedDaysAgo', { days: -d }) : t('seafarers.expiresInDays', { days: d }); };
 
   return (
@@ -104,9 +108,12 @@ export default function SeafarerDetail() {
       <PageHeader crumbs={[{ label: t('seafarers.crumbRegister'), to: '/seafarers' }, { label: doc.name }]}
         title={<Stack direction="row" spacing={1.25} alignItems="center" flexWrap="wrap" useFlexGap><span>{doc.name}</span><StatusChip value={doc.status} map={SEAFARER_STATUS_META} /></Stack>}
         sub={`${ranks.label(doc.rankCode) || doc.rank} · CDC ${doc.cdcNo} · ${idLabel} ${doc.seafarerId || '—'} · ${doc.nationality || '—'}`}
-        actions={canEdit && (doc.currentVesselId
-          ? <Button variant="outlined" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOff')}</Button>
-          : <Button variant="contained" startIcon={<DirectionsBoatRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOn')}</Button>)} />
+        actions={canEdit && <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button variant="outlined" startIcon={<VerifiedRoundedIcon />} disabled={busy} onClick={verifyEmployment} data-testid="verify-employment">{t('seafarers.verifyEmployment')}</Button>
+          {doc.currentVesselId
+            ? <Button variant="outlined" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOff')}</Button>
+            : <Button variant="contained" startIcon={<DirectionsBoatRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOn')}</Button>}
+        </Stack>} />
       <SignOnOffDialog seafarer={doc} open={signDlg} onClose={() => setSignDlg(false)} onDone={load} />
 
       <Card sx={{ p: 2.5, mb: 2 }}>
@@ -116,6 +123,7 @@ export default function SeafarerDetail() {
           <Grid item xs={6} md={2}><Item label={t('seafarers.totalSeaDays')} value={fmtNum(doc.totalSeaDays)} /></Grid>
           <Grid item xs={6} md={2}><Item label={t('seafarers.currentVessel')} value={doc.currentVesselId ? <EntityHover type="vessel" id={doc.currentVesselId}><span>{doc.currentVesselName}</span></EntityHover> : t('seafarers.ashore')} /></Grid>
           <Grid item xs={6} md={2}><Item label={t('seafarers.phone')} value={doc.phone || '—'} /></Grid>
+          <Grid item xs={6} md={2}><Item label={t('seafarers.employmentCheck')} value={doc.employmentCheck ? <Tooltip title={`${doc.employmentCheck.occupation} · ${t('seafarers.checkedAt', { when: fromNow(doc.employmentCheck.checkedAt) })}`}><Chip size="small" color={doc.employmentCheck.employed ? 'success' : 'warning'} label={doc.employmentCheck.employed ? t('seafarers.employed', { by: doc.employmentCheck.establishment }) : t('seafarers.notEmployed')} sx={{ height: 20, maxWidth: '100%' }} data-testid="employment-check" /></Tooltip> : t('seafarers.notChecked')} /></Grid>
           <Grid item xs={6} md={2}><Item label={t('seafarers.certAlerts')} value={doc.certAlerts ? <Chip size="small" color="warning" label={t('seafarers.toReview', { count: doc.certAlerts })} sx={{ height: 20 }} /> : t('seafarers.none')} /></Grid>
         </Grid>
       </Card>

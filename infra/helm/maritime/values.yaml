@@ -138,7 +138,7 @@ services:
   - { name: rules, tier: platform, port: 5408, image: maritime/rules }
   - { name: instruments, tier: platform, port: 5409, image: maritime/instruments }
   - { name: documents, tier: platform, port: 5410, image: maritime/documents }
-  - { name: integration-hub, tier: platform, port: 5411, image: maritime/integration-hub }
+  - { name: integration-hub, tier: platform, port: 5412, image: maritime/integration-hub }
   - { name: ships, tier: domain, port: 5421, image: maritime/ships }
   - { name: seafarers, tier: domain, port: 5422, image: maritime/seafarers }
   - { name: legislation, tier: domain, port: 5423, image: maritime/legislation }

@@ -93,16 +93,20 @@ test.describe('legislation — public portal and IMO watch', () => {
     await dialog.getByLabel('Assessment').fill('A national circular gives effect to this guidance (e2e).');
     await dialog.getByLabel('Due date').fill('2027-03-31');
     await dialog.getByRole('button', { name: 'Record' }).click();
-    await expect(page.locator('.MuiSnackbar-root').first()).toContainText('Recorded as Assessed');
+    await expect(page.locator('.MuiSnackbar-root').filter({ hasText: 'Recorded as Assessed' })).toBeVisible();
     // transpose it to an instrument on the register
     await page.getByLabel('Status').click();
     await page.getByRole('option', { name: 'Assessed' }).click();
     await page.getByRole('table').last().getByRole('row').nth(1).click();
     await dialog.getByLabel('Decision').click();
     await page.getByRole('option', { name: 'Transposed' }).click();
+    // the decision menu is gone before the instrument is looked up, so the option picked next is the instrument's, not a fading menu entry
+    await expect(dialog.getByLabel('Decision')).toHaveText('Transposed');
+    await expect(page.getByRole('listbox')).toHaveCount(0);
     await dialog.getByLabel('National instrument').fill('CIRC');
-    await page.getByRole('option').first().click();
+    await page.getByRole('listbox', { name: 'National instrument' }).getByRole('option').first().click();
+    await expect(dialog.getByLabel('National instrument')).toHaveValue(/ — /);
     await dialog.getByRole('button', { name: 'Record' }).click();
-    await expect(page.locator('.MuiSnackbar-root').first()).toContainText('Recorded as Transposed');
+    await expect(page.locator('.MuiSnackbar-root').filter({ hasText: 'Recorded as Transposed' })).toBeVisible();
   });
 });

@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { EVENTS, makeEvent, subjectFor, type EventEnvelope } from '@maritime/contracts';
 import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, enqueue, withInbox, type EventBus, type Queryable, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
-import { iso, num, publishState, toApi, updateInvoice, type Row } from './invoicing';
+import { applySettlement, iso, num, publishState, toApi, updateInvoice, type Row } from './invoicing';
 import { issueInvoice, raiseForCall } from './invoices.controller';
 import { projectSnapshot } from './subjects';
 
@@ -69,6 +69,7 @@ export async function remindOverdue(c: Queryable, env: Env, cause: EventEnvelope
 }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
+  if (event.type === EVENTS.integration.inboundReceived) { await onInbound(c, deps, event); return; }
   if (event.type === EVENTS.ports.sailed) { await onSailed(c, deps, event); return; }
   if (event.type === EVENTS.ports.berthed) { await onBerthed(c, deps, event); return; }
   if (event.type === EVENTS.ports.cancelled) { await onCallCancelled(c, deps, event); return; }
@@ -76,7 +77,22 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   await projectSnapshot(c, event);
 }
 
+/** The payment gateway's callback, delivered through the hub's signed inbound endpoint: a settlement pays the account. */
+export async function onInbound(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<boolean> {
+  const d = (event.data ?? {}) as { adapter?: string; eventType?: string; payload?: Record<string, unknown> };
+  if (d.adapter !== 'payment') return false;
+  const payload = d.payload ?? {};
+  const reference = String(payload.reference ?? ''); const invoiceNo = String(payload.invoiceNo ?? '');
+  if (!reference && !invoiceNo) return false;
+  const found = await c.query<Row>(
+    "SELECT * FROM invoices WHERE (payment_intent->>'reference' = $1 AND $1 <> '') OR (number = $2 AND $2 <> '') LIMIT 1 FOR UPDATE", [reference, invoiceNo]);
+  const row = found.rows[0]; if (!row) return false;
+  await applySettlement(c, deps.env, deps.audit, row, { status: String(payload.status ?? ''), settledAt: payload.settledAt ? String(payload.settledAt) : null, method: payload.method ? String(payload.method) : null, by: 'Payment gateway' });
+  return true;
+}
+
 export const SUBJECTS = [
+  subjectFor(EVENTS.integration.inboundReceived),
   subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted), subjectFor(EVENTS.mdm.companyUpserted),
   subjectFor(EVENTS.ports.sailed), subjectFor(EVENTS.ports.berthed), subjectFor(EVENTS.ports.cancelled), subjectFor(EVENTS.scheduler.digestInvoices),
 ];

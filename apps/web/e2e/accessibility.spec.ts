@@ -37,8 +37,8 @@ const STATIC_ROUTES = [
   '/incidents', '/incidents/overview', '/incidents/risk-matrix', '/nmc/map', '/nmc/incidents',
   '/inspections', '/inspections/overview', '/checklist-builder', '/risk', '/risk/targeting',
   '/invoices', '/mis', '/reports', '/agents', '/agents/decisions', '/agents/escalations', '/agents/assurance',
-  '/platform', '/platform/slas', '/platform/incidents', '/platform/compliance',
-  '/admin/users', '/admin/roles', '/admin/access-reviews', '/admin/audit', '/admin/settings', '/settings/module/admin', '/masters', '/profile',
+  '/platform', '/platform/slas', '/platform/incidents', '/platform/compliance', '/platform/integrations',
+  '/admin/users', '/admin/roles', '/admin/access-reviews', '/admin/audit', '/admin/settings', '/settings/module/admin', '/admin/settings?tab=integrations', '/masters', '/profile',
 ];
 
 /** Detail screens need a real record; the id comes from the API so the sweep follows the seeded world. */

@@ -122,8 +122,12 @@ export const EVENTS = {
     // added by the revenue service: the rest of the invoice lifecycle, the overdue sweep and rate-card changes
     invoiceDrafted: 'revenue.invoice.drafted', invoiceUpdated: 'revenue.invoice.updated', invoicePaid: 'revenue.invoice.paid', invoiceCancelled: 'revenue.invoice.cancelled', invoiceDeleted: 'revenue.invoice.deleted', invoiceOverdue: 'revenue.invoice.overdue', tariffChanged: 'revenue.tariff.changed',
   },
-  integration: { externalSyncCompleted: 'integration.external-sync.completed' },
-  scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant' },
+  integration: {
+    externalSyncCompleted: 'integration.external-sync.completed',
+    // added with the dynamic adapters: an operator changed how a counterpart is reached, a call ran out of attempts, a counterpart pushed a delivery
+    adapterChanged: 'integration.adapter.changed', callDead: 'integration.call.dead', inboundReceived: 'integration.inbound.received',
+  },
+  scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant', pollAisPositions: 'scheduler.poll.ais-positions' },
   ai: {
     draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded',
     // added by the agentic runtime: the escalation the autonomy ladder forced, the human outcome on it, and every change to what an agent is allowed to do

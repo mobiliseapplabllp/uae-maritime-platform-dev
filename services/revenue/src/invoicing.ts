@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NATIONAL_SCOPE, type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
+import { AuditClient, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
 import { INVOICE_SCOPE } from './scope';
 import type { Env } from './env';
 
@@ -19,12 +19,14 @@ export interface Line { code: string; description: string; unit: string; qty: nu
 export interface BillTo { companyId: string | null; name: string; address: string; taxId: string; taxIdLabel: string }
 export interface Payment { id: string; at: string; amount: number; ref: string; method: string; by: string; note: string }
 export interface HistoryEntry { from: string; to: string; at: string; by: string; note: string }
+/** The payment gateway's intent for an invoice, as last heard. */
+export interface PaymentIntent { reference: string; status: string; redirectUrl?: string | null; amountMinor: number; currency: string; createdAt: string; updatedAt: string; mode: string; callId?: string; settledAt?: string | null; method?: string | null }
 export interface Row {
   /** Tenancy partition, projected into the read models so reporting enforces the same predicate. */ scope_company: string;
   id: string; number: string; port_call_id: string | null; vcn: string; vessel_id: string | null; vessel_name: string; vessel_imo: string;
   bill_to: BillTo; lines: Line[]; subtotal: string | number; tax_name: string; tax_rate_pct: string | number; tax_amount: string | number; total: string | number; currency: string;
   status: string; proforma: boolean; issued_at: Date | null; due_at: Date | null; paid_at: Date | null; paid_amount: string | number; payment_ref: string;
-  payments: Payment[]; cancel_reason: string; notes: string; history: HistoryEntry[]; reminded_at: Date | null; created_at: Date; updated_at: Date;
+  payments: Payment[]; cancel_reason: string; notes: string; history: HistoryEntry[]; reminded_at: Date | null; payment_intent: PaymentIntent | null; created_at: Date; updated_at: Date;
 }
 
 /** Lines rounded to two decimals, then subtotal and tax summed in minor units. */
@@ -81,7 +83,7 @@ export function toApi(r: Row) {
     subtotal: num(r.subtotal), taxName: r.tax_name, taxRatePct: num(r.tax_rate_pct), taxAmount: num(r.tax_amount), total, currency: r.currency,
     status: r.status as InvoiceStatus, proforma: r.proforma, issuedAt: iso(r.issued_at), dueAt: iso(r.due_at), paidAt: iso(r.paid_at),
     paidAmount: paid, balance: round2(total - paid), paymentRef: r.payment_ref, payments: r.payments ?? [], cancelReason: r.cancel_reason, notes: r.notes,
-    history: r.history ?? [], overdue: r.status === 'ISSUED' && !!r.due_at && r.due_at.getTime() < Date.now(),
+    history: r.history ?? [], overdue: r.status === 'ISSUED' && !!r.due_at && r.due_at.getTime() < Date.now(), paymentIntent: r.payment_intent ?? null,
     createdAt: iso(r.created_at)!, updatedAt: iso(r.updated_at)!,
   };
 }
@@ -101,8 +103,8 @@ export async function lockInvoice(c: Queryable, ref: string, scope: TenancyScope
   const l = await c.query<{ id: string }>(`SELECT id FROM invoices WHERE ${where.join(' AND ')} FOR UPDATE`, args);
   return l.rows[0] ? findInvoice(c, l.rows[0].id, scope) : null;
 }
-const COLS: Record<string, string> = { number: 'number', portCallId: 'port_call_id', vcn: 'vcn', vesselId: 'vessel_id', vesselName: 'vessel_name', vesselImo: 'vessel_imo', billTo: 'bill_to', lines: 'lines', subtotal: 'subtotal', taxName: 'tax_name', taxRatePct: 'tax_rate_pct', taxAmount: 'tax_amount', total: 'total', currency: 'currency', status: 'status', proforma: 'proforma', issuedAt: 'issued_at', dueAt: 'due_at', paidAt: 'paid_at', paidAmount: 'paid_amount', paymentRef: 'payment_ref', payments: 'payments', cancelReason: 'cancel_reason', notes: 'notes', history: 'history', remindedAt: 'reminded_at' };
-export type Patch = Partial<{ number: string; portCallId: string | null; vcn: string; vesselId: string | null; vesselName: string; vesselImo: string; billTo: BillTo; lines: Line[]; subtotal: number; taxName: string; taxRatePct: number; taxAmount: number; total: number; currency: string; status: string; proforma: boolean; issuedAt: Date | null; dueAt: Date | null; paidAt: Date | null; paidAmount: number; paymentRef: string; payments: Payment[]; cancelReason: string; notes: string; history: HistoryEntry[]; remindedAt: Date | null }>;
+const COLS: Record<string, string> = { number: 'number', portCallId: 'port_call_id', vcn: 'vcn', vesselId: 'vessel_id', vesselName: 'vessel_name', vesselImo: 'vessel_imo', billTo: 'bill_to', lines: 'lines', subtotal: 'subtotal', taxName: 'tax_name', taxRatePct: 'tax_rate_pct', taxAmount: 'tax_amount', total: 'total', currency: 'currency', status: 'status', proforma: 'proforma', issuedAt: 'issued_at', dueAt: 'due_at', paidAt: 'paid_at', paidAmount: 'paid_amount', paymentRef: 'payment_ref', payments: 'payments', cancelReason: 'cancel_reason', notes: 'notes', history: 'history', remindedAt: 'reminded_at', paymentIntent: 'payment_intent' };
+export type Patch = Partial<{ number: string; portCallId: string | null; vcn: string; vesselId: string | null; vesselName: string; vesselImo: string; billTo: BillTo; lines: Line[]; subtotal: number; taxName: string; taxRatePct: number; taxAmount: number; total: number; currency: string; status: string; proforma: boolean; issuedAt: Date | null; dueAt: Date | null; paidAt: Date | null; paidAmount: number; paymentRef: string; payments: Payment[]; cancelReason: string; notes: string; history: HistoryEntry[]; remindedAt: Date | null; paymentIntent: PaymentIntent | null }>;
 export async function updateInvoice(c: Queryable, id: string, patch: Patch): Promise<Row> {
   const keys = Object.keys(patch).filter((k) => COLS[k] && (patch as Record<string, unknown>)[k] !== undefined);
   if (keys.length) {
@@ -136,4 +138,39 @@ export async function publishState(c: Queryable, env: Env, r: Row, opts: { event
 export async function publishDeleted(c: Queryable, env: Env, r: Row) {
   await enqueue(c, eventFromContext(env.SERVICE_NAME, EVENTS.readModel.deleted, { kind: 'invoice', id: r.id }, { subject: r.id }));
   await enqueue(c, eventFromContext(env.SERVICE_NAME, EVENTS.revenue.invoiceDeleted, { invoiceId: r.id, number: r.number, portCallId: r.port_call_id, vcn: r.vcn }, { subject: r.id }));
+}
+
+/* ------------------------------------------------------------------------------------- settlement --- */
+export interface SettleInput { amount?: number; ref: string; method: string; by: string; note: string; at?: string | Date | null }
+/** A payment, in part or in full, applied to an issued account. The one place money is recorded, whoever brings it —
+ *  a clerk at the counter or the gateway's callback. The account settles only when what has been received covers it. */
+export async function settle(c: Queryable, env: Env, audit: AuditClient, before: Row, p: SettleInput): Promise<Row> {
+  if (before.status !== 'ISSUED') throw conflict(`Only an issued invoice can be paid — this one is ${before.status.toLowerCase()}`);
+  const total = num(before.total); const already = num(before.paid_amount);
+  const outstanding = round2(total - already);
+  const amount = round2(p.amount ?? outstanding);
+  if (amount <= 0) throw badRequest('A payment must be greater than zero');
+  if (amount > outstanding + 0.005) throw badRequest(`That is more than the ${round2(outstanding)} outstanding on this invoice`);
+  const at = p.at && !Number.isNaN(new Date(p.at).getTime()) ? new Date(p.at) : new Date();
+  const payment: Payment = { id: newId(), at: at.toISOString(), amount, ref: p.ref, method: p.method, by: p.by, note: p.note };
+  const paid = round2(already + amount); const settled = paid >= total - 0.005;
+  const history: HistoryEntry[] = [...(before.history ?? []), { from: before.status, to: settled ? 'PAID' : 'ISSUED', at: at.toISOString(), by: payment.by, note: `${settled ? 'Settled' : 'Part payment'} ${amount}${payment.ref ? ` — ${payment.ref}` : ''}` }];
+  const row = await updateInvoice(c, before.id, { payments: [...(before.payments ?? []), payment], paidAmount: paid, paymentRef: payment.ref || before.payment_ref, status: settled ? 'PAID' : 'ISSUED', paidAt: settled ? at : null, history });
+  await audit.record(c, { action: 'PAY', entity: 'Invoice', entityId: row.id, entityLabel: `${row.number} — ${payment.ref || 'no ref'}`, before: { status: before.status, paidAmount: already }, after: { status: row.status, paidAmount: paid }, note: `${amount} received` });
+  await publishState(c, env, row, { event: EVENTS.revenue.paymentReceived, data: { amount, paidAmount: paid, balance: round2(total - paid), settled, paymentRef: payment.ref, method: payment.method } });
+  if (settled) await publishState(c, env, row, { event: EVENTS.revenue.invoicePaid, data: { paidAt: iso(row.paid_at), paymentRef: payment.ref } });
+  return row;
+}
+
+/** What the gateway said about an intent, recorded on the invoice; a settlement pays the balance once, however many times it is heard. */
+export async function applySettlement(c: Queryable, env: Env, audit: AuditClient, before: Row, s: { status: string; settledAt?: string | null; method?: string | null; mode?: string; by: string }): Promise<Row> {
+  const intent = before.payment_intent; if (!intent?.reference) return before;
+  const status = String(s.status || intent.status).toUpperCase();
+  const next: PaymentIntent = { ...intent, status, settledAt: s.settledAt ?? intent.settledAt ?? null, method: s.method ?? intent.method ?? null, mode: s.mode ?? intent.mode, updatedAt: new Date().toISOString() };
+  let row = await updateInvoice(c, before.id, { paymentIntent: next });
+  const alreadySettled = (before.payments ?? []).some((p) => p.ref === intent.reference);
+  if (status === 'SETTLED' && before.status === 'ISSUED' && !alreadySettled) {
+    row = await settle(c, env, audit, row, { ref: intent.reference, method: 'GATEWAY', by: s.by, note: `Settled by the payment gateway${s.method ? ` (${s.method})` : ''}`, at: s.settledAt ?? null });
+  }
+  return row;
 }

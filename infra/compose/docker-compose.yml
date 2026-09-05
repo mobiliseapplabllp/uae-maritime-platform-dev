@@ -229,10 +229,10 @@ services:
   integration-hub:
     <<: *service
     profiles: [planned]
-    build: { <<: *build, args: { SERVICE: services/integration-hub, PORT: "5411" } }
+    build: { <<: *build, args: { SERVICE: services/integration-hub, PORT: "5412" } }
     image: maritime/integration-hub:${IMAGE_TAG:-dev}
-    environment: { <<: *common-env, SERVICE_NAME: integration-hub, PORT: "5411", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_integration" }
-    ports: ["5411:5411"]
+    environment: { <<: *common-env, SERVICE_NAME: integration-hub, PORT: "5412", DATABASE_URL: "postgres://${POSTGRES_USER:-maritime}:${POSTGRES_PASSWORD:-maritime}@postgres:5432/maritime_integration" }
+    ports: ["5412:5412"]
 
   # ---- domain services ---------------------------------------------------------------------------------
   ships:

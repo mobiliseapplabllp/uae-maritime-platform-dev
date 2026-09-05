@@ -181,6 +181,7 @@ const en = {
     },
   },
   invoices: {
+    payOnline: 'Offer online payment', payOnlineDone: 'Payment intent opened with the gateway', checkSettlement: 'Check settlement', settlementChecked: 'Settlement checked with the gateway', paymentIntentLine: 'Online payment {{ref}} · {{status}}', paymentLink: 'payment link',
     title: 'Revenue & Billing', sub: 'Port charges billed per call — draft, issue and collect',
     searchPlaceholder: 'Search invoice no, vessel, call or payer…', empty: 'No invoices match this view',
     tariffs: 'Tariffs', invoiceNo: 'Invoice no', vessel: 'Vessel', call: 'Call', billedTo: 'Billed to', status: 'Status',
@@ -222,6 +223,7 @@ const en = {
     benchmark: 'Benchmark', target: 'Target', basis: 'Basis', source: 'Source', confirmed: 'Confirmed', unverified: 'Unverified',
   },
   seafarers: {
+    verifyEmployment: 'Verify employment', employmentVerified: 'Employment verified with the labour ministry', employmentCheck: 'Employment (ministry)', employed: 'Employed · {{by}}', notEmployed: 'Not employed', notChecked: 'Not checked', checkedAt: 'checked {{when}}',
     placedBy: 'Placed by', directEngagement: 'Direct engagement', manningAgent: 'Manning agent',
     crumbRegister: 'Crew register',
     registerTitle: 'Crew & Manning', registerSub: 'Seafarer identity, competency documents and verified sea service',
@@ -387,6 +389,7 @@ const en = {
     outbox: { title: 'Unpublished events', help: 'Events written inside a transaction but not yet on the bus. A few in flight is normal; a backlog that persists means data is drifting between services.' },
     sla: { title: 'Service Levels', subtitle: 'Measured as real requests through the gateway — the path a client actually takes, timed end to end', now: 'Now', target: 'Target', p95: 'P95 24h', p50: 'Median', building: 'Collecting — a trend appears once there is more than one hour of history.' },
     incidents: { title: 'Outage History', subtitle: 'State changes recorded with measured durations, including restarts detected from uptime going backwards', all: 'All', openOnly: 'Open', target: 'Target', kind: 'Kind', started: 'Started', ended: 'Ended', duration: 'Duration', detail: 'Detail', ongoing: 'Ongoing', none: 'No incidents recorded.', restartedFrom: 'restarted — previous uptime {{sec}}s' },
+    integrations: { title: 'Integrations', subtitle: 'Every counterpart the platform speaks to, as an adapter — where it points, how it authenticates, and what it has done lately' },
     compliance: {
       title: 'RFP Compliance',
       subtitle: '{{n}} commitments from the RFP and Technical Architecture Document traced against the code that exists — compiled {{at}}',

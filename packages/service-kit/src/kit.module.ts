@@ -13,6 +13,7 @@ import { JwksCache, verifyJwt } from './auth/jwt';
 import { HealthController } from './health';
 import { TelemetryController } from './telemetry';
 import { SettingsClient } from './settings-client';
+import { IntegrationClient } from './integration-client';
 import { createCache, type Cache } from './cache';
 import { createSearch, type SearchAdapter } from './search';
 import type { BaseEnv } from './config';
@@ -95,6 +96,7 @@ export class KitModule {
       { provide: KIT_BUS, useFactory: async (): Promise<EventBus> => (env.EVENT_BUS === 'nats' && env.NATS_URL ? NatsBus.connect(env.NATS_URL, logger) : new MemoryBus()) },
       { provide: KIT_RELAY, useFactory: (bus: EventBus) => { const r = new OutboxRelay(handle.pool, bus, logger); r.start(); return r; }, inject: [KIT_BUS] },
       { provide: KIT_SETTINGS, useFactory: () => new SettingsClient(env.MDM_URL, env.SERVICE_TOKEN) },
+      { provide: IntegrationClient, useFactory: () => new IntegrationClient(env.INTEGRATION_HUB_URL, env.SERVICE_TOKEN) },
       { provide: KIT_CACHE, useFactory: (): Promise<Cache> => createCache(env, (err) => logger.warn({ err: err.message }, 'cache backend error')) },
       { provide: KIT_SEARCH, useFactory: (): SearchAdapter => createSearch(env, handle.pool, (err) => logger.warn({ err: err.message }, 'search engine unavailable, answering from PostgreSQL')) },
       { provide: KitLifecycle, useFactory: async (relay: OutboxRelay, bus: EventBus, cache: Cache, resolver: PrincipalResolver, settings: SettingsClient) => {
@@ -111,7 +113,7 @@ export class KitModule {
       module: KitModule,
       controllers: [HealthController, TelemetryController],
       providers,
-      exports: [KIT_ENV, 'KIT_SERVICE_NAME', 'KIT_SERVICE_TOKEN', KIT_LOGGER, KIT_POOL, KIT_DB, KIT_BUS, KIT_RELAY, KIT_SETTINGS, KIT_CACHE, KIT_SEARCH, TOKEN_VERIFIER, PRINCIPAL_RESOLVER, AuditClient],
+      exports: [KIT_ENV, 'KIT_SERVICE_NAME', 'KIT_SERVICE_TOKEN', KIT_LOGGER, KIT_POOL, KIT_DB, KIT_BUS, KIT_RELAY, KIT_SETTINGS, KIT_CACHE, KIT_SEARCH, TOKEN_VERIFIER, PRINCIPAL_RESOLVER, AuditClient, IntegrationClient],
     };
   }
 }

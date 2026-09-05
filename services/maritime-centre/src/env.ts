@@ -17,6 +17,8 @@ export const envSchema = baseEnvSchema.extend({
   TRACK_HISTORY_HOURS: z.coerce.number().default(24),
   /** A fix older than this is stale: the target stays on the picture but the watch is told the feed has gone quiet. */
   POSITION_STALE_MIN: z.coerce.number().default(45),
+  /** How often the scheduler reads the AIS/LRIT feed; the traffic screen shows it beside the last read. */
+  AIS_POLL_MINUTES: z.coerce.number().int().min(1).default(2),
   /** Forces the geodesic path even where PostGIS is installed. Its reason for existing is that the
    *  two implementations must agree: the test suite runs the same queries both ways over the same
    *  rows, and an operator can do the same to check a result they doubt. */

@@ -1,8 +1,9 @@
 import { Body, Controller, Get, Inject, Param, Post, Query } from '@nestjs/common';
+import { DeliveryService, deliveryApi, type DeliveryRow } from './delivery';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { hasPerm, NOTIFICATION_SEVERITIES, WILDCARD } from '@maritime/contracts';
-import { KIT_POOL, CurrentUser, ServiceOnly, zod, notFound, type Principal, getContext } from '@maritime/service-kit';
+import { KIT_POOL, CurrentUser, RequirePerm, ServiceOnly, zod, notFound, type Principal, getContext } from '@maritime/service-kit';
 
 interface Row { id: string; title: string; title_ar: string | null; body: string; body_ar: string | null; severity: string; link: string | null; audience_perm: string | null; user_id: string | null; source: string; event_type: string | null; created_at: Date; read_at: Date | null }
 const toApi = (r: Row, lang: string) => ({ id: r.id, title: lang === 'ar' && r.title_ar ? r.title_ar : r.title, body: lang === 'ar' && r.body_ar ? r.body_ar : r.body, severity: r.severity, link: r.link, audiencePerm: r.audience_perm, source: r.source, eventType: r.event_type, createdAt: r.created_at, read: !!r.read_at });
@@ -11,7 +12,7 @@ const createSchema = z.object({ title: z.string().min(1).max(200), titleAr: z.st
 /** Permission-audience fan-out: a notification addressed to `dashboard.view` reaches everyone who holds it; per-user rows reach one person. */
 @Controller('notifications')
 export class NotificationsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, private readonly delivery: DeliveryService) {}
   private audienceClause(user: Principal, args: unknown[]): string {
     args.push(user.id);
     const userIdx = args.length;
@@ -45,6 +46,22 @@ export class NotificationsController {
   async create(@Body(zod(createSchema)) b: z.infer<typeof createSchema>) {
     const r = await this.pool.query<Row>('INSERT INTO notifications(title, title_ar, body, body_ar, severity, link, audience_perm, user_id, source, event_type) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *, NULL::timestamptz AS read_at',
       [b.title, b.titleAr ?? null, b.body, b.bodyAr ?? null, b.severity, b.link ?? null, b.audiencePerm ?? (b.userId ? null : 'dashboard.view'), b.userId ?? null, b.source, b.eventType ?? null]);
-    return toApi(r.rows[0], 'en');
+    const row = r.rows[0];
+    // one person's notification also goes to their inbox and phone, as the settings allow; a broadcast stays on the bell
+    const deliveries = b.userId ? await this.delivery.deliver({ id: row.id, title: b.title, body: b.body, link: b.link ?? null, severity: b.severity }, await this.delivery.contactOf(b.userId)) : [];
+    return { ...toApi(row, 'en'), deliveries: deliveries.map(deliveryApi) };
+  }
+
+  /** What left the platform: every email and SMS attempt, with the last day summed up. */
+  @RequirePerm('platform.view', 'settings.view') @Get('deliveries')
+  async deliveries(@Query('limit') limit?: string, @Query('status') status?: string) {
+    const n = Math.min(200, Math.max(1, Number(limit) || 50));
+    const args: unknown[] = [n]; let where = '';
+    if (status && ['sent', 'failed', 'skipped'].includes(status)) { args.push(status); where = 'WHERE status = $2'; }
+    const rows = await this.pool.query<DeliveryRow>(`SELECT * FROM deliveries ${where} ORDER BY created_at DESC LIMIT $1`, args);
+    const day = await this.pool.query<{ channel: string; status: string; n: string }>("SELECT channel, status, count(*)::text AS n FROM deliveries WHERE created_at > now() - interval '24 hours' GROUP BY channel, status");
+    const last24h: Record<string, Record<string, number>> = { email: { sent: 0, failed: 0, skipped: 0 }, sms: { sent: 0, failed: 0, skipped: 0 } };
+    for (const r of day.rows) last24h[r.channel][r.status] = Number(r.n);
+    return { items: rows.rows.map(deliveryApi), last24h };
   }
 }

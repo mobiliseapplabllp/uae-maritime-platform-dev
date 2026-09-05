@@ -21,7 +21,7 @@ export const toSafe = (u: UserRow) => ({
   lastLoginAt: u.last_login_at, createdAt: u.created_at, updatedAt: u.updated_at,
 });
 export const toPrincipal = (u: UserRow): Principal => ({
-  id: u.id, sub: u.subject ?? u.id, name: u.name, email: u.email, roleName: u.role_name, perms: u.role_permissions ?? [], scope: (u.scope as never) ?? { level: 'NATIONAL' }, kind: (u.kind as Principal['kind']) ?? 'user', active: u.active,
+  id: u.id, sub: u.subject ?? u.id, name: u.name, email: u.email, phone: u.phone || undefined, roleName: u.role_name, perms: u.role_permissions ?? [], scope: (u.scope as never) ?? { level: 'NATIONAL' }, kind: (u.kind as Principal['kind']) ?? 'user', active: u.active,
 });
 const SELECT = `SELECT u.*, r.name AS role_name, r.permissions AS role_permissions, r.mfa_required AS role_mfa_required,
   p.id AS pending_change_id, p.kind AS pending_change_kind

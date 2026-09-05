@@ -10,8 +10,10 @@ import { LIVE_STATUS, iso, type IncidentRow, type Row } from './incidents';
 import { incidentRowApi } from './incidents';
 import {
   ALERT_SEVERITIES, ALERT_TYPES, NAV_STATUS, RESTRICTION_KINDS, alertApi, chartZones, coverageNote, portCentre, positionApi, publishAlert, publishPosition, publishRestriction,
-  restrictionApi, restrictionZones, trackSummary, type AlertRow, type PositionRow, type RestrictionRow, type VesselFacts,
+  restrictionApi, restrictionZones, trackSummary, recordFix, type AlertRow, type PositionRow, type RestrictionRow, type VesselFacts,
 } from './tracking';
+import { AIS_SOURCE, feedApi, feedState, pollAis } from './feed';
+import { IntegrationClient } from '@maritime/service-kit';
 
 /* Tracking and surveillance.
  *
@@ -48,7 +50,7 @@ const decisionBody = z.object({ status: z.enum(['APPROVED', 'REJECTED', 'WITHDRA
 
 @Controller('tracking')
 export class TrackingController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   private async vesselFacts(ids: string[]): Promise<Map<string, VesselFacts>> {
     if (!ids.length) return new Map();
@@ -112,31 +114,22 @@ export class TrackingController {
     };
   }
 
+  /** The feed's own account of itself: when it was last read and what came of it. */
+  @RequirePerm('nmc.view') @Get('feed')
+  async feed() { return feedApi(await feedState(this.pool), this.env.AIS_POLL_MINUTES); }
+
+  /** Read the feed now rather than at the next scheduled minute — after switching the adapter live, for instance. */
+  @RequirePerm('nmc.manage', 'settings.manage') @Post('feed/poll')
+  async pollNow(@CurrentUser() user: Principal) {
+    const out = await withTx(this.pool, async (c) => pollAis(c, { env: this.env, hub: this.hub }, { correlationId: `feed:${user.id}` }));
+    await this.audit.record(this.pool, { action: 'POLL', entity: 'Feed', entityId: AIS_SOURCE, entityLabel: 'AIS/LRIT feed', after: { status: out.status, mode: out.mode, received: out.received, matched: out.matched } });
+    return out;
+  }
+
   /** The AIS adapter's way in. Service-only: a ship's position is reported by the feed, never typed by a person. */
   @ServiceOnly() @Post('positions')
   async ingest(@Body(zod(fixBody)) body: z.infer<typeof fixBody>) {
-    return withTx(this.pool, async (c) => this.recordFix(c, body));
-  }
-
-  private async recordFix(c: PoolClient, body: z.infer<typeof fixBody>) {
-    const receivedAt = body.receivedAt ? new Date(body.receivedAt) : new Date();
-    if (Number.isNaN(receivedAt.getTime())) throw badRequest('Received-at is not a valid date');
-    const speed = body.speed ?? body.sog ?? 0;
-    const course = Math.round(body.course ?? body.cog ?? 0);
-    const v = await c.query<Row>('SELECT * FROM vessels WHERE id = $1', [body.vesselId]);
-    const vessel = v.rows[0];
-    const r = await c.query<PositionRow>(
-      `INSERT INTO positions(vessel_id, vessel_name, mmsi, lat, lon, sog, cog, heading, nav_status, destination, source, received_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       ON CONFLICT (vessel_id) DO UPDATE SET vessel_name = EXCLUDED.vessel_name, mmsi = EXCLUDED.mmsi, lat = EXCLUDED.lat, lon = EXCLUDED.lon, sog = EXCLUDED.sog,
-         cog = EXCLUDED.cog, heading = EXCLUDED.heading, nav_status = EXCLUDED.nav_status, destination = EXCLUDED.destination, source = EXCLUDED.source,
-         received_at = EXCLUDED.received_at, updated_at = now() RETURNING *`,
-      [body.vesselId, body.vesselName ?? vessel?.name ?? '', body.mmsi ?? vessel?.mmsi ?? '', body.lat, body.lon, speed, course,
-        Math.round(body.heading ?? course), body.navStatus, body.destination ?? '', body.source ?? 'AIS-T (simulated)', receivedAt]);
-    const p = r.rows[0];
-    await c.query('INSERT INTO position_history(vessel_id, lat, lon, sog, cog, nav_status, received_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
-      [p.vessel_id, body.lat, body.lon, speed, course, body.navStatus, receivedAt]);
-    return publishPosition(c, this.env, p, vessel ? { id: vessel.id, name: vessel.name, imo: vessel.imo, type: vessel.type, flag: vessel.flag, status: vessel.status } : undefined);
+    return withTx(this.pool, async (c) => recordFix(c, this.env, body));
   }
 
   /* --------------------------------------------------------------------------- alerts --- */

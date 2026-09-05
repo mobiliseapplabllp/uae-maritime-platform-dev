@@ -63,8 +63,12 @@ export interface FacilityRow {
   id: string; code: string; name: string; name_ar: string | null; facility_type: string; terminal: string; berth_type: string;
   operator_id: string | null; operator_name: string; isps_status: string; isps_level: number; soc_no: string; soc_expiry: Date | null;
   psso_name: string; psso_phone: string; capabilities: string[]; loa_max: string | null; draft_max: string | null;
-  capacity_value: string | null; capacity_unit: string; status: string; remarks: string; created_at: Date; updated_at: Date;
+  capacity_value: string | null; capacity_unit: string; status: string; remarks: string;
+  /** The federal authority's security review, as submitted and as last reported. */
+  icp_review: IcpReview | null;
+  created_at: Date; updated_at: Date;
 }
+export interface IcpReview { reference: string; status: string; reason: string; requestedAt: string; requestedBy: string; expectedBy: string | null; decidedAt: string | null; conditions: unknown[]; checkedAt: string; mode: string; callId?: string }
 export interface AuditRow {
   id: string; number: string; subject_kind: string; subject_id: string; subject_name: string; audited_on: Date;
   auditor_id: string | null; auditor: string; result: string; scope: string; remarks: string; instrument_id: string | null; instrument_no: string; created_at: Date;
@@ -197,6 +201,7 @@ export function facilityApi(f: FacilityRow, extra: FacilityExtras = {}, now = ne
     ispsStatus: f.isps_status, ispsLevel: f.isps_level, socNo: f.soc_no, socExpiry: iso(f.soc_expiry),
     ispsInForce: f.isps_status === 'COMPLIANT' && (!f.soc_expiry || new Date(f.soc_expiry).getTime() > now.getTime()),
     pssoName: f.psso_name, pssoPhone: f.psso_phone,
+    icpReview: f.icp_review ?? null,
     capabilities: f.capabilities ?? [], loaMax: num(f.loa_max), draftMax: num(f.draft_max),
     capacity: num(f.capacity_value), capacityUnit: f.capacity_unit, status: f.status, remarks: f.remarks,
     instruments, instrumentsHeld: instruments.length, audits, auditCount: audits.length,
@@ -347,3 +352,11 @@ export function directoryDashboard(input: DirectoryInput, now = new Date(), rene
   };
 }
 export type DirectoryDashboard = ReturnType<typeof directoryDashboard>;
+
+/** The authority's word on a review, recorded on the facility whether it was asked for or pushed. */
+export async function applyIcpOutcome(c: Queryable, before: FacilityRow, o: { status: string; decidedAt?: string | null; conditions?: unknown[]; mode?: string }): Promise<FacilityRow> {
+  const prev = before.icp_review; if (!prev) return before;
+  const next: IcpReview = { ...prev, status: String(o.status || prev.status).toUpperCase(), decidedAt: o.decidedAt ?? prev.decidedAt ?? null, conditions: o.conditions ?? prev.conditions ?? [], checkedAt: new Date().toISOString(), mode: o.mode ?? prev.mode };
+  const r = await c.query<FacilityRow>('UPDATE port_facilities SET icp_review = $2, updated_at = now() WHERE id = $1 RETURNING *', [before.id, JSON.stringify(next)]);
+  return r.rows[0];
+}

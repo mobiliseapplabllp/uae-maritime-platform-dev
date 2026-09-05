@@ -24,8 +24,11 @@ export interface SeafarerRow {
   current_vessel_id: string | null; current_vessel_name: string | null; signed_on_at: Date | null; remarks: string;
   /** The recruitment and placement service holding the engagement, and the tenancy key derived from it. */
   manning_agent_code: string; manning_agent_name: string; scope_company: string;
+  /** The labour ministry's last word on the engagement, when it was asked. */
+  employment_check: EmploymentCheck | null;
   created_at: Date; updated_at: Date;
 }
+export interface EmploymentCheck { checkedAt: string; checkedBy: string; mode: string; callId?: string; emiratesId: string; employed: boolean; establishment: string; establishmentLicence: string; occupation: string; validTo: string | null }
 export interface CertRow {
   id: string; seafarer_id: string; cert_type: string; cert_code: string; grade: string; number: string; issuer: string; issue_date: Date | null; expiry_date: Date;
   remarks: string; instrument_id: string | null; on_register: boolean; in_force: boolean | null; force_reason: string; signed: boolean;
@@ -77,6 +80,7 @@ export function seafarerApi(s: SeafarerRow, extra: SeafarerExtras = {}) {
     signedOnAt: iso(s.signed_on_at), remarks: s.remarks,
     manningAgentCode: s.manning_agent_code, manningAgentName: s.manning_agent_name,
     manningAgent: s.manning_agent_code ? { code: s.manning_agent_code, name: s.manning_agent_name } : null,
+    employmentCheck: s.employment_check ?? null,
     certAlerts: certificates.filter((c) => c.status !== 'VALID').length,
     totalSeaDays: seaService.reduce((t, x) => t + x.days, 0),
     seaServiceDays: seaService.reduce((t, x) => t + x.days, 0),

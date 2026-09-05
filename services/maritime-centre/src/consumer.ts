@@ -1,8 +1,9 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, IntegrationClient, KIT_BUS, KIT_ENV, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
+import { pollAis } from './feed';
 import { LIVE_STATUS, publishIncident, type CommRow, type DocRow, type HistoryRow, type IncidentRow, type LogRow, type Row, type TaskRow } from './incidents';
 import { projectSnapshot, refreshOpenIncidents, upsertPositionFromEvent } from './subjects';
 import { publishPosition, type PositionRow, type VesselFacts } from './tracking';
@@ -59,14 +60,17 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
 
 export const SUBJECTS = [
   subjectFor(EVENTS.readModel.upserted), subjectFor(EVENTS.readModel.deleted),
-  subjectFor(EVENTS.mdm.vesselUpserted), subjectFor(EVENTS.maritimeCentre.positionUpdated),
+  subjectFor(EVENTS.mdm.vesselUpserted), subjectFor(EVENTS.maritimeCentre.positionUpdated), subjectFor(EVENTS.scheduler.pollAisPositions),
 ];
 
 @Injectable()
 export class MaritimeCentreConsumer implements OnModuleInit, OnModuleDestroy {
   private sub?: Subscription;
-  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
   async onModuleInit() { this.sub = await this.bus.subscribe('maritime-centre-consumer', SUBJECTS, (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
-  async handle(event: EventEnvelope) { await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit }, event)); }
+  async handle(event: EventEnvelope) {
+    if (event.type === EVENTS.scheduler.pollAisPositions) { await withInbox(this.pool, event, async (c) => { await pollAis(c, { env: this.env, hub: this.hub }, { correlationId: `feed:${event.id}` }); }); return; }
+    await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit }, event));
+  }
 }

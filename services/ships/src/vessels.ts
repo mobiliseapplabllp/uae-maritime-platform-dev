@@ -29,8 +29,11 @@ export interface VesselRow {
   liner: boolean; real: boolean; status: string; remarks: string;
   registry_state: string; official_number: string; registry_port: string; certificate_no: string;
   registered_on: Date | null; certificate_expires_on: Date | null; closed_on: Date | null; closure_reason: string;
+  /** What the classification society last reported, when it was asked. */
+  class_status: ClassStatus | null;
   created_at: Date; updated_at: Date;
 }
+export interface ClassStatus { checkedAt: string; checkedBy: string; mode: string; callId?: string; society: string; class: string; status: string; surveysDue: { kind: string; dueBy: string }[]; conditions: unknown[]; certificates: { kind: string; no: string; issued?: string; expires?: string; status?: string }[] }
 export interface CertRow {
   id: string; vessel_id: string; cert_type: string; number: string; issuer: string; issue_date: Date | null; expiry_date: Date;
   remarks: string; instrument_id: string | null; on_register: boolean; in_force: boolean | null; force_reason: string; signed: boolean;
@@ -70,6 +73,7 @@ export function vesselApi(v: VesselRow, profile: string, extra: VesselExtras = {
     lastDryDock: iso(v.last_dry_dock), nextDryDock: iso(v.next_dry_dock), liner: v.liner, real: v.real, status: v.status, remarks: v.remarks,
     registry: registryOf(v, profile), registryState: v.registry_state,
     riskScore: extra.riskScore ?? null, riskBand: extra.riskBand ?? null,
+    classStatus: v.class_status ?? null,
     certificates: extra.certificates ?? [],
     createdAt: iso(v.created_at), updatedAt: iso(v.updated_at),
   };

@@ -2,14 +2,13 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { scopeWhere, scopeOfRecord, isNational, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, forbidden, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal } from '@maritime/service-kit';
+import { scopeWhere, scopeOfRecord, isNational, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, forbidden, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal, IntegrationClient, badGateway } from '@maritime/service-kit';
 import { SEAFARER_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import { backfillVocabulary, certRules, certVocab, rankVocab } from './vocab';
 import {
   SEAFARER_STATUS, certApi, certsOf, crewDashboard, documentGate, findSeafarer, iso, publishSeafarer, publishSeafarerDeleted,
-  seaDays, seafarerApi, seafarerCard, serviceApi, serviceOf, type CertRow, type Row, type SeafarerRow, type ServiceRow,
-} from './crew';
+  seaDays, seafarerApi, seafarerCard, serviceApi, serviceOf, type CertRow, type Row, type SeafarerRow, type ServiceRow, type EmploymentCheck } from './crew';
 
 /* The crew desk: the register, the record with its documents and service book, the crew dashboard, and the
  * two moves that matter operationally — signing a seafarer on to a ship and signing them off again. */
@@ -45,7 +44,7 @@ type ListQuery = PageQuery & { rank?: string; status?: string; nationality?: str
 
 @Controller('seafarers')
 export class SeafarersController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   private now() { return new Date(); }
   private async certsFor(ids: string[], now = new Date()) {
@@ -129,6 +128,20 @@ export class SeafarersController {
     if (!s) throw notFound('Seafarer not found');
     const now = this.now();
     return seafarerApi(s, { certificates: await certsOf(this.pool, s.id, now, this.env.CERT_EXPIRING_DAYS), seaService: await serviceOf(this.pool, s.id) });
+  }
+
+  /** Ask the labour ministry whether the engagement stands: employed, by whom, under which licence, until when. */
+  @RequirePerm('seafarers.edit') @Post(':id/verify-employment')
+  async verifyEmployment(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const s = await findSeafarer(this.pool, id, user.scope);
+    if (!s) throw notFound('Seafarer not found');
+    const emiratesId = s.national_id || s.seafarer_id || s.cdc_no;
+    const out = await this.hub.tryCall<{ employed?: boolean; establishment?: string; establishmentLicence?: string; occupation?: string; validTo?: string | null }>('mohre', 'verifyEmployment', { emiratesId }, { correlationId: `seafarer:${s.id}` });
+    if (out.status !== 'ok') throw badGateway(`labour ministry: ${out.error ?? out.status}`);
+    const check: EmploymentCheck = { checkedAt: new Date().toISOString(), checkedBy: user.name, mode: out.mode, callId: out.callId, emiratesId, employed: !!out.data?.employed, establishment: String(out.data?.establishment ?? ''), establishmentLicence: String(out.data?.establishmentLicence ?? ''), occupation: String(out.data?.occupation ?? ''), validTo: out.data?.validTo ?? null };
+    await this.pool.query('UPDATE seafarers SET employment_check = $2, updated_at = now() WHERE id = $1', [s.id, JSON.stringify(check)]);
+    await this.audit.record(this.pool, { action: 'VERIFY_EMPLOYMENT', entity: 'Seafarer', entityId: s.id, entityLabel: s.name, after: { employed: check.employed, establishment: check.establishment, mode: check.mode } });
+    return this.get(s.id, user);
   }
 
   /** What the hover card shows: rank, where they are, and whether their papers are current. */

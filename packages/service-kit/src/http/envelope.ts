@@ -18,6 +18,9 @@ export const badRequest = (m: string, extra?: Record<string, unknown>) => new Ap
 export const notFound = (m = 'Not found') => new ApiError(404, m);
 export const conflict = (m: string) => new ApiError(409, m);
 export const forbidden = (m = 'Forbidden') => new ApiError(403, m);
+export const unauthorized = (m = 'Unauthorized') => new ApiError(401, m);
+/** A counterpart the platform depends on answered badly or not at all; the request itself was sound. */
+export const badGateway = (m: string) => new ApiError(502, m);
 export const unprocessable = (m: string, extra?: Record<string, unknown>) => new ApiError(422, m, extra);
 
 @Injectable()

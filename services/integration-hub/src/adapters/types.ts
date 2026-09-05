@@ -13,7 +13,13 @@ export interface AdapterOperation {
   /** Whether a repeat with the same idempotency key must return the recorded result rather than
    *  call again. True for anything that changes state on the far side. */
   idempotent: boolean;
+  /** A custom adapter's recorded answer, served in stub mode the way a fixture file serves a system adapter's. */
+  sample?: { status: number; body: unknown };
 }
+
+/** How a live counterpart is authenticated. The values themselves are sealed on the adapter's row. */
+export type AuthType = 'none' | 'apiKey' | 'bearer' | 'basic';
+export interface AuthConfig { type: AuthType; /** the header an API key travels in; `x-api-key` when unset */ header?: string }
 
 export interface AdapterDefinition {
   key: string;
@@ -28,6 +34,8 @@ export interface AdapterDefinition {
   /** SOAP counterparts get an envelope wrapper; the RFP allows SOAP only where one is mandated. */
   protocol: 'rest' | 'soap';
   operations: AdapterOperation[];
+  /** What "test the connection" asks of a live counterpart; the base address itself when unset. */
+  healthPath?: string;
 }
 
 export interface CallRequest {

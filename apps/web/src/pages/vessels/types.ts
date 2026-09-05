@@ -15,7 +15,9 @@ export interface RecentInspection { id: string; number: string; type: string; st
 export interface RecentIncident { id: string; number: string; title: string; type: string; severity: string; status: string; reportedAt: string; closedAt?: string | null }
 export interface CrewOnBoard { id: string; name: string; rank: string; cdcNo?: string; nationality?: string; status?: string; certAlerts: number }
 export interface Position { lat: number; lon: number; speed: number; course: number; navStatus: string; receivedAt: string }
-export interface VesselDetailData extends Vessel { recentCalls: RecentCall[]; recentInspections: RecentInspection[]; recentIncidents: RecentIncident[]; crewOnBoard: CrewOnBoard[]; lastPosition: Position | null }
+export interface ClassStatus { checkedAt: string; checkedBy?: string; mode: string; society: string; class: string; status: string; surveysDue: { kind: string; dueBy: string }[]; conditions: unknown[]; certificates: { kind: string; no: string; issued?: string; expires?: string; status?: string }[] }
+export interface VesselDetailData extends Vessel {
+  classStatus?: ClassStatus | null; recentCalls: RecentCall[]; recentInspections: RecentInspection[]; recentIncidents: RecentIncident[]; crewOnBoard: CrewOnBoard[]; lastPosition: Position | null }
 export interface Voyage { callId: string; vcn: string; fromPort: string; toPort: string; arrived?: string | null; sailed?: string | null; berth: string; terminal: string; purpose?: string; cargo: string; portDays: number | null }
 export interface VoyagesData { voyages: Voyage[]; lanes: { port: string; calls: number }[] }
 export interface MovementEvent { at: string; vcn: string; event: string; note?: string }

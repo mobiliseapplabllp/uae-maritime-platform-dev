@@ -13,7 +13,9 @@ export interface SeafarerRow {
   manningAgentCode?: string; manningAgentName?: string; manningAgent?: { code: string; name: string } | null;
 }
 /** GET /seafarers/:id — the record with its documents and service history. */
-export interface Seafarer extends SeafarerRow { certificates: SeafarerCertificate[]; seaService: SeaServiceRecord[] }
+export interface EmploymentCheck { checkedAt: string; checkedBy?: string; mode: string; employed: boolean; establishment: string; establishmentLicence: string; occupation: string; validTo: string | null }
+export interface Seafarer extends SeafarerRow {
+  employmentCheck?: EmploymentCheck | null; certificates: SeafarerCertificate[]; seaService: SeaServiceRecord[] }
 /** GET /seafarers/dashboard */
 export interface CrewDashboardData {
   kpis: { roll: number; onboard: number; ashore: number; medicalIssues: number; avgSeaDays: number; medicalWindow: number };

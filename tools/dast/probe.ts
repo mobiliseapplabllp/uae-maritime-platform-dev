@@ -15,6 +15,8 @@
  * The default target is the local gateway. Credentials come from the seeded demonstration accounts and are
  * read from the environment so this file carries none.
  */
+import { createHmac } from 'node:crypto';
+
 const arg = (name: string, fallback: string): string => {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
@@ -446,6 +448,58 @@ async function main() {
     return contained.status === 200 ? null : `the facility account cannot read the call register of its own port (${contained.status})`;
   });
 
+  await probe('an integration cannot be pointed at the platform\'s own infrastructure or a private range', 'A10', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const inside = await http('/integrations/classification', { method: 'PUT', body: JSON.stringify({ baseUrl: 'http://127.0.0.1:5432' }), token: admin.token });
+    if (inside.status !== 400) return `the database port was accepted as a counterpart address (${inside.status})`;
+    const meta = await http('/integrations', { method: 'POST', body: JSON.stringify({ key: 'dast-probe', name: 'Probe', counterpart: 'Probe', baseUrl: 'https://169.254.169.254/latest/meta-data', operations: [{ key: 'x', summary: 'x', method: 'GET', path: '/' }] }), token: admin.token });
+    if (meta.status !== 400) { await http('/integrations/dast-probe', { method: 'DELETE', token: admin.token }); return `the cloud metadata address was accepted for a new adapter (${meta.status})`; }
+    const live = await http('/integrations/classification', { method: 'PUT', body: JSON.stringify({ mode: 'live' }), token: admin.token });
+    return live.status === 400 ? null : `an adapter went live on its stub address (${live.status})`;
+  });
+  await probe('a counterpart credential is written once and never read back', 'A02', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const marker = 'dast-secret-9f3a7c';
+    const set = await http('/integrations/classification', { method: 'PUT', body: JSON.stringify({ auth: { type: 'bearer' }, secrets: { token: marker } }), token: admin.token });
+    try {
+      if (set.status !== 200) return `the credential could not be set (${set.status})`;
+      if (set.text.includes(marker)) return 'the save answered with the credential in it';
+      for (const path of ['/integrations', '/integrations/classification', '/integrations/calls?adapter=classification', '/audit?entity=Adapter&limit=20']) {
+        const r = await http(path, { token: admin.token });
+        if (r.text.includes(marker)) return `${path} handed the credential back`;
+      }
+      return null;
+    } finally { await http('/integrations/classification', { method: 'PUT', body: JSON.stringify({ auth: { type: 'none' }, secrets: {} }), token: admin.token }); }
+  });
+  await probe('an inbound delivery is refused unsigned, forged or stale, and accepted once when genuine', 'A08', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const issued = await http('/integrations/payment/inbound/rotate', { method: 'POST', body: '{}', token: admin.token });
+    if (issued.status !== 201 || !issued.body?.data?.secret) return `no signing key could be issued (${issued.status})`;
+    const secret = issued.body.data.secret as string;
+    try {
+      const body = JSON.stringify({ type: 'settlement', reference: 'PAY-DAST', status: 'SETTLED' });
+      const ts = Math.floor(Date.now() / 1000);
+      const sign = (key: string, at: number) => `sha256=${createHmac('sha256', key).update(`${at}.${body}`).digest('hex')}`;
+      const send = (headers: Record<string, string>) => http('/integrations/inbound/payment', { method: 'POST', body, headers });
+      const bare = await send({}); if (bare.status !== 401) return `an unsigned delivery answered ${bare.status}`;
+      const forged = await send({ 'x-hub-timestamp': String(ts), 'x-hub-delivery': 'dast-1', 'x-hub-signature': sign('not-the-key', ts) }); if (forged.status !== 401) return `a forged signature answered ${forged.status}`;
+      const stale = await send({ 'x-hub-timestamp': String(ts - 3600), 'x-hub-delivery': 'dast-2', 'x-hub-signature': sign(secret, ts - 3600) }); if (stale.status !== 401) return `a stale delivery answered ${stale.status}`;
+      const id = `dast-${ts}`;
+      const good = await send({ 'x-hub-timestamp': String(ts), 'x-hub-delivery': id, 'x-hub-signature': sign(secret, ts) }); if (good.status !== 201 || good.body?.data?.duplicate !== false) return `a genuine delivery answered ${good.status}`;
+      const again = await send({ 'x-hub-timestamp': String(ts), 'x-hub-delivery': id, 'x-hub-signature': sign(secret, ts) });
+      return again.body?.data?.duplicate === true ? null : `a repeated delivery was taken as new (${again.status})`;
+    } finally { await http('/integrations/payment', { method: 'PUT', body: JSON.stringify({ inboundEnabled: false }), token: admin.token }); }
+  });
+  await probe('the integration console is an administrator\'s tool, not every officer\'s', 'A01', 'high', async () => {
+    const fin = await login('finance@maritime.example');
+    const cfg = await http('/integrations/classification', { method: 'PUT', body: JSON.stringify({ description: 'probe' }), token: fin.token });
+    if (cfg.status !== 403) return `a finance officer could configure an adapter (${cfg.status})`;
+    const run = await http('/integrations/classification/invoke', { method: 'POST', body: JSON.stringify({ operation: 'vesselStatus', payload: { imo: '1' } }), token: fin.token });
+    if (run.status !== 403) return `a finance officer could call a counterpart from the console (${run.status})`;
+    const agent = await login('agent@maritime.example');
+    const list = await http('/integrations', { token: agent.token });
+    return list.status === 403 ? null : `an external agent could read the integration registry (${list.status})`;
+  });
   await probe('the public feed and sitemap publish addresses, not identifiers', 'A01', 'medium', async () => {
     const feed = await http('/public/legislation/feed?days=3650');
     if (feed.status !== 200) return `the feed answered ${feed.status}`;

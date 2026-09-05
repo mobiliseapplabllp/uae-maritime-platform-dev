@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Card, Grid, Box, Typography, Skeleton, Stack, Button, Tabs, Tab, TextField, MenuItem, Switch, FormControlLabel, Divider, Chip, Alert } from '@mui/material';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
@@ -10,6 +11,8 @@ import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import NotificationsActiveRoundedIcon from '@mui/icons-material/NotificationsActiveRounded';
 import MailRoundedIcon from '@mui/icons-material/MailRounded';
 import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
+import HubRoundedIcon from '@mui/icons-material/HubRounded';
+import IntegrationsPanel from './IntegrationsPanel';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -22,6 +25,7 @@ const AI_MODELS = [{ value: 'assistant-default', label: 'Platform assistant (UAE
 const TABS = [
   { key: 'org', label: 'Organisation', icon: ApartmentRoundedIcon }, { key: 'operations', label: 'Operations', icon: TuneRoundedIcon }, { key: 'billing', label: 'Billing & tax', icon: ReceiptLongRoundedIcon },
   { key: 'notifications', label: 'Notifications', icon: NotificationsActiveRoundedIcon }, { key: 'smtp', label: 'SMTP', icon: MailRoundedIcon }, { key: 'ai', label: 'AI assistant', icon: AutoAwesomeRoundedIcon }, { key: 'riskWeights', label: 'Risk weights', icon: InsightsRoundedIcon },
+  { key: 'integrations', label: 'Integrations', icon: HubRoundedIcon },
 ];
 const F = ({ children }: { children: React.ReactNode }) => <Grid item xs={12} sm={6} md={4}>{children}</Grid>;
 type Values = Record<string, any>;
@@ -32,7 +36,9 @@ export default function SettingsPage() {
   const profile = useProfile();
   const canManage = hasPerm(user, 'settings.manage');
   const [all, setAll] = useState<Record<string, Values> | null>(null);
-  const [tab, setTab] = useState(0);
+  const location = useLocation();
+  // a deep link names the section; the tab is otherwise state, so switching does not rewrite the address
+  const [tab, setTab] = useState(() => Math.max(0, TABS.findIndex((tb) => tb.key === new URLSearchParams(location.search).get('tab'))));
   const [vals, setVals] = useState<Values>({});
   const [busy, setBusy] = useState(false);
   const [smtpResult, setSmtpResult] = useState<{ ok: boolean; text: string } | null>(null);
@@ -58,7 +64,7 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader icon={SettingsRoundedIcon} iconColor="#0A2239" title="Platform settings" sub="Global configuration — each section feeds live behaviour across the platform"
-        actions={canManage && <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={save} disabled={busy}>Save {TABS[tab].label}</Button>} />
+        actions={canManage && section !== 'integrations' && <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={save} disabled={busy}>Save {TABS[tab].label}</Button>} />
       <Card>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" allowScrollButtonsMobile sx={{ px: 1, borderBottom: 1, borderColor: 'divider' }} aria-label="Settings sections">
           {TABS.map((tb) => { const I = tb.icon; return <Tab key={tb.key} icon={<I sx={{ fontSize: 17 }} />} iconPosition="start" label={tb.label} sx={{ minHeight: 48 }} />; })}
@@ -116,6 +122,7 @@ export default function SettingsPage() {
               <Grid item xs={12}><Chip size="small" variant="outlined" icon={<AutoAwesomeRoundedIcon sx={{ fontSize: 14 }} />} label="Answers are always grounded in live platform records; the model only phrases them. Changes apply to the next question — no restart." sx={{ fontSize: 11, py: 1.5 }} /></Grid>
             </Grid>
           )}
+          {section === 'integrations' && <IntegrationsPanel />}
           {section === 'riskWeights' && (
             <Grid container spacing={2}>
               {['age', 'certificates', 'deficiencies', 'detentions', 'inspectionGap', 'agentPerformance'].map((k) => <F key={k}>{t(k, `${k.replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase())} (max points)`, { type: 'number' })}</F>)}

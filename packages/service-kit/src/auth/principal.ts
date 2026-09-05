@@ -3,7 +3,7 @@ import type { JwtClaims } from './jwt';
 
 /** The authenticated principal every service works with. Permissions are resolved at request time so matrix edits apply immediately. */
 export interface Principal {
-  id: string; sub: string; name: string; email: string; roleName?: string; perms: string[]; scope: TenancyScope; kind: 'user' | 'agent' | 'service'; active: boolean;
+  id: string; sub: string; name: string; email: string; /** where a message reaches them, when the account carries one */ phone?: string; roleName?: string; perms: string[]; scope: TenancyScope; kind: 'user' | 'agent' | 'service'; active: boolean;
 }
 export interface PrincipalResolver { resolve(claims: JwtClaims, token: string): Promise<Principal | null> }
 export const PRINCIPAL_RESOLVER = Symbol('PRINCIPAL_RESOLVER');

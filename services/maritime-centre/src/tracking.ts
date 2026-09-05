@@ -1,6 +1,6 @@
 import { EVENTS } from '@maritime/contracts';
 import { geoFor } from '@maritime/world';
-import { enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { badRequest, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { iso, num, type Row } from './incidents';
 
@@ -162,3 +162,31 @@ export async function publishRestriction(c: Queryable, env: Env, r: RestrictionR
 
 export const coverageNote = (profile: string) => `Terrestrial AIS (simulated feed) — ${geoFor(profile).portName} approaches and anchorage sectors`;
 export const asNumber = num;
+
+/** A fix as the endpoint and the feed both hand it in. */
+export interface FixInput {
+  vesselId: string; vesselName?: string; mmsi?: string; lat: number; lon: number; speed?: number; sog?: number; course?: number; cog?: number; heading?: number;
+  navStatus: (typeof NAV_STATUS)[number]; destination?: string; source?: string; receivedAt?: string | null;
+}
+/** Records a fix: the current position row is replaced, the history keeps every fix, and the picture is told. */
+export async function recordFix(c: Queryable, env: Env, body: FixInput) {
+  const receivedAt = body.receivedAt ? new Date(body.receivedAt) : new Date();
+  if (Number.isNaN(receivedAt.getTime())) throw badRequest('Received-at is not a valid date');
+  const speed = body.speed ?? body.sog ?? 0;
+  const course = Math.round(body.course ?? body.cog ?? 0);
+  const v = await c.query<VesselFacts & { mmsi: string }>('SELECT id, name, imo, mmsi, type, flag, status FROM vessels WHERE id = $1', [body.vesselId]);
+  const vessel = v.rows[0];
+  const r = await c.query<PositionRow>(
+    `INSERT INTO positions(vessel_id, vessel_name, mmsi, lat, lon, sog, cog, heading, nav_status, destination, source, received_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (vessel_id) DO UPDATE SET vessel_name = EXCLUDED.vessel_name, mmsi = EXCLUDED.mmsi, lat = EXCLUDED.lat, lon = EXCLUDED.lon, sog = EXCLUDED.sog,
+       cog = EXCLUDED.cog, heading = EXCLUDED.heading, nav_status = EXCLUDED.nav_status, destination = EXCLUDED.destination, source = EXCLUDED.source,
+       received_at = EXCLUDED.received_at, updated_at = now() RETURNING *`,
+    [body.vesselId, body.vesselName ?? vessel?.name ?? '', body.mmsi ?? vessel?.mmsi ?? '', body.lat, body.lon, speed, course,
+      Math.round(body.heading ?? course), body.navStatus, body.destination ?? '', body.source ?? 'AIS-T (simulated)', receivedAt]);
+  const p = r.rows[0];
+  await c.query('INSERT INTO position_history(vessel_id, lat, lon, sog, cog, nav_status, received_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+    [p.vessel_id, body.lat, body.lon, speed, course, body.navStatus, receivedAt]);
+  return publishPosition(c, env, p, vessel ? { id: vessel.id, name: vessel.name, imo: vessel.imo, type: vessel.type, flag: vessel.flag, status: vessel.status } : undefined);
+}
+

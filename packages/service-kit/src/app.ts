@@ -33,7 +33,9 @@ export async function createApp(opts: BootstrapOptions): Promise<INestApplicatio
   httpAdapter.disable('x-powered-by');
   httpAdapter.set('trust proxy', 1);
   app.use(securityHeaders);
-  app.use(express.json({ limit: opts.env.JSON_LIMIT }));
+  // The raw bytes are kept beside the parsed body: a signed inbound delivery is verified over what was sent, not
+  // over a re-serialisation of it.
+  app.use(express.json({ limit: opts.env.JSON_LIMIT, verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = buf; } }));
   app.use(express.urlencoded({ extended: false, limit: opts.env.JSON_LIMIT }));
   app.use(contextMiddleware);
   app.enableCors({ origin: opts.env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean), credentials: false, exposedHeaders: ['x-correlation-id'] });

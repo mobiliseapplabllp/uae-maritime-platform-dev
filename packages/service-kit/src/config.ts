@@ -19,6 +19,7 @@ export const baseEnvSchema = z.object({
   SERVICE_TOKEN: z.string().default('development-service-token'),
   IDENTITY_URL: z.string().default('http://127.0.0.1:5401'),
   MDM_URL: z.string().default('http://127.0.0.1:5402'),
+  INTEGRATION_HUB_URL: z.string().default('http://127.0.0.1:5412'),
   LOG_LEVEL: z.string().default('info'),
   CORS_ORIGIN: z.string().default('http://localhost:5300,http://127.0.0.1:5300'),
   JSON_LIMIT: z.string().default('2mb'),

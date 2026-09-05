@@ -9,6 +9,8 @@ import PictureAsPdfRoundedIcon from '@mui/icons-material/PictureAsPdfRounded';
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded';
 import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import RequestQuoteRoundedIcon from '@mui/icons-material/RequestQuoteRounded';
+import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
+import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -82,6 +84,8 @@ export default function InvoiceDetail() {
             {doc.portCallId && <Button variant="outlined" startIcon={<RequestQuoteRoundedIcon />} onClick={() => setPdaOpen(true)}>{t('invoices.costEstimate')}</Button>}
             {hasPerm(user, 'invoices.issue') && doc.status === 'DRAFT' && <Button variant="contained" startIcon={<SendRoundedIcon />} disabled={busy} onClick={() => run(`/invoices/${id}/issue`, t('invoices.issuedDone'))}>{t('invoices.issueInvoice')}</Button>}
             {hasPerm(user, 'invoices.pay') && doc.status === 'ISSUED' && <Button variant="contained" color="success" startIcon={<PaidRoundedIcon />} onClick={() => { setPayRef(''); setPayDlg(true); }}>{t('invoices.recordPayment')}</Button>}
+            {hasPerm(user, 'invoices.pay') && doc.status === 'ISSUED' && !doc.paymentIntent && <Button variant="outlined" startIcon={<PaymentsRoundedIcon />} disabled={busy} onClick={() => run(`/invoices/${id}/payment-intent`, t('invoices.payOnlineDone'))} data-testid="pay-online">{t('invoices.payOnline')}</Button>}
+            {hasPerm(user, 'invoices.pay') && doc.status === 'ISSUED' && doc.paymentIntent && <Button variant="outlined" startIcon={<SyncRoundedIcon />} disabled={busy} onClick={() => run(`/invoices/${id}/payment-intent/refresh`, t('invoices.settlementChecked'))} data-testid="check-settlement">{t('invoices.checkSettlement')}</Button>}
             {hasPerm(user, 'invoices.issue') && ['DRAFT', 'ISSUED'].includes(doc.status) && <Button variant="outlined" color="error" startIcon={<BlockRoundedIcon />} onClick={() => setCancelDlg(true)}>{t('common.cancel')}</Button>}
             {hasPerm(user, 'invoices.delete') && doc.status === 'DRAFT' && <Button variant="outlined" color="error" startIcon={<DeleteOutlineRoundedIcon />} onClick={() => setDelDlg(true)}>{t('invoices.deleteDraft')}</Button>}
           </>} />
@@ -101,6 +105,7 @@ export default function InvoiceDetail() {
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{doc.issuedAt ? t('invoices.issuedOn', { date: fmtD(doc.issuedAt) }) : t('invoices.notYetIssued')}</Typography>
             {doc.dueAt && doc.status === 'ISSUED' && <Typography variant="body2" color="text.secondary">{t('invoices.dueOn', { date: fmtD(doc.dueAt) })}</Typography>}
             {doc.paidAt && <Typography variant="body2" color="success.main">{t('invoices.paidOn', { date: fmtD(doc.paidAt), ref: doc.paymentRef || '—' })}</Typography>}
+            {doc.paymentIntent && <Typography variant="body2" color="text.secondary" data-testid="payment-intent">{t('invoices.paymentIntentLine', { ref: doc.paymentIntent.reference, status: doc.paymentIntent.status.toLowerCase() })}{doc.paymentIntent.redirectUrl && doc.status === 'ISSUED' && <> · <a href={doc.paymentIntent.redirectUrl} target="_blank" rel="noreferrer">{t('invoices.paymentLink')}</a></>}</Typography>}
           </Box>
         </Box>
         <Divider sx={{ my: 2.5 }} />

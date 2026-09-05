@@ -2,12 +2,12 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, assertLookups, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, assertLookups, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere, IntegrationClient, badGateway } from '@maritime/service-kit';
 import { FACILITY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, auditApi, cycleApi, facilityApi, obligationApi, visitApi,
-  publishFacility, ratingFrom, type FacilityRow,
+  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, applyIcpOutcome, auditApi, cycleApi, facilityApi, obligationApi, visitApi,
+  publishFacility, ratingFrom, type FacilityRow, type IcpReview,
 } from './directory';
 import { auditsFor, fullFacility, loadFacility } from './read';
 import { clearObligation, raiseObligation, recordAudit, renewalWorkList } from './compliance';
@@ -24,6 +24,7 @@ import { completeSchema } from './accreditation.controller';
  * Statement of Compliance is issued, expires and can be withdrawn — it is not a field to be typed over. */
 
 const text = (max: number) => z.string().trim().max(max);
+const icpBody = z.object({ reason: text(500).min(3) });
 const body = z.object({
   id: text(80).optional(), code: text(30).optional(), name: text(160).min(2), nameAr: text(160).nullish(),
   facilityType: text(40).default('BERTH'), terminal: text(160).default(''), berthType: text(40).default(''),
@@ -50,7 +51,7 @@ const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType:
 
 @Controller('facilities/port-facilities')
 export class PortFacilitiesController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   @RequirePerm('facilities.view') @Get()
   async list(@Query() query: PageQuery & { facilityType?: string; operator?: string; ispsStatus?: string; status?: string; terminal?: string }, @CurrentUser() user: Principal) {
@@ -174,6 +175,38 @@ export class PortFacilitiesController {
         after: { ispsStatus: row.isps_status, ispsLevel: row.isps_level, socNo: row.soc_no }, note: b.reason,
       });
       return publishFacility(c, this.env, row, {}, EVENTS.facilities.facilityIspsChanged, { from: before.isps_status, to: row.isps_status, level: row.isps_level, socNo: row.soc_no, reason: b.reason });
+    });
+  }
+
+  /** Submit the facility for the federal authority's security review; the reference comes back at once, the outcome later. */
+  @RequirePerm('facilities.manage') @Post(':id/icp-review')
+  async icpReview(@Param('id') id: string, @Body(zod(icpBody)) b: z.infer<typeof icpBody>, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const before = await loadFacility(c, id, user.scope, true);
+      if (before.icp_review && !['CLEARED', 'REJECTED', 'WITHDRAWN', 'CLOSED'].includes(before.icp_review.status)) throw conflict(`${before.name} is already under review (${before.icp_review.reference}, ${before.icp_review.status.toLowerCase()})`);
+      const day = new Date().toISOString().slice(0, 10);
+      const out = await this.hub.tryCall<{ reference?: string; status?: string; expectedBy?: string }>('icp', 'requestReview', { facilityId: before.code, reason: b.reason }, { idempotencyKey: `icp:${before.code}:${day}`, correlationId: `facility:${before.id}` });
+      if (out.status !== 'ok') throw badGateway(`federal authority: ${out.error ?? out.status}`);
+      const now = new Date().toISOString();
+      const review: IcpReview = { reference: String(out.data?.reference ?? ''), status: String(out.data?.status ?? 'SUBMITTED'), reason: b.reason, requestedAt: now, requestedBy: user.name, expectedBy: out.data?.expectedBy ?? null, decidedAt: null, conditions: [], checkedAt: now, mode: out.mode, callId: out.callId };
+      if (!review.reference) throw badGateway('federal authority answered without a reference');
+      const r = await c.query<FacilityRow>('UPDATE port_facilities SET icp_review = $2, updated_at = now() WHERE id = $1 RETURNING *', [before.id, JSON.stringify(review)]);
+      await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: review.reference, status: review.status, mode: review.mode }, note: b.reason });
+      return fullFacility(c, r.rows[0]);
+    });
+  }
+
+  /** Ask the authority what became of the review. */
+  @RequirePerm('facilities.manage') @Post(':id/icp-review/refresh')
+  async icpReviewRefresh(@Param('id') id: string, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const before = await loadFacility(c, id, user.scope, true);
+      if (!before.icp_review?.reference) throw conflict(`${before.name} has not been submitted for review`);
+      const out = await this.hub.tryCall<{ status?: string; decidedAt?: string | null; conditions?: unknown[] }>('icp', 'reviewStatus', { reference: before.icp_review.reference }, { correlationId: `facility:${before.id}` });
+      if (out.status !== 'ok') throw badGateway(`federal authority: ${out.error ?? out.status}`);
+      const row = await applyIcpOutcome(c, before, { status: String(out.data?.status ?? before.icp_review.status), decidedAt: out.data?.decidedAt ?? null, conditions: out.data?.conditions ?? [], mode: out.mode });
+      await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: row.icp_review?.reference, status: row.icp_review?.status } });
+      return fullFacility(c, row);
     });
   }
 

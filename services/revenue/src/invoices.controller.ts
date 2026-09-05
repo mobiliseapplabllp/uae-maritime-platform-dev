@@ -2,10 +2,10 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { AuditClient, IntegrationClient, badGateway, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable, scopeWhere } from '@maritime/service-kit';
 import type { Env } from './env';
 import { INVOICE_SCOPE, scopedWhere } from './scope';
-import { INVOICE_STATUSES, PAYMENT_METHODS, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, toApi, updateInvoice, type HistoryEntry, type Line, type Payment, type Row } from './invoicing';
+import { INVOICE_STATUSES, PAYMENT_METHODS, applySettlement, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, settle, toApi, updateInvoice, type PaymentIntent, type Line, type Payment, type Row } from './invoicing';
 import { activeTariffs, billToFor, billableCall, findCallSnapshot } from './subjects';
 
 /* Invoices raised on vessel calls. One live account per call — a cancelled one can be re-raised, an open one cannot be
@@ -21,7 +21,7 @@ type ListQuery = PageQuery & { status?: string; vessel?: string; vesselId?: stri
 
 @Controller('invoices')
 export class InvoicesController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   @RequirePerm('invoices.view') @Get()
   async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
@@ -146,20 +146,39 @@ export class InvoicesController {
   async pay(@Param('id') id: string, @Body(zod(paySchema)) b: z.infer<typeof paySchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
-      if (before.status !== 'ISSUED') throw conflict(`Only an issued invoice can be paid — this one is ${before.status.toLowerCase()}`);
-      const total = num(before.total); const already = num(before.paid_amount);
-      const outstanding = round2(total - already);
-      const amount = round2(b.amount ?? outstanding);
-      if (amount <= 0) throw badRequest('A payment must be greater than zero');
-      if (amount > outstanding + 0.005) throw badRequest(`That is more than the ${round2(outstanding)} outstanding on this invoice`);
-      const at = b.at && !Number.isNaN(new Date(b.at).getTime()) ? new Date(b.at) : new Date();
-      const payment: Payment = { id: newId(), at: at.toISOString(), amount, ref: b.paymentRef ?? '', method: b.method ?? 'TRANSFER', by: user?.name ?? 'system', note: b.note ?? '' };
-      const paid = round2(already + amount); const settled = paid >= total - 0.005;
-      const history: HistoryEntry[] = [...(before.history ?? []), { from: before.status, to: settled ? 'PAID' : 'ISSUED', at: at.toISOString(), by: payment.by, note: `${settled ? 'Settled' : 'Part payment'} ${amount}${payment.ref ? ` — ${payment.ref}` : ''}` }];
-      const row = await updateInvoice(c, before.id, { payments: [...(before.payments ?? []), payment], paidAmount: paid, paymentRef: payment.ref || before.payment_ref, status: settled ? 'PAID' : 'ISSUED', paidAt: settled ? at : null, history });
-      await this.audit.record(c, { action: 'PAY', entity: 'Invoice', entityId: row.id, entityLabel: `${row.number} — ${payment.ref || 'no ref'}`, before: { status: before.status, paidAmount: already }, after: { status: row.status, paidAmount: paid }, note: `${amount} received` });
-      await publishState(c, this.env, row, { event: EVENTS.revenue.paymentReceived, data: { amount, paidAmount: paid, balance: round2(total - paid), settled, paymentRef: payment.ref, method: payment.method } });
-      if (settled) await publishState(c, this.env, row, { event: EVENTS.revenue.invoicePaid, data: { paidAt: iso(row.paid_at), paymentRef: payment.ref } });
+      const row = await settle(c, this.env, this.audit, before, { amount: b.amount, ref: b.paymentRef ?? '', method: b.method ?? 'TRANSFER', by: user?.name ?? 'system', note: b.note ?? '', at: b.at });
+      return this.detail(c, row);
+    });
+  }
+
+  /** Offer the account for online payment: the gateway opens an intent and the payer is sent to it. Idempotent per balance. */
+  @RequirePerm('invoices.pay') @Post(':id/payment-intent')
+  async paymentIntent(@Param('id') id: string, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
+      if (before.status !== 'ISSUED') throw conflict(`Only an issued invoice can be offered for payment — this one is ${before.status.toLowerCase()}`);
+      const outstanding = round2(num(before.total) - num(before.paid_amount)); if (outstanding <= 0) throw conflict('Nothing is outstanding on this invoice');
+      const amountMinor = Math.round(outstanding * 100);
+      const out = await this.hub.tryCall<{ reference?: string; status?: string; redirectUrl?: string }>('payment', 'createIntent', { invoiceNo: before.number, amountMinor, currency: before.currency }, { idempotencyKey: `intent:${before.number}:${amountMinor}`, correlationId: `invoice:${before.id}` });
+      if (out.status !== 'ok') throw badGateway(`payment gateway: ${out.error ?? out.status}`);
+      const now = new Date().toISOString();
+      const intent: PaymentIntent = { reference: String(out.data?.reference ?? ''), status: String(out.data?.status ?? 'PENDING'), redirectUrl: out.data?.redirectUrl ?? null, amountMinor, currency: before.currency, createdAt: before.payment_intent?.createdAt ?? now, updatedAt: now, mode: out.mode, callId: out.callId };
+      if (!intent.reference) throw badGateway('payment gateway answered without a reference');
+      const row = await updateInvoice(c, before.id, { paymentIntent: intent });
+      await this.audit.record(c, { action: 'PAYMENT_INTENT', entity: 'Invoice', entityId: row.id, entityLabel: `${row.number} — ${intent.reference}`, after: { reference: intent.reference, amountMinor, mode: out.mode, replayed: !!out.replayed } });
+      return this.detail(c, row);
+    });
+  }
+
+  /** Ask the gateway what became of the intent, and settle the account if it says the payer paid. */
+  @RequirePerm('invoices.pay') @Post(':id/payment-intent/refresh')
+  async paymentIntentRefresh(@Param('id') id: string, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
+      if (!before.payment_intent?.reference) throw conflict('This invoice has not been offered for online payment');
+      const out = await this.hub.tryCall<{ status?: string; settledAt?: string; method?: string }>('payment', 'settlement', { reference: before.payment_intent.reference }, { correlationId: `invoice:${before.id}` });
+      if (out.status !== 'ok') throw badGateway(`payment gateway: ${out.error ?? out.status}`);
+      const row = await applySettlement(c, this.env, this.audit, before, { status: String(out.data?.status ?? before.payment_intent.status), settledAt: out.data?.settledAt ?? null, method: out.data?.method ?? null, mode: out.mode, by: user?.name ?? 'system' });
       return this.detail(c, row);
     });
   }
