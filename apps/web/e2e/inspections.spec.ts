@@ -43,15 +43,22 @@ test.describe('inspections — the Smart Inspection programme', () => {
     await expectAccessible(page, 'facility inspection');
   });
 
-  test('a closed survey carries its report, notice and recommendation, and the officer decides', async ({ page }) => {
+  test('a survey closed with many open deficiencies gets a restriction recommended by the rules, and the officer decides', async ({ page }) => {
     await login(page);
-    await page.goto('/inspections?status=CLOSED');
-    // a survey the rules recommended a restriction on
-    const res = await page.request.get('/api/inspections/recommendations?status=PENDING&limit=1', { headers: { authorization: `Bearer ${(JSON.parse(await page.evaluate(() => localStorage.getItem('maritime-session') ?? '{}')) as { token?: string }).token ?? ''}` } });
-    const rec = (await res.json()).data?.[0];
-    test.skip(!rec, 'no pending recommendation in the seeded world');
-    await page.goto(`/inspections/${rec.inspectionId}`);
+    const token = (JSON.parse(await page.evaluate(() => localStorage.getItem('maritime-session') ?? '{}')) as { token?: string }).token ?? '';
+    const api = (path: string, body?: unknown) => page.request.post(`/api${path}`, { headers: { authorization: `Bearer ${token}` }, data: body ?? {} });
+    // a ship with nothing open against her, so the drive never trips over another survey
+    const ships = await page.request.get('/api/inspections/subjects?kind=VESSEL&limit=100', { headers: { authorization: `Bearer ${token}` } });
+    const vessel = ((await ships.json()).data as { id: string }[])[0];
+    const planned = await api('/inspections', { vesselId: vessel.id, type: 'PSC', plannedAt: new Date().toISOString(), inspector: 'Playwright drive' });
+    expect(planned.ok()).toBeTruthy();
+    const id = (await planned.json()).data.id as string;
+    for (const code of ['01101', '04103', '07105', '10111', '13101']) expect((await api(`/inspections/${id}/findings`, { deficiencyCode: code, description: `${code} observed (e2e)`, actionCode: '17' })).ok()).toBeTruthy();
+    expect((await api(`/inspections/${id}/close`, { result: 'DEFICIENCIES' })).ok()).toBeTruthy();
+    await page.goto(`/inspections/${id}`);
     await expect(page.getByTestId('recommendation-card')).toContainText('Awaiting decision');
+    await expect(page.getByTestId('recommendation-card')).toContainText('Operational restriction');
+    await expect(page.getByTestId('prediction-card')).toContainText(/Prediction (matched|did not match) the findings/);
     await page.getByTestId('recommendation-card').getByRole('button', { name: 'Decide' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel(/Decision/).click();

@@ -15,21 +15,25 @@ test.describe('legislation — public portal and IMO watch', () => {
     await expect(page.getByRole('heading', { name: /Legal instruments in force/ })).toBeVisible();
     await expect(page.getByText(/instrument\(s\)/)).toBeVisible();
     await expectAccessible(page, '/law');
-    // the facets come from the published register
+    // the facets come from the published register; narrowing by type refreshes the list before anything is opened
+    const countBefore = await page.getByText(/instrument\(s\)/).textContent();
     await page.getByLabel('Type').click();
     const option = page.getByRole('option').nth(1);
-    const label = await option.textContent();
+    const label = (await option.textContent())!.replace(/\s*\(\d+\)\s*$/, '');
     await option.click();
     await expect(page).toHaveURL(/type=/);
-    // open the first instrument
+    await expect(page.getByText(/instrument\(s\)/)).not.toHaveText(countBefore!);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    // open the first instrument of the narrowed list: its card names the type it was narrowed to
     const first = page.getByRole('listitem').first();
-    const ref = await first.locator('span').first().textContent();
+    await expect(first).toContainText(label);
+    const ref = (await first.locator('span').first().textContent())!.trim();
     await first.click();
     await expect(page).toHaveURL(/\/law\/[a-z0-9-]+$/);
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    await expect(page.getByTestId('citation-box')).toContainText(ref!.trim());
+    await expect(page.getByTestId('citation-box')).toContainText(ref);
     await expect(page.getByTestId('standing-banner')).toBeVisible();
-    await expectAccessible(page, `/law/${label}`);
+    await expectAccessible(page, `/law/${ref}`);
     // the machine-readable copy is the same instrument, with an ETag a client can revalidate by
     const url = new URL(page.url());
     const res = await page.request.get(`/api/public/legislation/${url.pathname.split('/').pop()}`);
@@ -45,17 +49,27 @@ test.describe('legislation — public portal and IMO watch', () => {
 
   test('the desk sees the public address and citation of an in-force instrument, and a draft has none', async ({ page }) => {
     await login(page);
-    await page.goto('/legislation?status=IN_FORCE');
-    await page.getByRole('row').nth(1).click();
+    const token = (JSON.parse(await page.evaluate(() => localStorage.getItem('maritime-session') ?? '{}')) as { token?: string }).token ?? '';
+    const headers = { authorization: `Bearer ${token}` };
+    // a citable, in-force circular and a draft, found through the API rather than by position in the register
+    const circular = ((await (await page.request.get('/api/legislation/instruments?status=IN_FORCE&type=CIRCULAR&limit=1', { headers })).json()).data as { refNo: string }[])[0];
+    const draft = ((await (await page.request.get('/api/legislation/instruments?status=DRAFT&limit=1', { headers })).json()).data as { refNo: string }[])[0];
+    const open = async (refNo: string) => {
+      await page.goto('/legislation');
+      const search = page.getByRole('textbox', { name: /Search reference/ });
+      await search.fill(refNo);
+      await search.press('Enter');
+      await page.getByRole('row', { name: new RegExp(refNo.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')) }).first().click();
+    };
+    await open(circular.refNo);
     const box = page.getByTestId('portal-box');
     await expect(box).toBeVisible();
     await expect(box.getByRole('link')).toHaveAttribute('href', /\/law\//);
     await expect(box.getByRole('button', { name: 'Open portal page' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await page.goto('/legislation?status=DRAFT');
-    const rows = page.getByRole('row');
-    if (await rows.count() > 1) {
-      await rows.nth(1).click();
+    await expect(box).toContainText(circular.refNo);
+    if (draft) {
+      await page.keyboard.press('Escape');
+      await open(draft.refNo);
       await expect(page.getByTestId('portal-box')).toContainText('A draft is not published');
     }
   });
@@ -67,7 +81,7 @@ test.describe('legislation — public portal and IMO watch', () => {
     await expect(page.getByRole('table', { name: 'Sources' })).toBeVisible();
     await expectAccessible(page, '/legislation/imo');
     await page.getByRole('button', { name: 'Read all sources now' }).click();
-    await expect(page.getByRole('alert').or(page.locator('.MuiSnackbar-root'))).toContainText(/new document|failed/);
+    await expect(page.locator('.MuiSnackbar-root').first()).toContainText(/new document|failed/);
     // assess the first new document
     await page.getByLabel('Status').click();
     await page.getByRole('option', { name: 'New' }).click();
@@ -79,7 +93,7 @@ test.describe('legislation — public portal and IMO watch', () => {
     await dialog.getByLabel('Assessment').fill('A national circular gives effect to this guidance (e2e).');
     await dialog.getByLabel('Due date').fill('2027-03-31');
     await dialog.getByRole('button', { name: 'Record' }).click();
-    await expect(page.locator('.MuiSnackbar-root')).toContainText('Recorded as Assessed');
+    await expect(page.locator('.MuiSnackbar-root').first()).toContainText('Recorded as Assessed');
     // transpose it to an instrument on the register
     await page.getByLabel('Status').click();
     await page.getByRole('option', { name: 'Assessed' }).click();
@@ -89,6 +103,6 @@ test.describe('legislation — public portal and IMO watch', () => {
     await dialog.getByLabel('National instrument').fill('CIRC');
     await page.getByRole('option').first().click();
     await dialog.getByRole('button', { name: 'Record' }).click();
-    await expect(page.locator('.MuiSnackbar-root')).toContainText('Recorded as Transposed');
+    await expect(page.locator('.MuiSnackbar-root').first()).toContainText('Recorded as Transposed');
   });
 });
