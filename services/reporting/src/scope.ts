@@ -34,6 +34,12 @@ export const INSPECTION_SCOPE: ScopeOptions = { columns: ['port'], publicToCompa
 /** Crew: a manning agency reads the seafarers it placed, and no other agency's — the same partition the
  *  register applies, on the same recruitment-and-placement relationship. */
 export const SEAFARER_SCOPE: ScopeOptions = { columns: ['company'] };
+/** A training provider reads its own row on the MET register; the administration reads the sector. */
+export const MET_SCOPE: ScopeOptions = { columns: ['company'] };
+/** A crew list belongs to the agent who lodged the call it is attached to. */
+export const CREW_LIST_SCOPE: ScopeOptions = { columns: ['company'] };
+/** The foreign seafarer ledger is the administration's: a company sees none of it. */
+export const FOREIGN_SCOPE: ScopeOptions = { columns: [], publicToCompanies: false };
 /** Staff directory: internal. */
 export const USER_SCOPE: ScopeOptions = { columns: [], publicToCompanies: false };
 /** Tariffs and checklist templates are published reference data. */

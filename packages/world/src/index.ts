@@ -10,6 +10,7 @@ import { buildTariffs, buildInvoices, type WorldTariff, type WorldInvoice } from
 import { buildChecklistTemplates, buildInspections, type WorldChecklistTemplate, type WorldInspection } from './inspection';
 import { buildBerthOutages, buildResources, type WorldBerthOutage, type WorldResource } from './ports';
 import { buildSeafarers, type WorldSeafarer } from './crew';
+import { buildMet, type WorldMetInstitution, type WorldMetProgramme, type WorldManningScale, type WorldCrewList } from './met';
 import { buildLegalInstruments, type WorldLegalInstrument } from './legislation';
 import { buildLicences, type WorldLicence } from './instruments';
 import { buildRegistrations, type WorldRegistration, type WorldRegistryEntry } from './registry';
@@ -25,6 +26,7 @@ export interface World {
   vesselCertificates: WorldVesselCertificate[]; tariffs: WorldTariff[]; checklistTemplates: WorldChecklistTemplate[]; berthOutages: WorldBerthOutage[]; resources: WorldResource[]; invoices: WorldInvoice[]; inspections: WorldInspection[];
   seafarers: WorldSeafarer[]; legalInstruments: WorldLegalInstrument[]; licences: WorldLicence[]; registrations: WorldRegistration[]; registry: WorldRegistryEntry[]; serviceDefinitions: WorldServiceDefinition[]; serviceRequests: WorldServiceRequest[]; ruleSets: WorldRuleSet[];
   agentConfigs: WorldAgentConfig[]; aiDecisions: WorldAiDecision[]; incidents: WorldIncident[]; positions: WorldPosition[]; mdaAlerts: WorldMdaAlert[];
+  metInstitutions: WorldMetInstitution[]; metProgrammes: WorldMetProgramme[]; manningScales: WorldManningScale[]; crewLists: WorldCrewList[];
 }
 
 /** Builds the whole fictional world deterministically. Every section draws from its own forked stream, so every service seeds its own slice from one stable object. */
@@ -56,9 +58,10 @@ export function buildWorld(opts: { profile?: string; seed?: number; now?: Date }
   const incidents = buildIncidents(root.fork('incidents'), profile, users, vessels, berths, portCalls, now);
   const resources = buildResources(root.fork('resources'), profile, users, portCalls, berths, vessels, incidents, now);
   const { positions, mdaAlerts } = buildSurveillance(root.fork('surveillance'), profile, users, vessels, portCalls, now);
+  const { metInstitutions, metProgrammes, manningScales, crewLists } = buildMet(root.fork('met'), profile, companies, vessels, seafarers, portCalls, licences, lookups, now);
   const { agentConfigs, aiDecisions } = buildAgents(root.fork('agents'), profile, { users, vessels, vesselCertificates, inspections, licences, serviceDefinitions, serviceRequests, legalInstruments, incidents }, now);
   return { profile, seed, now: now.toISOString(), histStart: HIST_START.toISOString(), roles: ROLE_CATALOGUE, users, lookups, companies, berths, vessels, portCalls, settings,
-    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, ruleSets, agentConfigs, aiDecisions, incidents, positions, mdaAlerts };
+    vesselCertificates, tariffs, checklistTemplates, berthOutages, resources, invoices, inspections, seafarers, legalInstruments, licences, registrations, registry, serviceDefinitions, serviceRequests, ruleSets, agentConfigs, aiDecisions, incidents, positions, mdaAlerts, metInstitutions, metProgrammes, manningScales, crewLists };
 }
 export const DEMO_PASSWORD = 'Demo@2026';
 export * from './prng';
@@ -75,6 +78,7 @@ export * from './finance';
 export * from './inspection';
 export * from './ports';
 export * from './crew';
+export * from './met';
 export * from './legislation';
 export * from './instruments';
 export * from './registry';

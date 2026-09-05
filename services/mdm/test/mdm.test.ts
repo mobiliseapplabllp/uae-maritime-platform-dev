@@ -32,7 +32,7 @@ const g = (p: string, t = admin) => request(server as never).get(p).set('authori
 
 describe('mdm', () => {
   it('seeds every declared master with counts and lists by category', async () => {
-    const cats = await g('/lookups/categories'); expect(cats.body.data).toHaveLength(48); expect(cats.body.data.every((c: { count: number }) => c.count > 0)).toBe(true); expect(cats.body.data.find((c: { key: string }) => c.key === 'vesselType').count).toBeGreaterThan(5);
+    const cats = await g('/lookups/categories'); expect(cats.body.data).toHaveLength(49); expect(cats.body.data.every((c: { count: number }) => c.count > 0)).toBe(true); expect(cats.body.data.find((c: { key: string }) => c.key === 'vesselType').count).toBeGreaterThan(5);
     const list = await g('/lookups?category=cargoType&limit=100'); expect(list.body.meta.total).toBeGreaterThan(8); expect(list.body.data[0].category).toBe('cargoType');
   });
   it('creates, updates and soft-deletes lookups with audit, and blocks viewers from writing', async () => {

@@ -3,11 +3,11 @@ import type { CertStatus } from '../vessels/types';
 
 export type { CertStatus };
 export type SeafarerStatus = 'ACTIVE' | 'SHORE_LEAVE' | 'SIGNED_OFF' | 'SUSPENDED';
-export interface SeafarerCertificate { id: string; certType: string; grade?: string; number?: string; issuer?: string; issueDate?: string | null; expiryDate: string; remarks?: string; status: CertStatus }
-export interface SeaServiceRecord { id: string; vesselId?: string | null; vesselName: string; imo?: string; rank: string; from: string; to: string; verified: boolean; remarks?: string }
+export interface SeafarerCertificate { id: string; certType: string; certCode?: string; kind?: string; grade?: string; number?: string; issuer?: string; issueDate?: string | null; expiryDate: string; remarks?: string; status: CertStatus }
+export interface SeaServiceRecord { id: string; vesselId?: string | null; vesselName: string; imo?: string; rank: string; rankCode?: string; from: string; to: string; verified: boolean; remarks?: string }
 /** GET /seafarers — one register row; the certificate summary and the sea-day total are computed server-side. */
 export interface SeafarerRow {
-  id: string; cdcNo: string; seafarerId?: string; seafarerIdLabel?: string; nationalId?: string; nationalIdLabel?: string; name: string; dob?: string | null; nationality?: string; rank: string;
+  id: string; cdcNo: string; seafarerId?: string; seafarerIdLabel?: string; nationalId?: string; nationalIdLabel?: string; name: string; dob?: string | null; nationality?: string; rank: string; rankCode?: string;
   phone?: string; email?: string; status: SeafarerStatus; currentVesselId?: string | null; currentVesselName?: string | null; signedOnAt?: string | null; remarks?: string; certAlerts: number; totalSeaDays: number;
   /** The licensed recruitment and placement service holding the engagement; null for a direct engagement. */
   manningAgentCode?: string; manningAgentName?: string; manningAgent?: { code: string; name: string } | null;

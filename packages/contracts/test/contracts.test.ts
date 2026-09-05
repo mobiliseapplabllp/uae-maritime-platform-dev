@@ -110,11 +110,11 @@ describe('events, jurisdictions, reference', () => {
     expect(unconfirmedFigures('AE').map((u) => u.key)).toContain('registry.shareDenominator');
   });
   it('declares every master the platform reads from data, each with a group and an Arabic label', () => {
-    expect(LOOKUP_CATEGORIES).toHaveLength(48);
-    expect(new Set(LOOKUP_CATEGORIES.map((c) => c.key)).size).toBe(48);
+    expect(LOOKUP_CATEGORIES).toHaveLength(49);
+    expect(new Set(LOOKUP_CATEGORIES.map((c) => c.key)).size).toBe(49);
     for (const c of LOOKUP_CATEGORIES) { expect(c.group).toBeTruthy(); expect(c.labelAr).toBeTruthy(); for (const m of c.metaFields ?? []) expect(m.key).toMatch(/^[a-z][A-Za-z0-9]*$/); }
     // the vocabularies the five Phase 3 domains validate against
-    for (const k of ['accreditationCategory', 'visitType', 'registrationKind', 'registryTransactionType', 'seafarerRank', 'metProgramme', 'crewListSource', 'legalInstrumentType', 'imoSource', 'inspectionRegime']) expect(lookupCategory(k)).toBeDefined();
+    for (const k of ['accreditationCategory', 'visitType', 'registrationKind', 'registryTransactionType', 'seafarerRank', 'seafarerCertType', 'metProgramme', 'metInstitutionType', 'crewListSource', 'tradingArea', 'legalInstrumentType', 'imoSource', 'inspectionRegime']) expect(lookupCategory(k)).toBeDefined();
     expect(lookupCategory('accreditationCategory')?.system).toBe(true);
     expect(pick({ en: 'Hello', ar: 'مرحبا' }, 'ar')).toBe('مرحبا');
     expect(pick({ en: 'Hello' }, 'ar')).toBe('Hello');

@@ -127,7 +127,7 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
     type SeedVisit = { id: string; cycleId: string; subjectId: string; subjectName: string; category: string; visitType: string; status: string; on: Date; inspector: (typeof inspectors)[number] | undefined; result: string; score: number | null; findings: Row[]; remarks: string };
     const seedVisits: SeedVisit[] = [];
     let cycles = 0; let vi = 0;
-    for (const l of held.filter((x) => x.subjectKind === 'COMPANY' && x.subjectId && x.issueDate && ['ISSUED', 'SUSPENDED', 'REVOKED'].includes(x.status))) {
+    for (const l of held.filter((x) => (x.subjectKind === 'COMPANY' || x.subjectKind === 'MET_INSTITUTION') && x.subjectId && x.issueDate && ['ISSUED', 'SUSPENDED', 'REVOKED'].includes(x.status))) {
       const scheme = schemeByType.get(l.entityType); if (!scheme) continue;
       const months = Number(scheme.meta.cycleMonths) || 12; const visitsRequired = Number(scheme.meta.visitsPerCycle ?? 1);
       const renewals = l.history.filter((h) => h.from === 'ISSUED' && h.to === 'ISSUED').length;

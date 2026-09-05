@@ -6,8 +6,7 @@ import { many, money } from './queries';
 import { INDEXES } from './indexes';
 import {
   CALL_SCOPE, COMPANY_SCOPE, INCIDENT_SCOPE, INSTRUMENT_SCOPE, INVOICE_SCOPE, LEGISLATION_SCOPE,
-  PUBLISHED_STATUSES, SEAFARER_SCOPE, USER_SCOPE, VESSEL_SCOPE, seesUnpublished, visible,
-} from './scope';
+  PUBLISHED_STATUSES, SEAFARER_SCOPE, USER_SCOPE, VESSEL_SCOPE, seesUnpublished, visible, MET_SCOPE, CREW_LIST_SCOPE } from './scope';
 
 /**
  * Global search — one query across every register the signed-in role can see. Powers the Ctrl+K palette.
@@ -74,6 +73,12 @@ export class SearchController {
     add<{ id: string; name: string; rank: string; cdc_no: string }>('seafarers.view', SEAFARER_SCOPE, 'seafarer', 'Seafarers', INDEXES.seafarers,
       from('rm_seafarers', 'id, name, rank, cdc_no'),
       (s) => ({ id: s.id, label: s.name, sub: `${s.rank} · CDC ${s.cdc_no}`, to: `/seafarers/${s.id}` }));
+    add<{ id: string; name: string; name_ar: string | null; code: string; accreditation_status: string }>('seafarers.view', MET_SCOPE, 'metInstitution', 'MET institutions', INDEXES.metInstitutions,
+      from('rm_met_institutions', 'id, name, name_ar, code, accreditation_status'),
+      (m) => ({ id: m.id, label: m.name, labelAr: m.name_ar, sub: `${m.code} · ${String(m.accreditation_status).toLowerCase()}`, to: `/seafarers/met/${m.id}` }));
+    add<{ id: string; number: string; vessel_name: string; status: string }>('seafarers.view', CREW_LIST_SCOPE, 'crewList', 'Crew lists', INDEXES.crewLists,
+      from('rm_crew_lists', 'id, number, vessel_name, status'),
+      (l) => ({ id: l.id, label: l.number, sub: `${l.vessel_name} · ${l.status}`, to: `/seafarers/crew-lists/${l.id}` }));
     add<{ id: string; name: string; name_ar: string | null; code: string; category: string | null }>('facilities.view', COMPANY_SCOPE, 'company', 'Companies', INDEXES.companies,
       from('rm_companies', 'id, name, name_ar, code, category'),
       (c) => ({ id: c.id, label: c.name, labelAr: c.name_ar, sub: `${c.code} · ${String(c.category || '').replace(/_/g, ' ')}`, to: `/companies/${c.id}` }));

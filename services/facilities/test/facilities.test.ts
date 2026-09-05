@@ -355,7 +355,7 @@ describe('facilities — the dashboard and the vocabularies', () => {
     // the vocabularies come from this service's mirror of the Data Studio masters, labelled in both languages
     expect(r.body.data.categoryOptions.find((o: any) => o.code === 'AGENCY')).toMatchObject({ label: 'Shipping agency', labelAr: 'وكالة ملاحية' });
     expect(r.body.data.facilityTypes).toContain('MARINA'); expect(r.body.data.visitTypes.map((o: any) => o.code)).toContain('SPOT_CHECK');
-    expect(r.body.data.accreditationCategories).toHaveLength(6); expect(r.body.data.accreditationCategories[0].meta).toMatchObject({ cycleMonths: 12 });
+    expect(r.body.data.accreditationCategories).toHaveLength(7); expect(r.body.data.accreditationCategories[0].meta).toMatchObject({ cycleMonths: 12 });
     expect(r.body.data.statusTransitions.BLACKLISTED).toEqual(['ACTIVE', 'INACTIVE']);
     expect(r.body.data.ispsStatuses).toContain('COMPLIANT');
     expect(r.body.data.licensedTypes.some((t: any) => t.type === 'SHIPPING_AGENCY')).toBe(true);
@@ -584,9 +584,9 @@ describe('facilities — annual accreditation and inspection visits', () => {
     expect(dash.bySchemes[0]).toMatchObject({ category: 'PEST_CONTROL', companies: 2, current: 1, due: 1, visitsOverdue: 1, averageRating: 3.5 });
   });
 
-  it('seeds the six schemes with cycles, visits and a desk dashboard, read from the master', async () => {
-    const schemes = await g('/facilities/accreditations/schemes'); expect(schemes.body.data).toHaveLength(6); expect(schemes.body.data[0]).toMatchObject({ cycleMonths: 12, visitsPerCycle: 1, reminderDays: [90, 30, 7] });
-    const dash = await g('/facilities/accreditations/dashboard'); expect(dash.body.data.kpis.schemes).toBe(6); expect(dash.body.data.kpis.accredited).toBeGreaterThan(0);
+  it('seeds the seven schemes with cycles, visits and a desk dashboard, read from the master', async () => {
+    const schemes = await g('/facilities/accreditations/schemes'); expect(schemes.body.data).toHaveLength(7); expect(schemes.body.data[0]).toMatchObject({ cycleMonths: 12, visitsPerCycle: 1, reminderDays: [90, 30, 7] });
+    const dash = await g('/facilities/accreditations/dashboard'); expect(dash.body.data.kpis.schemes).toBe(7); expect(dash.body.data.kpis.accredited).toBeGreaterThan(0);
     const list = await g('/facilities/accreditations?limit=100'); expect(list.body.meta.total).toBeGreaterThan(0);
     for (const row of list.body.data) expect(['CURRENT', 'DUE', 'EXPIRED', 'SUSPENDED', 'WITHDRAWN']).toContain(row.status);
     const history = await g('/facilities/accreditations?history=true&limit=200'); expect(history.body.meta.total).toBeGreaterThanOrEqual(list.body.meta.total);

@@ -51,6 +51,12 @@ export const EVENTS = {
     certificateUpdated: 'seafarers.certificate.updated', certificateDeleted: 'seafarers.certificate.deleted',
     seaServiceAdded: 'seafarers.sea-service.added', seaServiceDeleted: 'seafarers.sea-service.deleted',
     signedOn: 'seafarers.signed-on', signedOff: 'seafarers.signed-off',
+    // the MET register, the safe manning scale, the FAL-5 crew list and the foreign seafarer ledger
+    metInstitutionRegistered: 'seafarers.met.institution.registered', metInstitutionUpdated: 'seafarers.met.institution.updated', metAccreditationChanged: 'seafarers.met.accreditation.changed',
+    programmeApproved: 'seafarers.met.programme.approved', programmeChanged: 'seafarers.met.programme.changed', programmeWithdrawn: 'seafarers.met.programme.withdrawn',
+    manningScaleRecorded: 'seafarers.manning.recorded',
+    crewListReceived: 'seafarers.crew-list.received', crewListChecked: 'seafarers.crew-list.checked', crewListCleared: 'seafarers.crew-list.cleared', crewListQueried: 'seafarers.crew-list.queried',
+    foreignRecorded: 'seafarers.foreign.recorded', foreignReconciled: 'seafarers.foreign.reconciled',
   },
   legislation: {
     instrumentPublished: 'legislation.instrument.published', instrumentWithdrawn: 'legislation.instrument.withdrawn',

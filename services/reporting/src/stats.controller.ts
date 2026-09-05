@@ -6,8 +6,7 @@ import { D, H, card, certStatus, count, many, money, monthYear, dayMonthYear, nf
 import {
   BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, CHECKLIST_SCOPE, INCIDENT_SCOPE, INSPECTION_SCOPE,
   INSTRUMENT_SCOPE, INVOICE_SCOPE, LEGISLATION_SCOPE, REGISTRATION_SCOPE, RESOURCE_SCOPE, SEAFARER_SCOPE,
-  TARIFF_SCOPE, USER_SCOPE, VESSEL_SCOPE, from,
-} from './scope';
+  TARIFF_SCOPE, USER_SCOPE, VESSEL_SCOPE, from, MET_SCOPE, CREW_LIST_SCOPE, FOREIGN_SCOPE } from './scope';
 
 type Compute = (pool: Pool, user: Principal) => Promise<Card[]>;
 const avgH = (rows: { a: Date | null; b: Date | null }[]) => (rows.length ? Math.round(rows.reduce((s, r) => s + (new Date(r.b!).getTime() - new Date(r.a!).getTime()), 0) / rows.length / H * 10) / 10 : 0);
@@ -116,6 +115,33 @@ export const SCOPES: Record<string, { perm: string; compute: Compute }> = {
       card('Certificate alerts', alerts, 'medical / STCW review', alerts ? 'warning' : 'success'), card('Avg sea service', `${nf(avgDays)} d`, 'per seafarer'),
       card('Service records', nf(sf.reduce((s, x) => s + Number(x.service_records), 0)), 'contracts on file'), card('Ranks represented', new Set(sf.map((x) => x.rank)).size, 'across the roll'),
       card('Ashore', sf.filter((x) => !x.current_vessel_id).length, 'available for assignment'), card('Nationalities', new Set(sf.map((x) => x.nationality).filter(Boolean)).size, 'on the register'),
+    ];
+  } },
+  met: { perm: 'seafarers.view', compute: async (pool, user) => {
+    const rows = await many<{ status: string; accreditation_status: string; programmes: number; approved_programmes: number; seats_per_year: number; instructors: number; accredited_until: Date | null }>(pool, `SELECT status, accreditation_status, programmes, approved_programmes, seats_per_year, instructors, accredited_until FROM ${from(user, 'rm_met_institutions', MET_SCOPE)}`);
+    const open = rows.filter((r) => r.status !== 'CLOSED');
+    const accredited = open.filter((r) => r.accreditation_status === 'CURRENT' || r.accreditation_status === 'DUE').length;
+    const due = open.filter((r) => r.accreditation_status === 'DUE').length;
+    const lapsed = open.filter((r) => ['EXPIRED', 'SUSPENDED', 'WITHDRAWN'].includes(r.accreditation_status)).length;
+    return [
+      card('Institutions', open.length, 'on the MET register'), card('Accredited', accredited, 'STCW I/8 in force', accredited ? 'success' : 'warning'),
+      card('Renewal due', due, 'cycle ends within the window', due ? 'warning' : 'default'), card('Lapsed / suspended', lapsed, 'accreditation not in force', lapsed ? 'error' : 'success'),
+      card('Programmes approved', open.reduce((s, r) => s + Number(r.approved_programmes), 0), 'across the sector'), card('Other programmes', open.reduce((s, r) => s + Number(r.programmes) - Number(r.approved_programmes), 0), 'pending, suspended or withdrawn'),
+      card('Seats per year', nf(open.reduce((s, r) => s + Number(r.seats_per_year), 0)), 'approved intake capacity'), card('Instructors', open.reduce((s, r) => s + Number(r.instructors), 0), 'declared by the providers'),
+    ];
+  } },
+  crewLists: { perm: 'seafarers.view', compute: async (pool, user) => {
+    const now = new Date();
+    const lists = await many<{ status: string; ok: boolean | null; list_date: Date; row_count: number; matched: number; foreign_count: number; shortfalls: number }>(pool, `SELECT status, ok, list_date, row_count, matched, foreign_count, shortfalls FROM ${from(user, 'rm_crew_lists', CREW_LIST_SCOPE)}`);
+    const recent = lists.filter((l) => l.list_date > new Date(now.getTime() - 30 * D));
+    const waiting = lists.filter((l) => l.status === 'RECEIVED' || l.status === 'CHECKED').length;
+    const short = lists.filter((l) => Number(l.shortfalls) > 0 && l.status !== 'CLEARED').length;
+    const ledger = user.scope?.level === 'NATIONAL' ? await many<{ status: string; endorsed: boolean }>(pool, `SELECT status, endorsed FROM ${from(user, 'rm_foreign_seafarers', FOREIGN_SCOPE)}`) : [];
+    return [
+      card('Crew lists · 30 d', recent.length, `${lists.length} on file`), card('Awaiting decision', waiting, 'checked, not yet cleared', waiting ? 'warning' : 'success'),
+      card('Queried', lists.filter((l) => l.status === 'QUERIED').length, 'returned to the agent', 'warning'), card('Short of manning', short, 'undecided lists below the MSMD', short ? 'error' : 'success'),
+      card('Cleared', lists.filter((l) => l.status === 'CLEARED').length, 'lists cleared'), card('Lines read', nf(lists.reduce((s, l) => s + Number(l.row_count), 0)), `${nf(lists.reduce((s, l) => s + Number(l.matched), 0))} matched the register`),
+      card('Foreign ledger', ledger.length, 'persons seen on crew lists'), card('On watch', ledger.filter((f) => f.status === 'WATCH').length, 'officers without an endorsement', ledger.some((f) => f.status === 'WATCH') ? 'warning' : 'success'),
     ];
   } },
   legislation: { perm: 'legislation.view', compute: async (pool, user) => {

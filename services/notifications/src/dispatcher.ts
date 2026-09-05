@@ -22,6 +22,10 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
   { type: EVENTS.facilities.accreditationRenewed, audiencePerm: 'facilities.view', severity: 'success', title: (d) => `${d.scheme ?? d.category} accreditation renewed — ${d.companyName} (cycle ${d.cycleNo})`, link: (d) => `/companies/${d.companyId}` },
   { type: EVENTS.facilities.visitCompleted, audiencePerm: 'facilities.view', severity: 'info', title: (d) => `Visit ${d.number} completed — ${d.subjectName}: ${String(d.result ?? '').toLowerCase().replace('_', ' ')}`, body: (d) => (Number(d.findings) ? `${d.findings} finding(s) raised as obligations` : ''), link: (d) => `/companies/${d.subjectId}` },
   { type: EVENTS.ai.decisionRecorded, audiencePerm: 'agents.view', severity: 'info', title: (d) => `Agent ${d.agentId} recorded a decision (${d.disposition})`, link: () => '/agents/decisions' },
+  // the crew desk: a list sent back to the agent, a provider's accreditation moving, a programme withdrawn
+  { type: EVENTS.seafarers.crewListQueried, audiencePerm: 'seafarers.view', severity: 'warning', title: (d) => `Crew list ${d.number} queried — ${d.vesselName}`, body: (d) => String(d.note ?? ''), link: (d) => `/seafarers/crew-lists/${d.crewListId}` },
+  { type: EVENTS.seafarers.metAccreditationChanged, audiencePerm: 'seafarers.view', severity: 'info', title: (d) => `MET accreditation ${String(d.status ?? '').toLowerCase()} — ${d.name}`, body: (d) => String(d.reason ?? ''), link: (d) => `/seafarers/met/${d.institutionId}` },
+  { type: EVENTS.seafarers.programmeWithdrawn, audiencePerm: 'seafarers.view', severity: 'info', title: (d) => `Programme withdrawn — ${d.title} at ${d.name}`, body: (d) => String(d.reason ?? ''), link: (d) => `/seafarers/met/${d.institutionId}` },
 ];
 
 @Injectable()

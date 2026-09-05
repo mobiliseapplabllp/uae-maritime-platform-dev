@@ -8,7 +8,8 @@ import StatusChip from '../../components/common/StatusChip';
 import { SEAFARER_STATUS_META } from '../../utils/status';
 import { fmtNum, toInputD } from '../../utils/format';
 import { useProfile } from '../../config/runtime';
-import { RANK_OPTIONS } from './shared';
+import { useLookups } from '../../hooks/useLookups';
+import { RANK_LOOKUP } from './shared';
 import type { SeafarerRow } from './types';
 
 /* The seafarer register — crew identity, competency documents and verified sea service. A row opens the full record. */
@@ -20,6 +21,7 @@ export default function SeafarersList() {
   const { t } = useTranslation();
   const idLabel = profile.identity?.seafarerIdLabel || 'Seafarer ID';
   const nationalLabel = profile.identity?.nationalIdLabel || 'National ID';
+  const ranks = useLookups(RANK_LOOKUP);
 
   return (
     <CrudPage<SeafarerRow>
@@ -31,7 +33,7 @@ export default function SeafarersList() {
         { key: 'name', label: t('seafarers.seafarer'), sortable: true, render: (r) => <EntityHover type="seafarer" id={r.id}><b>{r.name}</b></EntityHover> },
         { key: 'cdcNo', label: t('seafarers.cdcNo'), mono: true },
         { key: 'seafarerId', label: idLabel, mono: true, render: (r) => r.seafarerId || '—' },
-        { key: 'rank', label: t('seafarers.rank'), sortable: true },
+        { key: 'rank', label: t('seafarers.rank'), sortable: true, render: (r) => ranks.label(r.rankCode) || r.rank },
         { key: 'nationality', label: t('seafarers.nationality') },
         { key: 'manningAgentName', label: t('seafarers.placedBy'), render: (r) => (r.manningAgent ? <EntityHover type="company" id={r.manningAgent.code}><span>{r.manningAgent.name}</span></EntityHover> : <Chip size="small" variant="outlined" label={t('seafarers.directEngagement')} sx={{ height: 20, fontSize: 10.5 }} />) },
         { key: 'currentVesselName', label: t('seafarers.onBoard'), render: (r) => (r.currentVesselId ? <EntityHover type="vessel" id={r.currentVesselId}><span>{r.currentVesselName}</span></EntityHover> : <Chip size="small" variant="outlined" label={t('seafarers.ashore')} sx={{ height: 20, fontSize: 10.5 }} />) },
@@ -39,10 +41,10 @@ export default function SeafarersList() {
         { key: 'totalSeaDays', label: t('seafarers.seaDays'), align: 'right', render: (r) => fmtNum(r.totalSeaDays), mono: true },
         { key: 'status', label: t('seafarers.status'), render: (r) => <StatusChip value={r.status} map={SEAFARER_STATUS_META} /> },
       ]}
-      filters={[{ name: 'rank', label: t('seafarers.rank'), options: RANK_OPTIONS }, { name: 'status', label: t('seafarers.status'), options: STATUS_OPTIONS }]}
+      filters={[{ name: 'rank', label: t('seafarers.rank'), lookup: RANK_LOOKUP }, { name: 'status', label: t('seafarers.status'), options: STATUS_OPTIONS }]}
       formFields={[
         { name: 'name', label: t('seafarers.fullName'), required: true },
-        { name: 'rank', label: t('seafarers.rank'), type: 'select', required: true, options: RANK_OPTIONS },
+        { name: 'rank', label: t('seafarers.rank'), type: 'select', required: true, lookup: RANK_LOOKUP },
         { name: 'cdcNo', label: t('seafarers.cdcNumber'), required: true, helper: t('seafarers.cdcHelper') },
         { name: 'seafarerId', label: t('seafarers.idNumber', { id: idLabel }) },
         { name: 'nationalId', label: nationalLabel },
@@ -53,7 +55,7 @@ export default function SeafarersList() {
         { name: 'remarks', label: t('seafarers.remarks'), type: 'multiline', cols: 12 },
       ]}
       defaults={{ nationality: profile.name, status: 'ACTIVE' }}
-      toForm={(row) => ({ ...row, dob: toInputD(row.dob) })}
+      toForm={(row) => ({ ...row, rank: row.rankCode || row.rank, dob: toInputD(row.dob) })}
       deleteMessage={(r) => t('seafarers.deleteMessage', { name: r?.name })}
     />
   );

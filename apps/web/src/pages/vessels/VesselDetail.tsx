@@ -264,6 +264,7 @@ export default function VesselDetail() {
 
         {tab === 5 && (
           <TableContainer sx={{ overflowX: 'auto' }}>
+            <ManningStrip vesselId={v.id} />
             <Table size="small">
               <TableHead><TableRow><TableCell>Name</TableCell><TableCell>Rank</TableCell><TableCell>CDC</TableCell><TableCell>Nationality</TableCell><TableCell>Cert alerts</TableCell></TableRow></TableHead>
               <TableBody>
@@ -355,5 +356,25 @@ export default function VesselDetail() {
       <ConfirmDialog open={!!delCert} busy={busy} title="Delete certificate?" message={`Remove ${delCert?.certType} from ${v.name}? The deletion is recorded in the audit log.`} onClose={() => setDelCert(null)}
         onConfirm={() => { if (!delCert) return; setBusy(true); api.delete(`/vessels/${id}/certificates/${delCert.id}`).then(() => { dispatch(notify('Certificate deleted')); setDelCert(null); load(); }).catch(err).finally(() => setBusy(false)); }} />
     </>
+  );
+}
+
+/* The ship's safe manning scale against who the register has aboard, read from the crew desk when the reader may see it. */
+function ManningStrip({ vesselId }: { vesselId: string }) {
+  const user = useUser();
+  const navigate = useNavigate();
+  const [scale, setScale] = useState<{ recorded: boolean; msmdNo: string; total: number; compliance: { listed: number; shortfalls: number; ok: boolean; rows: { rank: string; required: number; listed: number; shortfall: number }[] } | null } | null | undefined>(undefined);
+  useEffect(() => {
+    if (!hasPerm(user, 'seafarers.view')) { setScale(null); return; }
+    api.get<{ recorded: boolean; msmdNo: string; total: number; compliance: { listed: number; shortfalls: number; ok: boolean; rows: { rank: string; required: number; listed: number; shortfall: number }[] } | null }>(`/seafarers/manning/${vesselId}`, { headers: { 'X-Quiet': '1' } }).then((r) => setScale(r.data)).catch(() => setScale(null));
+  }, [vesselId, user]);
+  if (!scale || !scale.recorded) return null;
+  const c = scale.compliance;
+  return (
+    <Box sx={{ px: 2, py: 1.25, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', borderBottom: 1, borderColor: 'divider' }} data-testid="manning-strip">
+      <Typography variant="body2"><b>Safe manning</b>{scale.msmdNo ? ` · ${scale.msmdNo}` : ''} · {scale.total} required · {c?.listed ?? 0} aboard from the register</Typography>
+      {c && (c.ok ? <Chip size="small" color="success" label="Scale met" sx={{ height: 20 }} /> : <Chip size="small" color="error" label={`Short by ${c.shortfalls}: ${c.rows.filter((r) => r.shortfall).map((r) => `${r.rank} ${r.listed}/${r.required}`).join(', ')}`} sx={{ height: 20 }} />)}
+      <Button size="small" onClick={() => navigate('/seafarers/manning')}>Open safe manning</Button>
+    </Box>
   );
 }

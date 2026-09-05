@@ -1,5 +1,6 @@
 import { join } from 'node:path';
-import { buildWorld, isStatutory, type World } from '@maritime/world';
+import { buildWorld, isStatutory, stableId, type World } from '@maritime/world';
+import { getJurisdiction } from '@maritime/contracts';
 import { makeEvent, EVENTS } from '@maritime/contracts';
 import { createDb, runMigrations, withTx, createCache } from '@maritime/service-kit';
 import { env } from './env';
@@ -66,6 +67,22 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
     })));
     // A seafarer belongs to the agency that placed them; the world states it, so the projection carries it.
     await run('seafarer', pick<{ manningAgentCode?: string }>(world, 'seafarers').map((r) => ({ ...r, scope: company(r.manningAgentCode) })));
+    // the MET register, the crew lists and the ledger behind them, as the seafarers service seeds them
+    const programmesOf = (id: string) => pick<{ institutionId: string; status: string; seatsPerIntake: number; intakesPerYear: number }>(world, 'metProgrammes').filter((p) => p.institutionId === id);
+    await run('metInstitution', pick<{ id: string; code: string; accreditationStatus: string; accreditedUntil: string | null }>(world, 'metInstitutions').map((m) => {
+      const ps = programmesOf(m.id); const approved = ps.filter((p) => p.status === 'APPROVED');
+      return { ...m, accreditation: { status: m.accreditationStatus, until: m.accreditedUntil }, programmeCount: ps.length, approvedProgrammes: approved.length, seatsPerYear: approved.reduce((t, p) => t + p.seatsPerIntake * p.intakesPerYear, 0), scope: company(m.code) };
+    }));
+    const nationalName = getJurisdiction(world.profile).name;
+    const ledger = new Map<string, { id: string; name: string; nationality: string; idNumber: string; lastRank: string; appearances: number; status: string; lastSeenAt: string }>();
+    await run('crewList', pick<{ id: string; agentCode: string; status: string; date: string; rows: { seafarerId: string | null; nationality: string; idNumber: string; familyName: string; givenNames: string; rank: string }[] }>(world, 'crewLists').map((l) => {
+      for (const r of l.rows.filter((x) => !x.seafarerId && x.nationality !== nationalName)) {
+        const key = `${r.nationality}:${r.idNumber}`; const seen = ledger.get(key);
+        ledger.set(key, { id: stableId('foreign', key), name: `${r.givenNames} ${r.familyName}`.trim(), nationality: r.nationality, idNumber: r.idNumber, lastRank: r.rank, appearances: (seen?.appearances ?? 0) + 1, status: 'LEDGER', lastSeenAt: seen && seen.lastSeenAt > l.date ? seen.lastSeenAt : l.date });
+      }
+      return { ...l, rowCount: l.rows.length, matched: l.rows.filter((r) => r.seafarerId).length, foreignCount: l.rows.filter((r) => !r.seafarerId && r.nationality !== nationalName).length, ok: l.status === 'QUERIED' ? false : null, scope: company(l.agentCode) };
+    }));
+    await run('foreignSeafarer', [...ledger.values()]);
     for (const [kind, key] of [['inspection', 'inspections'], ['incident', 'incidents'], ['legalInstrument', 'legalInstruments'], ['tariff', 'tariffs'], ['resource', 'resources'], ['checklistTemplate', 'checklistTemplates'], ['agentDecision', 'aiDecisions']] as const) await run(kind, pick(world, key));
     const cats = new Map<string, number>(); for (const l of world.lookups) cats.set(l.category, (cats.get(l.category) ?? 0) + 1);
     for (const [category, entries] of cats) await c.query('INSERT INTO rm_lookup_counts(category, entries) VALUES ($1, $2) ON CONFLICT (category) DO UPDATE SET entries = EXCLUDED.entries', [category, entries]);

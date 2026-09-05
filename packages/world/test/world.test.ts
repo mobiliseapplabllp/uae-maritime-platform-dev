@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/;
 const now = new Date('2026-09-02T12:00:00Z');
 const w = buildWorld({ profile: 'AE', now });
 const SECTIONS = ['users', 'companies', 'berths', 'vessels', 'portCalls', 'vesselCertificates', 'tariffs', 'checklistTemplates', 'berthOutages', 'resources', 'invoices', 'inspections', 'seafarers', 'legalInstruments', 'licences', 'registrations',
-  'serviceDefinitions', 'serviceRequests', 'agentConfigs', 'aiDecisions', 'incidents', 'positions', 'mdaAlerts'] as const;
+  'serviceDefinitions', 'serviceRequests', 'agentConfigs', 'aiDecisions', 'incidents', 'positions', 'mdaAlerts', 'metInstitutions', 'metProgrammes', 'manningScales', 'crewLists'] as const;
 const ids = (rows: { id: string }[]) => new Set(rows.map((r) => r.id));
 const realIds = new Set(w.vessels.filter((v) => v.real).map((v) => v.id));
 
@@ -31,9 +31,9 @@ describe('world', () => {
     for (const cat of categories) expect(LOOKUP_CATEGORIES.some((c) => c.key === cat), cat).toBe(true);
     // one row per (category, code): the mirrors key on it
     expect(new Set(w.lookups.map((l) => `${l.category}:${l.code}`)).size).toBe(w.lookups.length);
-    // the six RFP accreditation schemes, each with a cycle
+    // the six RFP accreditation schemes and the MET institution scheme, each with a cycle
     const schemes = w.lookups.filter((l) => l.category === 'accreditationCategory');
-    expect(schemes.map((s) => s.code).sort()).toEqual(['COMPASS_CALIBRATION', 'FFA_SERVICING', 'LSA_SERVICING', 'PEST_CONTROL', 'SMALL_VESSEL_SURVEY', 'TOWAGE_CERTIFICATION']);
+    expect(schemes.map((s) => s.code).sort()).toEqual(['COMPASS_CALIBRATION', 'FFA_SERVICING', 'LSA_SERVICING', 'MET_INSTITUTION', 'PEST_CONTROL', 'SMALL_VESSEL_SURVEY', 'TOWAGE_CERTIFICATION']);
     for (const s of schemes) expect(s.meta).toMatchObject({ cycleMonths: 12, visitsPerCycle: 1 });
     expect(w.berths).toHaveLength(24); expect(w.companies).toHaveLength(20); expect(w.vessels).toHaveLength(31);
     expect(w.vessels.filter((v) => v.real)).toHaveLength(8);
@@ -95,6 +95,32 @@ describe('world', () => {
     expect(w.seafarers.every((s) => s.seaService.length && s.seaService[s.seaService.length - 1].from < '2023-06-01')).toBe(true);
     const months = new Set(w.inspections.filter((i) => i.status === 'CLOSED').map((i) => i.startedAt!.slice(0, 7))); expect(months.size).toBeGreaterThanOrEqual(40);
     expect(w.incidents.filter((i) => !['RESOLVED', 'CLOSED'].includes(i.status)).length).toBeGreaterThanOrEqual(6);
+  });
+  it('keeps a MET register, a safe manning scale for every active ship and FAL-5 crew lists that read the masters', () => {
+    const rankCodes = new Set(w.lookups.filter((l) => l.category === 'seafarerRank').map((l) => l.code));
+    const programmes = new Set(w.lookups.filter((l) => l.category === 'metProgramme').map((l) => l.code));
+    const sources = new Set(w.lookups.filter((l) => l.category === 'crewListSource').map((l) => l.code));
+    const areas = new Set(w.lookups.filter((l) => l.category === 'tradingArea').map((l) => l.code));
+    // one provider per company licensed as a training institute; the academy holds the accreditation instrument, the short-course centre does not
+    expect(w.metInstitutions).toHaveLength(2);
+    expect(w.metInstitutions.filter((m) => m.accreditationInstrumentNo).length).toBe(1);
+    for (const m of w.metInstitutions) expect(w.companies.some((c) => c.id === m.companyId)).toBe(true);
+    for (const p of w.metProgrammes) { expect(programmes.has(p.programme), p.programme).toBe(true); expect(w.metInstitutions.some((m) => m.id === p.institutionId)).toBe(true); if (p.status === 'APPROVED') expect(p.approvalNo).toBeTruthy(); }
+    expect(new Set(w.metProgrammes.map((p) => p.status))).toEqual(new Set(['APPROVED', 'PENDING', 'SUSPENDED', 'WITHDRAWN']));
+    // every active fictional ship carries a scale; the ranks and the trading area are master codes
+    expect(w.manningScales).toHaveLength(w.vessels.filter((v) => !v.real && v.status === 'ACTIVE').length);
+    for (const s of w.manningScales) { expect(areas.has(s.tradingArea)).toBe(true); expect(s.rows.length).toBeGreaterThan(5); for (const r of s.rows) { expect(rankCodes.has(r.rankCode), r.rankCode).toBe(true); expect(r.count).toBeGreaterThan(0); } }
+    expect(w.manningScales.filter((s) => s.msmdNo).length).toBeGreaterThan(0);
+    // crew lists: recent calls only, every row a master rank, register people carry their id, and the same foreign crew comes back on the same ship
+    expect(w.crewLists.length).toBeGreaterThanOrEqual(20);
+    const seafarerIds = ids(w.seafarers);
+    for (const l of w.crewLists) {
+      expect(sources.has(l.source)).toBe(true); expect(w.portCalls.some((p) => p.vcn === l.vcn)).toBe(true); expect(l.rows.length).toBeGreaterThan(5);
+      for (const r of l.rows) { expect(rankCodes.has(r.rankCode), `${l.vcn} ${r.rank}`).toBe(true); if (r.seafarerId) expect(seafarerIds.has(r.seafarerId)).toBe(true); expect(r.idNumber).toBeTruthy(); }
+    }
+    const foreignKeys = w.crewLists.flatMap((l) => l.rows.filter((r) => !r.seafarerId).map((r) => r.idNumber));
+    expect(new Set(foreignKeys).size).toBeLessThan(foreignKeys.length);
+    expect(w.crewLists.some((l) => l.declaredCrew !== l.rows.length)).toBe(true);
   });
   it('bills with the reference invoice maths and the jurisdiction tax', () => {
     for (const i of w.invoices) {

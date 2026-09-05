@@ -20,7 +20,15 @@ class RO { observe() { /* noop */ } unobserve() { /* noop */ } disconnect() { /*
 
 const ok = <T,>(data: T, meta: Record<string, unknown> = {}) => ({ success: true as const, data, meta });
 const session = { user: { id: 'u1', name: 'Crew Desk Officer', email: 'crew@maritime.example', active: true, kind: 'user', scope: { level: 'NATIONAL' }, role: { id: 'r', name: 'Super Admin', permissions: ['*'] }, perms: ['*'] }, token: 't', refreshToken: 'r' };
-const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string) => (url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`)))) as never);
+/* The rank and document-type dropdowns come from the Data Studio masters, so the masters are mocked alongside the screens' own routes. */
+const lookups: Record<string, unknown[]> = {
+  seafarerRank: [{ id: 'r1', category: 'seafarerRank', code: 'MASTER', label: 'Master', active: true, meta: { officer: true, order: 1 } }, { id: 'r2', category: 'seafarerRank', code: 'DECK_CADET', label: 'Deck Cadet', active: true, meta: { order: 17 } }],
+  seafarerCertType: [{ id: 'c1', category: 'seafarerCertType', code: 'COC', label: 'Certificate of Competency', active: true, meta: { kind: 'COMPETENCY', mandatory: true } }, { id: 'c2', category: 'seafarerCertType', code: 'GOC', label: 'GMDSS GOC', active: true, meta: { kind: 'COMPETENCY' } }],
+};
+const mockGet = (routes: Record<string, unknown>) => vi.spyOn(api, 'get').mockImplementation(((url: string, cfg?: { params?: { category?: string } }) => {
+  if (url === '/lookups') return Promise.resolve(ok(lookups[cfg?.params?.category ?? ''] ?? []));
+  return url in routes ? Promise.resolve(routes[url]) : Promise.reject(new Error(`Unmocked GET ${url}`));
+}) as never);
 const wrap = (ui: React.ReactNode, path = '/') => render(<Provider store={store}><MemoryRouter initialEntries={[path]}><ThemeProvider theme={buildTheme('light')}>{ui}</ThemeProvider></MemoryRouter></Provider>);
 
 /* Every seafarer here is fictional. The shapes follow `seafarerApi`, `certApi`, `serviceApi` and
@@ -92,7 +100,8 @@ describe('Crew register', () => {
     await screen.findByText('Capt. R. Haddad');
     fireEvent.mouseDown(screen.getByLabelText('Rank'));
     fireEvent.click(await screen.findByRole('option', { name: 'Master' }));
-    await waitFor(() => expect(get).toHaveBeenCalledWith('/seafarers', { params: expect.objectContaining({ rank: 'Master', page: 1 }) }));
+    // the filter sends the master's code, and the register accepts either the code or the label
+    await waitFor(() => expect(get).toHaveBeenCalledWith('/seafarers', { params: expect.objectContaining({ rank: 'MASTER', page: 1 }) }));
   });
 });
 
@@ -160,7 +169,8 @@ describe('Seafarer record', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'GMDSS GOC' }));
     fireEvent.change(within(drawer).getByLabelText(/Expiry date/), { target: { value: '2029-01-31' } });
     fireEvent.click(within(drawer).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith('/seafarers/s1/certificates', expect.objectContaining({ certType: 'GMDSS GOC', expiryDate: '2029-01-31' })));
+    // the form sends the master's code; the register stores the master's label beside it
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/seafarers/s1/certificates', expect.objectContaining({ certType: 'GOC', expiryDate: '2029-01-31' })));
   });
 
   it('signs a seafarer off and closes the tour', async () => {

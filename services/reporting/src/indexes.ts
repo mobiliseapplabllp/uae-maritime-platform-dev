@@ -75,6 +75,22 @@ export const INDEXES = {
       { name: 'entity_name', analysis: 'text', boost: 2 },
     ],
   },
+  metInstitutions: {
+    name: 'met-institutions', table: 'rm_met_institutions',
+    fields: [
+      { name: 'name', analysis: 'text', boost: 3 },
+      { name: 'name_ar', analysis: 'arabic', boost: 3 },
+      { name: 'code', analysis: 'keyword', boost: 3 },
+    ],
+  },
+  crewLists: {
+    name: 'crew-lists', table: 'rm_crew_lists',
+    fields: [
+      { name: 'number', analysis: 'keyword', boost: 3 },
+      { name: 'vcn', analysis: 'keyword', boost: 2 },
+      { name: 'vessel_name', analysis: 'text' },
+    ],
+  },
   users: {
     name: 'users', table: 'rm_users',
     fields: [

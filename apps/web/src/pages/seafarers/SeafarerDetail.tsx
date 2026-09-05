@@ -23,7 +23,8 @@ import { fmtD, fmtDT, fmtNum, fromNow, toInputD } from '../../utils/format';
 import { MONO } from '../../theme';
 import { useProfile } from '../../config/runtime';
 import SignOnOffDialog from './SignOnOffDialog';
-import { CERT_TYPE_OPTIONS, RANK_OPTIONS, daysLeft, seaDays, serviceValid } from './shared';
+import { CERT_TYPE_LOOKUP, RANK_LOOKUP, daysLeft, seaDays, serviceValid } from './shared';
+import { useLookups } from '../../hooks/useLookups';
 import type { AuditEntry, CertificatePayload, Seafarer, SeafarerCertificate, SeaServicePayload, SeaServiceRecord } from './types';
 import type { LicenceDetail } from '../facilities/types';
 
@@ -45,6 +46,7 @@ export default function SeafarerDetail() {
   const user = useUser();
   const profile = useProfile();
   const { t } = useTranslation();
+  const ranks = useLookups(RANK_LOOKUP); const certTypes = useLookups(CERT_TYPE_LOOKUP);
   const [doc, setDoc] = useState<Seafarer | null>(null);
   const [tab, setTab] = useState(0);
   const [certDlg, setCertDlg] = useState<SeafarerCertificate | Record<string, never> | null>(null);
@@ -75,7 +77,7 @@ export default function SeafarerDetail() {
   const editingCertId = certDlg && 'id' in certDlg ? (certDlg as SeafarerCertificate).id : undefined;
 
   const openCert = (c?: SeafarerCertificate) => {
-    setCertVals(c ? { certType: c.certType, grade: c.grade || '', number: c.number || '', issuer: c.issuer || '', issueDate: toInputD(c.issueDate), expiryDate: toInputD(c.expiryDate), remarks: c.remarks || '' } : { issuer: profile.authority });
+    setCertVals(c ? { certType: c.certCode || c.certType, grade: c.grade || '', number: c.number || '', issuer: c.issuer || '', issueDate: toInputD(c.issueDate), expiryDate: toInputD(c.expiryDate), remarks: c.remarks || '' } : { issuer: profile.authority });
     setCertDlg(c || {});
   };
   const saveCert = () => {
@@ -101,7 +103,7 @@ export default function SeafarerDetail() {
     <>
       <PageHeader crumbs={[{ label: t('seafarers.crumbRegister'), to: '/seafarers' }, { label: doc.name }]}
         title={<Stack direction="row" spacing={1.25} alignItems="center" flexWrap="wrap" useFlexGap><span>{doc.name}</span><StatusChip value={doc.status} map={SEAFARER_STATUS_META} /></Stack>}
-        sub={`${doc.rank} · CDC ${doc.cdcNo} · ${idLabel} ${doc.seafarerId || '—'} · ${doc.nationality || '—'}`}
+        sub={`${ranks.label(doc.rankCode) || doc.rank} · CDC ${doc.cdcNo} · ${idLabel} ${doc.seafarerId || '—'} · ${doc.nationality || '—'}`}
         actions={canEdit && (doc.currentVesselId
           ? <Button variant="outlined" color="inherit" startIcon={<LogoutRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOff')}</Button>
           : <Button variant="contained" startIcon={<DirectionsBoatRoundedIcon />} onClick={() => setSignDlg(true)}>{t('seafarers.signOn')}</Button>)} />
@@ -130,7 +132,7 @@ export default function SeafarerDetail() {
         {tab === 0 && (
           <Grid container spacing={2.5} sx={{ p: 2.5 }}>
             <Grid item xs={6} md={3}><Item label={t('seafarers.fullName')} value={doc.name} /></Grid>
-            <Grid item xs={6} md={3}><Item label={t('seafarers.rank')} value={doc.rank} /></Grid>
+            <Grid item xs={6} md={3}><Item label={t('seafarers.rank')} value={ranks.label(doc.rankCode) || doc.rank} /></Grid>
             <Grid item xs={6} md={3}><Item label={t('seafarers.cdcNumber')} value={<span style={mono}>{doc.cdcNo}</span>} /></Grid>
             <Grid item xs={6} md={3}><Item label={doc.seafarerIdLabel || idLabel} value={<span style={mono}>{doc.seafarerId || '—'}</span>} /></Grid>
             <Grid item xs={6} md={3}><Item label={doc.nationalIdLabel || profile.identity?.nationalIdLabel || 'National ID'} value={<span style={mono}>{doc.nationalId || '—'}</span>} /></Grid>
@@ -155,7 +157,7 @@ export default function SeafarerDetail() {
                 <TableBody>
                   {doc.certificates.map((c) => (
                     <TableRow key={c.id}>
-                      <TableCell><b>{c.certType}</b></TableCell>
+                      <TableCell><b>{certTypes.label(c.certCode) || c.certType}</b></TableCell>
                       <TableCell>{c.grade || '—'}</TableCell>
                       <TableCell sx={mono}>{c.number || '—'}</TableCell>
                       <TableCell>{c.issuer || '—'}</TableCell>
@@ -184,7 +186,7 @@ export default function SeafarerDetail() {
 
         {tab === 2 && (
           <Box sx={{ p: 2 }}>
-            {canEdit && <Button size="small" startIcon={<AddRoundedIcon />} sx={{ mb: 1 }} onClick={() => { setSvcVals({ rank: doc.rank, verified: false }); setSvcDlg(true); }}>{t('seafarers.addSeaService')}</Button>}
+            {canEdit && <Button size="small" startIcon={<AddRoundedIcon />} sx={{ mb: 1 }} onClick={() => { setSvcVals({ rank: doc.rankCode || doc.rank, verified: false }); setSvcDlg(true); }}>{t('seafarers.addSeaService')}</Button>}
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small" aria-label={t('seafarers.tabSeaService')}>
                 <TableHead><TableRow>
@@ -196,7 +198,7 @@ export default function SeafarerDetail() {
                     <TableRow key={sv.id}>
                       <TableCell>{sv.vesselId ? <EntityHover type="vessel" id={sv.vesselId}><b>{sv.vesselName}</b></EntityHover> : <b>{sv.vesselName}</b>}</TableCell>
                       <TableCell sx={mono}>{sv.imo || '—'}</TableCell>
-                      <TableCell>{sv.rank}</TableCell>
+                      <TableCell>{ranks.label(sv.rankCode) || sv.rank}</TableCell>
                       <TableCell>{fmtD(sv.from)}</TableCell><TableCell>{fmtD(sv.to)}</TableCell>
                       <TableCell align="right" sx={{ fontVariantNumeric: 'tabular-nums' }}>{fmtNum(seaDays(sv.from, sv.to))}</TableCell>
                       <TableCell>{sv.verified ? <Chip size="small" icon={<VerifiedRoundedIcon sx={{ fontSize: 14 }} />} label={t('seafarers.verified')} color="success" variant="outlined" sx={{ height: 21, fontSize: 10.5 }} /> : <Chip size="small" label={t('seafarers.declared')} variant="outlined" sx={{ height: 21, fontSize: 10.5 }} />}</TableCell>
@@ -274,7 +276,7 @@ export default function SeafarerDetail() {
       <FormDrawer open={!!certDlg} title={editingCertId ? t('seafarers.editCertificate') : t('seafarers.addCertificate')} subtitle={doc.name} width="min(560px, 75vw)"
         onClose={() => setCertDlg(null)} busy={busy} disabled={!certVals.certType || !certVals.expiryDate} onSubmit={saveCert} submitLabel={t('common.save')}>
         <FormFields fields={[
-          { name: 'certType', label: t('seafarers.certificateType'), type: 'autocomplete', required: true, cols: 12, options: CERT_TYPE_OPTIONS },
+          { name: 'certType', label: t('seafarers.certificateType'), type: 'autocomplete', required: true, cols: 12, lookup: CERT_TYPE_LOOKUP },
           { name: 'grade', label: t('seafarers.gradeClass') }, { name: 'number', label: t('seafarers.number') },
           { name: 'issuer', label: t('seafarers.issuer'), cols: 12 },
           { name: 'issueDate', label: t('seafarers.issueDate'), type: 'date' }, { name: 'expiryDate', label: t('seafarers.expiryDate'), type: 'date', required: true },
@@ -285,7 +287,7 @@ export default function SeafarerDetail() {
         onClose={() => setSvcDlg(false)} busy={busy} disabled={!serviceValid(svcVals)} onSubmit={saveService} submitLabel={t('common.save')}>
         <FormFields fields={[
           { name: 'vesselName', label: t('seafarers.vesselName'), required: true }, { name: 'imo', label: t('seafarers.imoNumber') },
-          { name: 'rank', label: t('seafarers.rankServed'), type: 'select', required: true, options: RANK_OPTIONS },
+          { name: 'rank', label: t('seafarers.rankServed'), type: 'select', required: true, lookup: RANK_LOOKUP },
           { name: 'verified', label: t('seafarers.verifiedAgainstRecords'), type: 'switch' },
           { name: 'from', label: t('seafarers.signedOn'), type: 'date', required: true }, { name: 'to', label: t('seafarers.signedOff'), type: 'date', required: true, helper: svcVals.from && svcVals.to && !serviceValid(svcVals) ? t('seafarers.signOffAfterSignOn') : undefined },
           { name: 'remarks', label: t('seafarers.remarks'), type: 'multiline', cols: 12 },

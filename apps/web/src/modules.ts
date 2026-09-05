@@ -6,6 +6,8 @@ import EventRepeatRoundedIcon from '@mui/icons-material/EventRepeatRounded';
 import GridViewRoundedIcon from '@mui/icons-material/GridViewRounded';
 import DirectionsBoatFilledRoundedIcon from '@mui/icons-material/DirectionsBoatFilledRounded';
 import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
+import SchoolRoundedIcon from '@mui/icons-material/SchoolRounded';
+import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import GavelRoundedIcon from '@mui/icons-material/GavelRounded';
 import RadarRoundedIcon from '@mui/icons-material/RadarRounded';
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
@@ -74,6 +76,11 @@ export const MODULES: ModuleDef[] = [
     nav: [{ header: 'Crew', items: [
       { to: '/seafarers/overview', label: 'Crew Dashboard', icon: SpaceDashboardRoundedIcon, perm: 'seafarers.view' },
       { to: '/seafarers', label: 'Crew Register', icon: BadgeRoundedIcon, perm: 'seafarers.view', end: true },
+      { to: '/seafarers/crew-lists', label: 'Crew Lists (FAL 5)', icon: ListAltRoundedIcon, perm: 'seafarers.view' },
+      { to: '/seafarers/manning', label: 'Safe Manning', icon: GroupsRoundedIcon, perm: 'seafarers.view' },
+      { to: '/seafarers/foreign', label: 'Foreign Seafarers', icon: PublicRoundedIcon, perm: 'seafarers.view' },
+    ] }, { header: 'Training', items: [
+      { to: '/seafarers/met', label: 'MET Institutions', icon: SchoolRoundedIcon, perm: 'seafarers.view' },
     ] }] },
   { key: 'legis', name: 'Notices & Circulars', short: 'Notices', color: '#8A5A2B', desc: 'Acts, rules, notices and circulars — with acknowledgments', icon: CampaignRoundedIcon, perm: 'legislation.view', home: '/legislation',
     nav: [{ header: 'Instruments', items: [{ to: '/legislation', label: 'Notice Library', icon: GavelRoundedIcon, perm: 'legislation.view' }] }] },

@@ -47,7 +47,7 @@ describe('reporting', () => {
     expect(d.arrivals.length).toBeGreaterThan(0); expect(d.throughputByMonth.some((m: { total: number }) => m.total > 0)).toBe(true);
   });
   it('computes every stat scope and enforces the scope permission', async () => {
-    for (const scope of ['portcalls', 'berths', 'registry', 'vessels', 'certificates', 'seafarers', 'legislation', 'facilities', 'inspections', 'incidents', 'invoices', 'risk', 'masters', 'users', 'tariffs', 'marine', 'audit']) {
+    for (const scope of ['portcalls', 'berths', 'registry', 'vessels', 'certificates', 'seafarers', 'met', 'crewLists', 'legislation', 'facilities', 'inspections', 'incidents', 'invoices', 'risk', 'masters', 'users', 'tariffs', 'marine', 'audit']) {
       const r = await get(`/stats/${scope}`); expect(r.status, scope).toBe(200); expect(r.body.data.cards.length, scope).toBeGreaterThanOrEqual(4);
     }
     expect((await get('/stats/users', 'agent')).status).toBe(403);

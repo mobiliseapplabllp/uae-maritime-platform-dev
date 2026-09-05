@@ -37,7 +37,7 @@ const EXTRA: Record<string, { first: string[]; last: string[] }> = {
   Nepal: { first: ['Tenzin', 'Ramesh', 'Bikash'], last: ['Dorjee', 'Gurung', 'Thapa'] },
   'Sri Lanka': { first: ['Nuwan', 'Kasun', 'Chaminda'], last: ['Perera', 'Fernando', 'Silva'] },
 };
-const poolFor = (nat: string) => EXTRA[nat] ?? (nat === 'United Arab Emirates' ? { first: NAME_POOLS.AE.first.slice(0, 20), last: NAME_POOLS.AE.last.slice(0, 15) } : NAME_POOLS.IN);
+export const namePoolFor = (nat: string) => EXTRA[nat] ?? (nat === 'United Arab Emirates' ? { first: NAME_POOLS.AE.first.slice(0, 20), last: NAME_POOLS.AE.last.slice(0, 15) } : NAME_POOLS.IN);
 const RANK_WEIGHTS: [SeafarerRank, number][] = [['Master', 6], ['Chief Officer', 6], ['Second Officer', 8], ['Third Officer', 8], ['Chief Engineer', 6], ['Second Engineer', 6], ['Third Engineer', 8], ['Fourth Engineer', 6],
   ['Electro-Technical Officer', 5], ['Bosun', 6], ['Able Seaman', 16], ['Ordinary Seaman', 10], ['Oiler', 8], ['Fitter', 5], ['Cook', 6], ['Steward', 5], ['Deck Cadet', 5], ['Engine Cadet', 5]];
 export const isOfficerRank = (r: string) => /Master|Officer|Engineer/.test(r) && !/Cadet/.test(r);
@@ -57,7 +57,7 @@ export function buildSeafarers(rng: Prng, profile: string, vessels: WorldVessel[
   const [CoC, GMDSS, MED, BST, AFF, MFA, SSO, TANK, CDC] = SEAFARER_CERT_TYPES;
   const out: WorldSeafarer[] = [];
   for (let i = 0; i < count; i++) {
-    const nationality = rng.weighted(NATIONALITIES[j.code] ?? NATIONALITIES.AE); const pool = poolFor(nationality);
+    const nationality = rng.weighted(NATIONALITIES[j.code] ?? NATIONALITIES.AE); const pool = namePoolFor(nationality);
     const name = `${rng.pick(pool.first)} ${rng.pick(pool.last)}`; const rank = rng.weighted(RANK_WEIGHTS);
     const officer = isOfficerRank(rank); const cadet = /Cadet/.test(rank);
     const age = cadet ? rng.int(19, 24) : officer ? rng.int(30, 58) : rng.int(22, 55);
