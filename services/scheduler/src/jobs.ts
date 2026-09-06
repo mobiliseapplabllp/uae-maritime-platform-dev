@@ -17,6 +17,8 @@ export const runToApi = (r: RunRow) => ({ id: Number(r.id), jobKey: r.job_key, s
 
 /** The platform's standing jobs. Each fires one event; the owning service consumes it. Times are Asia/Dubai. */
 export const SEED_JOBS: JobDefinition[] = [
+  { key: 'notification-escalation', name: 'Unread critical notices — escalation', nameAr: 'تصعيد التنبيهات الحرجة غير المقروءة', cron: '*/30 * * * *', eventType: EVENTS.scheduler.escalateNotifications, payload: {}, owner: 'notifications' },
+  { key: 'audit-retention', name: 'Audit ledger retention', nameAr: 'فترة الاحتفاظ بسجل التدقيق', cron: '45 2 * * *', eventType: EVENTS.scheduler.sweepAuditRetention, payload: {}, owner: 'audit-ledger' },
   { key: 'certificate-expiry-digest', name: 'Certificate expiry digest', nameAr: 'ملخص انتهاء صلاحية الشهادات', cron: '0 7 * * *', eventType: EVENTS.scheduler.digestCertificates, payload: { windowDays: 30 }, owner: 'ships' },
   { key: 'licence-renewal-reminders', name: 'Licence renewal reminders', nameAr: 'تذكيرات تجديد التراخيص', cron: '0 7 * * *', eventType: EVENTS.scheduler.remindersLicences, payload: { reminderDays: [60, 30, 7] }, owner: 'instruments' },
   { key: 'invoice-overdue-digest', name: 'Invoice overdue digest', nameAr: 'ملخص الفواتير المتأخرة', cron: '0 8 * * 1', eventType: EVENTS.scheduler.digestInvoices, payload: {}, owner: 'revenue' },
@@ -68,4 +70,20 @@ export async function fireJob(client: Queryable, source: string, job: JobRow, op
   const nextRunAt = opts.trigger === 'SCHEDULE' ? nextRun(job.cron, opts.now, job.timezone) : job.next_run_at;
   await client.query('UPDATE jobs SET last_run_at = $2, last_status = $3, last_error = NULL, runs = runs + 1, next_run_at = $4, updated_at = now() WHERE key = $1', [job.key, opts.now, 'FIRED', nextRunAt]);
   return { run: run.rows[0], eventId: event.id, nextRunAt };
+}
+
+/* The daily digests fire at the hour Settings → Notifications names. The minute and the day fields are the job's own;
+ * only the hour follows the setting, so a weekly digest stays weekly and a quarter-past sweep stays quarter past. */
+export const DIGEST_JOBS = ['certificate-expiry-digest', 'licence-renewal-reminders', 'invoice-overdue-digest', 'finding-overdue-sweep', 'accreditation-renewal-sweep'] as const;
+export const withHour = (cron: string, hour: number) => { const f = cron.trim().split(/\s+/); if (f.length !== 5) return cron; f[1] = String(Math.min(23, Math.max(0, Math.round(hour)))); return f.join(' '); };
+export async function applyDigestHour(client: Queryable, hour: number, defaultTimezone: string, now = new Date()): Promise<string[]> {
+  if (!Number.isFinite(hour)) return [];
+  const rows = await client.query<JobRow>('SELECT * FROM jobs WHERE key = ANY($1)', [[...DIGEST_JOBS]]);
+  const changed: string[] = [];
+  for (const job of rows.rows) {
+    const cron = withHour(job.cron, hour); if (cron === job.cron) continue;
+    await upsertJob(client, { key: job.key, name: job.name, nameAr: job.name_ar, cron, timezone: job.timezone, eventType: job.event_type, payload: job.payload, enabled: job.enabled, owner: job.owner }, defaultTimezone, now);
+    changed.push(job.key);
+  }
+  return changed;
 }

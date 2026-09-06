@@ -55,7 +55,7 @@ const cards = [
   { label: 'Collection rate', value: '33.3%', sub: 'of everything billed', tone: 'warning' },
 ];
 const listRoutes = { '/stats/invoices': ok({ cards }), '/invoices': ok([draft, issued, paid], { total: 3 }) };
-const detailRoutes = (row: InvoiceRow) => ({ [`/invoices/${row.id}`]: ok(detail(row)), '/settings': ok({ values: { org: { portName: 'Khalifa Port', operator: 'Ministry of Energy and Infrastructure', taxId: '100999888700003', taxIdLabel: 'TRN' } } }) });
+const detailRoutes = (row: InvoiceRow) => ({ [`/invoices/${row.id}`]: ok(detail(row)), '/invoices/meta': ok({ issuer: { portName: 'Khalifa Port', operator: 'Ministry of Energy and Infrastructure', taxId: '100999888700003', taxIdLabel: 'TRN' } }) });
 const detailAt = (row: InvoiceRow) => wrap(<Routes><Route path="/invoices/:id" element={<InvoiceDetail />} /></Routes>, `/invoices/${row.id}`);
 
 describe('Revenue & Billing register', () => {

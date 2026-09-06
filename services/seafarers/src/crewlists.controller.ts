@@ -2,7 +2,7 @@ import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, isNational, lookupOptions, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, isNational, lookupOptions, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { CREW_LIST_SCOPE, FOREIGN_STATUS, LIST_STATUS, MATCHES, MOVEMENTS, crewListApi, crewListDashboard, decideList, foreignApi, linesOf, loadForeign, loadList, receiveCrewList, reconcileForeign, recordEndorsement, runChecks, type CrewListRow, type ForeignRow } from './crewlists';
 import { loadScale, onBoardOf, saveScale, scaleApi, vesselOf, type ManningRow } from './manning';
@@ -36,7 +36,13 @@ type LedgerQuery = PageQuery & { status?: string; nationality?: string; rank?: s
 
 @Controller('seafarers')
 export class CrewListsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  /** Crew → settings laid over the environment: the medical horizon, the sign-on margin and whether the CoC is checked at sign-on. Read at the moment they matter. */
+  private async policy(): Promise<Env> {
+    const s = await this.settings.moduleGet('crew', { medicalExpiringDays: this.env.MEDICAL_EXPIRING_DAYS, signOnMarginDays: this.env.SIGN_ON_MARGIN_DAYS, cocVerifyOnSignOn: this.env.COC_VERIFY_ON_SIGN_ON });
+    const flag = (v: unknown, d: boolean) => (v == null || v === '' ? d : v === true || v === 'true');
+    return { ...this.env, MEDICAL_EXPIRING_DAYS: Number(s.medicalExpiringDays) || this.env.MEDICAL_EXPIRING_DAYS, SIGN_ON_MARGIN_DAYS: Number(s.signOnMarginDays) || this.env.SIGN_ON_MARGIN_DAYS, COC_VERIFY_ON_SIGN_ON: flag(s.cocVerifyOnSignOn, this.env.COC_VERIFY_ON_SIGN_ON) };
+  }
 
   /* ------------------------------------------------------------------ crew lists --- */
 
@@ -75,7 +81,7 @@ export class CrewListsController {
 
   @RequirePerm('seafarers.view', 'seafarers.edit') @Post('crew-lists')
   async receive(@Body(zod(listBody)) body: z.infer<typeof listBody>, @CurrentUser() user: Principal) {
-    return withTx(this.pool, async (c) => { const row = await receiveCrewList(c, this.env, this.audit, body, user); return crewListApi(row, await linesOf(c, row.id)); });
+    return withTx(this.pool, async (c) => { const row = await receiveCrewList(c, await this.policy(), this.audit, body, user); return crewListApi(row, await linesOf(c, row.id)); });
   }
 
   @RequirePerm('seafarers.view') @Get('crew-lists/:id')
@@ -88,7 +94,7 @@ export class CrewListsController {
   @RequirePerm('seafarers.edit') @Post('crew-lists/:id/check')
   async check(@Param('id') id: string, @CurrentUser() user: Principal) {
     await this.visibleList(id, user);
-    return withTx(this.pool, async (c) => { const list = await loadList(c, id, true); if (!list) throw notFound('Crew list not found'); const row = await runChecks(c, this.env, this.audit, list, user); return crewListApi(row, await linesOf(c, row.id)); });
+    return withTx(this.pool, async (c) => { const list = await loadList(c, id, true); if (!list) throw notFound('Crew list not found'); const row = await runChecks(c, await this.policy(), this.audit, list, user); return crewListApi(row, await linesOf(c, row.id)); });
   }
 
   @RequirePerm('seafarers.edit') @Post('crew-lists/:id/clear')

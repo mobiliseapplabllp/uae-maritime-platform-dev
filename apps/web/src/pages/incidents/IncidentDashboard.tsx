@@ -61,7 +61,7 @@ export default function IncidentDashboard() {
         <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiOpen')} value={k.open} sub={t('incidents.kpiOpenSub', { n: k.highOpen })} tone={k.highOpen ? 'error' : 'success'} /></Grid>
         <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiLogged')} value={k.loggedYtd} sub={t('incidents.kpiLoggedSub', { n: k.closedYtd })} /></Grid>
         <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiMttr')} value={`${k.mttrHrs} h`} sub={t('incidents.kpiMttrSub', { n: k.mttaMin })} tone="info" /></Grid>
-        <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiInjuries')} value={k.injuriesYtd} sub={t('incidents.kpiInjuriesSub')} tone={k.injuriesYtd ? 'warning' : 'success'} /></Grid>
+        <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiInjuries')} value={k.injuriesYtd} sub={data.injuryReportsOverdue ? t('incidents.kpiInjuriesOverdue', { n: data.injuryReportsOverdue, h: data.rules?.injuryReportHrs ?? 24 }) : t('incidents.kpiInjuriesSub')} tone={data.injuryReportsOverdue ? 'error' : k.injuriesYtd ? 'warning' : 'success'} /></Grid>
       </Grid>
 
       <Grid container spacing={2}>

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createServer, type Server } from 'node:http';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
@@ -34,7 +35,13 @@ beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });
   await a.query(`DROP DATABASE IF EXISTS ${DB}`); await a.query(`CREATE DATABASE ${DB}`); await a.end();
   await seedAiAssistant(URL, 'AE');
-  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: 'http://127.0.0.1:1' } as never);
+  fakeMdm = createServer((req, res) => {
+    const json = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    if (req.url === '/internal/settings/ai') return json(200, { success: true, data: aiSettings });
+    json(404, { success: false, message: 'unset' });
+  });
+  await new Promise<void>((r) => fakeMdm.listen(0, '127.0.0.1', () => { mdmPort = (fakeMdm.address() as { port: number }).port; r(); }));
+  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: `http://127.0.0.1:${mdmPort}` } as never);
   const base = { scope: { level: 'NATIONAL' }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const resolver = new StaticPrincipalResolver({
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Admin', perms: ['*'] },
@@ -47,7 +54,11 @@ beforeAll(async () => {
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL }); audit = app.get(AuditClient);
 });
-afterAll(async () => { await pool?.end(); await app?.close(); });
+afterAll(async () => { await pool?.end(); await app?.close(); await new Promise((r) => fakeMdm.close(r)); });
+let fakeMdm: Server; let mdmPort = 0;
+let aiSettings: Record<string, unknown> = { enabled: true, provider: 'local', model: '', temperature: 0.2, groundedOnly: true, dailyTokenBudget: 0, apiKey: '' };
+/** The service caches a section for half a minute; a changed value is what the settings-changed watch would announce. */
+const setAi = async (v: Record<string, unknown>) => { aiSettings = { ...aiSettings, ...v }; const { KIT_SETTINGS } = await import('@maritime/service-kit'); (app.get(KIT_SETTINGS) as { invalidate: (k?: string) => void }).invalidate('ai'); };
 
 /* ==================================================== retrieval, tested without a database === */
 
@@ -653,5 +664,61 @@ describe('ai-assistant — an index that was written before the vectors existed'
     expect(rebuilt?.documents).toBeGreaterThan(50);
     expect((await pool.query<{ version: string }>('SELECT version FROM corpus_index WHERE id')).rows[0].version).toBe(INDEX_VERSION);
     expect(await backfill.run()).toBeNull();
+  });
+});
+
+/* ================================================================== Settings → AI assistant === */
+
+describe('ai-assistant — Settings → AI assistant governs the assistant', () => {
+  it('reports its standing: switched on, the profile that composes, and the day\'s budget', async () => {
+    await setAi({ enabled: true, groundedOnly: true, model: '', dailyTokenBudget: 0 });
+    const r = await g('/ai/status', officer);
+    expect(r.status).toBe(200);
+    // no profile named in the settings: the environment's own is what composes
+    expect(r.body.data).toMatchObject({ enabled: true, provider: 'local', profile: 'platform-local', groundedOnly: true, temperature: 0.2, composer: 'platform composer', keyConfigured: false });
+    expect(r.body.data.budget).toMatchObject({ dailyTokens: 0, remaining: null, exhausted: false });
+    expect((await g('/ai/status', nobody)).status).toBe(403);
+  });
+  it('answers under the configured profile and accounts for what the turn cost', async () => {
+    await setAi({ model: 'ops-desk-profile' });
+    const before = Number((await pool.query('SELECT COALESCE(sum(tokens), 0)::int AS n FROM ai_usage WHERE day = current_date')).rows[0].n);
+    const r = await chat('Which vessels are alongside right now?', officer);
+    expect(r.status).toBe(201);
+    expect(r.body.data.engine).toBe('ops-desk-profile (grounded)');
+    expect(r.body.data.usage.tokens).toBeGreaterThan(0);
+    expect(r.body.data.usage.dailyTokenBudget).toBe(0);
+    const after = Number((await pool.query('SELECT COALESCE(sum(tokens), 0)::int AS n FROM ai_usage WHERE day = current_date')).rows[0].n);
+    expect(after - before).toBe(r.body.data.usage.tokens);
+    expect((await g('/ai/status', officer)).body.data.budget.questionsToday).toBeGreaterThanOrEqual(1);
+    await setAi({ model: '' });
+  });
+  it('stops at the daily token budget with the reason, and resumes when the budget is raised', async () => {
+    await setAi({ dailyTokenBudget: 10 });
+    const spent = await chat('What incidents are open on the desk?', officer);
+    expect(spent.status).toBe(429);
+    expect(spent.body.message).toMatch(/spent today's token budget/);
+    expect((await g('/ai/status', officer)).body.data.budget).toMatchObject({ dailyTokens: 10, remaining: 0, exhausted: true });
+    await setAi({ dailyTokenBudget: 5_000_000 });
+    expect((await chat('What incidents are open on the desk?', officer)).status).toBe(201);
+    expect((await g('/ai/status', officer)).body.data.budget.exhausted).toBe(false);
+    await setAi({ dailyTokenBudget: 0 });
+  });
+  it('switched off, it answers nothing and drafts nothing until it is switched back on', async () => {
+    await setAi({ enabled: false });
+    const r = await chat('Which vessels are alongside right now?', officer);
+    expect(r.status).toBe(503);
+    expect(r.body.message).toMatch(/switched off in Settings/);
+    const inspection = (await pool.query<{ id: string }>('SELECT id FROM inspections ORDER BY id LIMIT 1')).rows[0];
+    expect((await post('/ai/drafts', { kind: 'INSPECTION_SUMMARY', subjectId: inspection.id }, admin)).status).toBe(503);
+    expect((await g('/ai/status', officer)).body.data.enabled).toBe(false);
+    await setAi({ enabled: true });
+    expect((await chat('Which vessels are alongside right now?', officer)).status).toBe(201);
+  });
+  it('a gateway provider without a gateway, or a grounded-only setting, composes on the platform', async () => {
+    await setAi({ provider: 'gateway', groundedOnly: false });
+    expect((await g('/ai/status', officer)).body.data.composer).toBe('platform composer'); // no MODEL_GATEWAY_URL in this environment
+    const r = await chat('Which vessels are alongside right now?', officer);
+    expect(r.status).toBe(201); expect(r.body.data.grounded).toBe(true);
+    await setAi({ provider: 'local', groundedOnly: true });
   });
 });

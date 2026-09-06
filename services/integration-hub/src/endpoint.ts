@@ -42,15 +42,15 @@ export function endpointProblem(raw: string, opts: EndpointOptions = {}): string
 
   const host = url.hostname.toLowerCase().replace(/\.$/, '');
   const isLocalName = host === 'localhost' || host === '::1' || host === '127.0.0.1';
-  if (url.protocol !== 'https:') {
-    if (!(opts.allowLocal && url.protocol === 'http:' && isLocalName)) return 'a counterpart must be reached over https';
+  if (url.protocol !== 'https:' && url.protocol !== 'wss:') {
+    if (!(opts.allowLocal && (url.protocol === 'http:' || url.protocol === 'ws:') && isLocalName)) return 'a counterpart must be reached over https (or wss for a stream)';
   }
   if (isLocalName) {
     if (!opts.allowLocal) return 'baseUrl must not point at this machine';
     // A local stub is a stub, not a way to reach the platform's own back end. A privileged port, the
     // database, the message bus or a service port is refused even here, because "it is only development"
     // is how a development convenience becomes the shape of the production configuration.
-    const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+    const port = Number(url.port || (url.protocol === 'https:' || url.protocol === 'wss:' ? 443 : 80));
     if (port < 1024) return 'a local stub must listen on an unprivileged port';
     if (INFRASTRUCTURE_PORTS.has(port)) return `port ${port} belongs to the platform's own infrastructure`;
     if (port >= 5200 && port <= 5599) return `port ${port} is in the platform's own service range`;

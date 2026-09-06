@@ -57,15 +57,26 @@ export const documentApi = (d: DocRow) => ({ id: d.id, name: d.name, docType: d.
 export const logApi = (l: LogRow) => ({ id: l.id, at: iso(l.at)!, by: l.by_name, byId: l.by_id, entry: l.entry });
 export const historyApi = (h: HistoryRow) => ({ from: h.from_status, to: h.to_status, at: iso(h.at)!, by: h.by_name, byId: h.by_id, note: h.note });
 
+/** What the incident module's settings say about a case: how soon an injury report is due. */
+export interface CasePolicy { injuryReportHrs: number }
+export const DEFAULT_CASE_POLICY: CasePolicy = { injuryReportHrs: 24 };
+/** The injury report clock: due so many hours after the report, filed by a REPORT document on the case file, overdue while live and unfiled. */
+export function injuryReportOf(i: IncidentRow, policy: CasePolicy = DEFAULT_CASE_POLICY, file: CaseFile = {}, now = new Date()) {
+  if (!(Number(i.injuries) > 0)) return null;
+  const dueAt = new Date(new Date(i.reported_at).getTime() + (Number(policy.injuryReportHrs) || 24) * H);
+  const filed = (file.documents ?? []).some((d) => d.doc_type === 'REPORT');
+  return { dueAt: dueAt.toISOString(), hours: Number(policy.injuryReportHrs) || 24, filed, overdue: !filed && isLive(i.status) && now.getTime() > dueAt.getTime() };
+}
+
 /** The register row: the facts of the case, without the threads that hang off it. */
-export function incidentRowApi(i: IncidentRow) {
+export function incidentRowApi(i: IncidentRow, policy: CasePolicy = DEFAULT_CASE_POLICY) {
   return {
     id: i.id, number: i.number, category: i.category, type: i.type, severity: i.severity, priority: i.priority, status: i.status, title: i.title,
     vesselId: i.vessel_id, vesselName: i.vessel_name, berthId: i.berth_id, berthCode: i.berth_code, berthTerminal: i.berth_terminal,
     location: { area: i.location?.area ?? '', lat: num(i.location?.lat), lon: num(i.location?.lon) },
     position: i.location?.lat == null ? null : { lat: Number(i.location.lat), lon: Number(i.location.lon) },
     reportedAt: iso(i.reported_at)!, reportedBy: i.reported_by, source: i.source, assignedToId: i.assigned_to_id, assignedTo: i.assigned_to,
-    injuries: i.injuries, pollutionTier: i.pollution_tier,
+    injuries: i.injuries, pollutionTier: i.pollution_tier, injuryReport: injuryReportOf(i, policy),
     acknowledgedAt: iso(i.acknowledged_at), resolvedAt: iso(i.resolved_at), closedAt: iso(i.closed_at),
     live: isLive(i.status), allowedTransitions: transitionsFor(i.status),
     createdAt: iso(i.created_at), updatedAt: iso(i.updated_at),
@@ -73,10 +84,10 @@ export function incidentRowApi(i: IncidentRow) {
 }
 export interface CaseFile { comms?: CommRow[]; tasks?: TaskRow[]; documents?: DocRow[]; log?: LogRow[]; history?: HistoryRow[] }
 /** The full case file the incident screen renders from. */
-export function incidentApi(i: IncidentRow, file: CaseFile = {}) {
+export function incidentApi(i: IncidentRow, file: CaseFile = {}, policy: CasePolicy = DEFAULT_CASE_POLICY) {
   const tasks = (file.tasks ?? []).map(taskApi);
   return {
-    ...incidentRowApi(i),
+    ...incidentRowApi(i, policy), injuryReport: injuryReportOf(i, policy, file),
     description: i.description, assets: i.assets ?? [], weather: { windKn: num(i.weather?.windKn), seaState: num(i.weather?.seaState) },
     rca: { rootCause: i.rca?.rootCause ?? '', category: i.rca?.category ?? '', correctiveAction: i.rca?.correctiveAction ?? '', preventiveAction: i.rca?.preventiveAction ?? '' },
     resolution: {

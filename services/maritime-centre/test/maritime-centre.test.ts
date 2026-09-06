@@ -699,3 +699,51 @@ describe('maritime-centre — tenancy', () => {
     } finally { await tearDown(); }
   });
 });
+
+/* ============================================================ the desk's rules, from its settings === */
+
+describe('maritime-centre — Incident Desk → module settings govern the desk', () => {
+  it('pages the desk at or above the notification floor and says so on the case', async () => {
+    await clearOutbox();
+    const high = await logCase({ severity: 'HIGH', title: 'Test case — fire in the engine room' });
+    const low = await logCase({ severity: 'LOW', title: 'Test case — minor fender damage' });
+    const opened = await outbox(EVENTS.maritimeCentre.incidentOpened);
+    expect(opened.find((e) => e.data.incidentId === high.id)?.data).toMatchObject({ notify: true, autoNotifySeverity: 'HIGH' });
+    expect(opened.find((e) => e.data.incidentId === low.id)?.data).toMatchObject({ notify: false, autoNotifySeverity: 'HIGH' });
+    const file = await g(`/incidents/${high.id}`, duty);
+    expect(file.body.data.log.some((l: { entry: string }) => /Desk notified/.test(l.entry))).toBe(true);
+    expect((await g(`/incidents/${low.id}`, duty)).body.data.log.some((l: { entry: string }) => /Desk notified/.test(l.entry))).toBe(false);
+  });
+  it('lets a closed case reopen inside the window and refuses after it', async () => {
+    const c = await logCase({ severity: 'MEDIUM', title: 'Test case — reopen window' });
+    const move = async (to: string, note = 'ok') => post(`/incidents/${c.id}/transition`, { to, note }, duty);
+    for (const to of ['ACKNOWLEDGED', 'RESPONDING', 'RESOLVED']) expect((await move(to, `to ${to}`)).status).toBe(201);
+    expect((await post(`/incidents/${c.id}/close`, { note: 'closed' }, duty)).status).toBe(201);
+    // closed ten days ago: inside the seeded thirty-day window
+    await pool.query('UPDATE incidents SET closed_at = now() - interval \'10 days\' WHERE id = $1', [c.id]);
+    const inside = await move('RESPONDING', 'new evidence');
+    expect(inside.status).toBe(201); expect(inside.body.data.status).toBe('RESPONDING');
+    for (const to of ['RESOLVED']) expect((await move(to, 'resolved again')).status).toBe(201);
+    expect((await post(`/incidents/${c.id}/close`, { note: 'closed again' }, duty)).status).toBe(201);
+    await pool.query('UPDATE incidents SET closed_at = now() - interval \'45 days\' WHERE id = $1', [c.id]);
+    const late = await move('RESPONDING', 'too late');
+    expect(late.status).toBe(409);
+    expect(late.body.message).toMatch(/closed 45 days ago and the reopen window is 30 days/);
+  });
+  it('keeps the injury report clock on a case with injuries and counts the overdue ones on the dashboard', async () => {
+    const hurt = await logCase({ severity: 'HIGH', title: 'Test case — stevedore injured', injuries: 1, reportedAt: new Date(Date.now() - 30 * 3_600_000).toISOString() });
+    const list = (await g(`/incidents?q=stevedore%20injured`, duty)).body;
+    const row = (list.data.items ?? list.data).find((i: { id: string }) => i.id === hurt.id);
+    expect(row.injuryReport).toMatchObject({ hours: 24, filed: false, overdue: true });
+    expect(new Date(row.injuryReport.dueAt).getTime() - new Date(row.reportedAt).getTime()).toBe(24 * 3_600_000);
+    const dash = await g('/incidents/dashboard', duty);
+    expect(dash.body.data.rules).toMatchObject({ autoNotifySeverity: 'HIGH', reopenWindowDays: 30, injuryReportHrs: 24, mttaTargetMin: 30 });
+    expect(dash.body.data.injuryReportsOverdue).toBeGreaterThanOrEqual(1);
+    // the report filed: the clock stops
+    expect((await post(`/incidents/${hurt.id}/documents`, { name: 'Injury report.pdf', docType: 'REPORT', sizeKB: 120 }, duty)).status).toBe(201);
+    const filed = (await g(`/incidents/${hurt.id}`, duty)).body.data;
+    expect(filed.injuryReport).toMatchObject({ filed: true, overdue: false });
+    const unhurt = await logCase({ severity: 'LOW', title: 'Test case — nobody hurt' });
+    expect((await g(`/incidents/${unhurt.id}`, duty)).body.data.injuryReport).toBeNull();
+  });
+});

@@ -2,9 +2,10 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, assertLookups, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere, IntegrationClient, badGateway } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, assertLookups, conflict, escapeLike, nextNumber, notFound, paged, parsePage, withTx, zod, type Principal, scopeWhere, IntegrationClient, badGateway, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import { FACILITY_SCOPE } from './scope';
 import type { Env } from './env';
+import { policyOf } from './policy';
 import {
   AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, REVIEW_CLOSED, applyIcpOutcome, auditApi, cycleApi, facilityApi, icpReviewsFor, obligationApi, recordIcpReview, reviewOpen, visitApi,
   publishFacility, ratingFrom, type FacilityRow, type IcpReview,
@@ -51,7 +52,8 @@ const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType:
 
 @Controller('facilities/port-facilities')
 export class PortFacilitiesController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  private policy() { return policyOf(this.settings, this.env); }
 
   @RequirePerm('facilities.view') @Get()
   async list(@Query() query: PageQuery & { facilityType?: string; operator?: string; ispsStatus?: string; status?: string; terminal?: string; review?: string }, @CurrentUser() user: Principal) {
@@ -72,7 +74,8 @@ export class PortFacilitiesController {
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM port_facilities ${w}`, args);
     const rows = await this.pool.query<FacilityRow>(`SELECT * FROM port_facilities ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, code LIMIT ${p.limit} OFFSET ${p.offset}`, args);
-    return paged(rows.rows.map((r) => facilityApi(r)), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
+    const { AUDIT_INTERVAL_MONTHS: auditIntervalMonths } = await this.policy();
+    return paged(rows.rows.map((r) => facilityApi(r, { auditIntervalMonths })), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
   }
 
   @RequirePerm('facilities.view') @Get(':id')
@@ -88,7 +91,7 @@ export class PortFacilitiesController {
   @RequirePerm('facilities.view') @Get(':id/renewals')
   async renewals(@Param('id') id: string, @CurrentUser() user: Principal, @Query('window') window?: string) {
     const f = await loadFacility(this.pool, id, user.scope);
-    return renewalWorkList(this.pool, Number(window) || this.env.RENEWAL_WINDOW_DAYS, { subjectId: f.id });
+    return renewalWorkList(this.pool, Number(window) || (await this.policy()).RENEWAL_WINDOW_DAYS, { subjectId: f.id });
   }
 
   @RequirePerm('facilities.view') @Get(':id/visits')
@@ -199,7 +202,7 @@ export class PortFacilitiesController {
       await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: review.reference, status: review.status, mode: review.mode }, note: b.reason });
       await recordIcpReview(c, before.id, review);
       await publishFacility(c, this.env, r.rows[0], {}, EVENTS.facilities.facilityReviewChanged, { reference: review.reference, reviewStatus: review.status, reviewFrom: null, reason: b.reason, requestedBy: user.name, expectedBy: review.expectedBy, decidedAt: null, conditions: [], mode: review.mode });
-      return fullFacility(c, r.rows[0]);
+      return fullFacility(c, r.rows[0], await this.policy());
     });
   }
 
@@ -215,7 +218,7 @@ export class PortFacilitiesController {
       const row = await applyIcpOutcome(c, before, { status: String(out.data?.status ?? prev.status), decidedAt: out.data?.decidedAt ?? null, conditions: out.data?.conditions ?? [], mode: out.mode });
       await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: row.icp_review?.reference, status: row.icp_review?.status } });
       if (row.icp_review && row.icp_review.status !== prev.status) await publishFacility(c, this.env, row, {}, EVENTS.facilities.facilityReviewChanged, { reference: row.icp_review.reference, reviewStatus: row.icp_review.status, reviewFrom: prev.status, decidedAt: row.icp_review.decidedAt, conditions: row.icp_review.conditions, mode: row.icp_review.mode });
-      return fullFacility(c, row);
+      return fullFacility(c, row, await this.policy());
     });
   }
 
@@ -232,7 +235,7 @@ export class PortFacilitiesController {
       const facility = await loadFacility(c, id, user.scope, true);
       const done = await recordAudit(c, this.env, this.audit, { kind: 'FACILITY', id: facility.id, name: facility.name }, b, user);
       await publishFacility(c, this.env, facility, {}, EVENTS.facilities.facilityAudited, { auditNo: done.row.number, result: done.row.result, auditor: done.row.auditor, rating: done.rating });
-      return { audit: auditApi(done.row), rating: done.rating, obligation: done.obligation ? obligationApi(done.obligation) : null, facility: await fullFacility(c, facility) };
+      return { audit: auditApi(done.row), rating: done.rating, obligation: done.obligation ? obligationApi(done.obligation) : null, facility: await fullFacility(c, facility, await this.policy()) };
     });
   }
 

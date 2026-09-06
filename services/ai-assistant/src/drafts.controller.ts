@@ -3,10 +3,11 @@ import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { PageQuery } from '@maritime/contracts';
 import {
-  AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, forbidden, notFound, paged, parsePage, withTx, zod, type Principal,
+  ApiError, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, SettingsClient, escapeLike, forbidden, notFound, paged, parsePage, withTx, zod, type Principal,
 } from '@maritime/service-kit';
 import type { Env } from './env';
 import { COMPLETION_CLIENT, type CompletionClient } from './completion';
+import { aiSettingsOf } from './ai-settings';
 import { DRAFT_KINDS, DRAFT_PERMISSION, draftApi, mayPrepare, prepareDraft, publishDraft, type DraftKind, type DraftRecord } from './drafts';
 
 /* Drafting a notice, a decision letter or an inspection summary from the platform's own record.
@@ -29,6 +30,7 @@ export class DraftsController {
     @Inject(KIT_POOL) private readonly pool: Pool,
     @Inject(KIT_ENV) private readonly env: Env,
     @Inject(COMPLETION_CLIENT) private readonly completion: CompletionClient,
+    @Inject(KIT_SETTINGS) private readonly settings: SettingsClient,
     private readonly audit: AuditClient,
   ) {}
 
@@ -67,6 +69,8 @@ export class DraftsController {
   /** Prepares the draft from records the caller is entitled to have drafted from, and publishes it as prepared. */
   @RequirePerm('ai.use') @Post()
   async prepare(@Body(zod(prepareBody)) body: z.infer<typeof prepareBody>, @CurrentUser() user: Principal) {
+    const ai = await aiSettingsOf(this.settings, this.env);
+    if (!ai.enabled) throw new ApiError(503, 'The assistant is switched off in Settings → AI assistant');
     if (!mayPrepare(body.kind, user.perms)) throw forbidden(`Preparing a ${body.kind.toLowerCase().replace(/_/g, ' ')} needs the ${DRAFT_PERMISSION[body.kind]} permission`);
     const prepared = await prepareDraft(this.pool, body, user.name);
     if (!prepared) throw notFound('No record on the platform matches that subject, so there is nothing to draft from');

@@ -20,7 +20,8 @@ export const ADAPTERS: AdapterDefinition[] = [
   },
   {
     key: 'ais-lrit', name: 'AIS / LRIT feed', nameAr: 'تغذية AIS/LRIT', counterpart: 'Terrestrial and satellite AIS, LRIT data centre',
-    reference: 'RFP §5.3 D4 R-D4-01', baseUrlEnv: 'AIS_LRIT_URL', defaultBaseUrl: 'https://stub.local/ais', protocol: 'rest',
+    // live, the address is a websocket stream (aisstream.io by default) read by the hub's own collector; a REST counterpart answering the positions contract works too
+    reference: 'RFP §5.3 D4 R-D4-01', baseUrlEnv: 'AIS_LRIT_URL', defaultBaseUrl: 'wss://stream.aisstream.io/v0/stream', protocol: 'rest',
     operations: [
       { key: 'positions', summary: 'Positions since a watermark, for the track store', method: 'GET', path: '/v1/positions', required: ['since'], idempotent: false },
       { key: 'vesselTrack', summary: 'Movement history for one vessel over a window', method: 'GET', path: '/v1/vessels/{imo}/track', required: ['imo', 'from', 'to'], idempotent: false },

@@ -90,8 +90,8 @@ export async function insertCall(c: Queryable, n: NewCall): Promise<View> {
   return (await findCall(c, r.rows[0].id, NATIONAL_SCOPE))!;
 }
 /** `${prefix}-YYYY-NNNNN`: one atomic series per calendar year of the ETA. */
-export async function nextVcn(c: Queryable, env: Env, eta: Date): Promise<string> {
-  const series = `${env.VCN_PREFIX}-${eta.getUTCFullYear()}`; return nextNumber(c, series, `${series}-`, 5);
+export async function nextVcn(c: Queryable, env: Env, eta: Date, prefix = env.VCN_PREFIX): Promise<string> {
+  const series = `${prefix || env.VCN_PREFIX}-${eta.getUTCFullYear()}`; return nextNumber(c, series, `${series}-`, 5);
 }
 export const newId = () => randomUUID();
 export const stamp = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);

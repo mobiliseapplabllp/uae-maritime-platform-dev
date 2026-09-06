@@ -2,10 +2,10 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { AuditClient, IntegrationClient, badGateway, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable, scopeWhere } from '@maritime/service-kit';
+import { AuditClient, IntegrationClient, badGateway, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, type Queryable, scopeWhere, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { INVOICE_SCOPE, scopedWhere } from './scope';
-import { INVOICE_STATUSES, PAYMENT_METHODS, applySettlement, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, settle, toApi, updateInvoice, type PaymentIntent, type Line, type Payment, type Row } from './invoicing';
+import { INVOICE_STATUSES, PAYMENT_METHODS, applySettlement, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, settle, toApi, updateInvoice, type PaymentIntent, type Line, type Payment, type Row, billingOf, billingFromEnv, type BillingContext } from './invoicing';
 import { activeTariffs, billToFor, billableCall, findCallSnapshot } from './subjects';
 
 /* Invoices raised on vessel calls. One live account per call — a cancelled one can be re-raised, an open one cannot be
@@ -21,7 +21,8 @@ type ListQuery = PageQuery & { status?: string; vessel?: string; vesselId?: stri
 
 @Controller('invoices')
 export class InvoicesController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  private billing() { return billingOf(this.settings, this.env); }
 
   @RequirePerm('invoices.view') @Get()
   async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
@@ -44,7 +45,7 @@ export class InvoicesController {
   /** What the finance desk is owed, and how the book splits by status. */
   @RequirePerm('invoices.view') @Get('summary')
   async summary(@CurrentUser() user: Principal) {
-    const j = getJurisdiction(this.env.JURISDICTION);
+    const b = await this.billing();
     /* An aggregate is a read of every row it counts, so it is scoped exactly as the list is: a payer's
      * summary is of their own ledger, not of the administration's with their rows highlighted. */
     const sc = scopedWhere(user.scope, INVOICE_SCOPE);
@@ -57,11 +58,21 @@ export class InvoicesController {
     const byStatus = Object.fromEntries(rows.rows.map((r) => [r.status, { count: Number(r.n), total: round2(Number(r.total)), paid: round2(Number(r.paid)) }]));
     const billed = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.total), 0);
     const collected = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.paid), 0);
-    return { currency: j.currency.code, taxName: j.tax.name, byStatus, billed: round2(billed), collected: round2(collected), outstanding: round2(billed - collected), collectionPct: billed ? Math.round((collected / billed) * 1000) / 10 : 0, overdue: { count: Number(overdue.rows[0].n), amount: round2(Number(overdue.rows[0].total)) } };
+    return { currency: b.currency, taxName: b.taxName, byStatus, billed: round2(billed), collected: round2(collected), outstanding: round2(billed - collected), collectionPct: billed ? Math.round((collected / billed) * 1000) / 10 : 0, overdue: { count: Number(overdue.rows[0].n), amount: round2(Number(overdue.rows[0].total)) } };
   }
 
   @RequirePerm('invoices.view') @Get('meta')
-  meta() { const j = getJurisdiction(this.env.JURISDICTION); return { statuses: INVOICE_STATUSES, paymentMethods: PAYMENT_METHODS, currency: j.currency, tax: j.tax, paymentTermsDays: this.env.PAYMENT_TERMS_DAYS }; }
+  async meta() {
+    const j = getJurisdiction(this.env.JURISDICTION); const b = await this.billing();
+    const org = await this.settings.get<Record<string, unknown>>('org', {});
+    const str = (k: string) => (typeof org[k] === 'string' ? String(org[k]) : '');
+    return {
+      statuses: INVOICE_STATUSES, paymentMethods: PAYMENT_METHODS, currency: { ...j.currency, code: b.currency }, tax: { ...j.tax, name: b.taxName, ratePct: b.taxRate, registrationLabel: b.taxRegistrationLabel },
+      paymentTermsDays: b.paymentTermsDays, billing: b,
+      // Settings → Organisation, as the document's issuer block
+      issuer: { portName: str('portName'), operator: str('operator'), address: str('address'), taxId: str('taxId'), taxIdLabel: str('taxIdLabel') || b.taxRegistrationLabel, contactEmail: str('contactEmail'), contactPhone: str('contactPhone'), placeOfSupply: b.placeOfSupply, serviceCode: b.serviceCode },
+    };
+  }
 
   /** The pro-forma estimate for a call that has not sailed: the same maths the final account will use, nothing written. */
   @RequirePerm('invoices.view') @Get('proforma')
@@ -101,7 +112,7 @@ export class InvoicesController {
   @RequirePerm('invoices.create') @Post('generate')
   async generate(@Body(zod(generateSchema)) b: z.infer<typeof generateSchema>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
-      const row = await raiseForCall(c, this.env, b.portCallId, { by: user?.name ?? 'system', notes: b.notes, requireSailed: false });
+      const row = await raiseForCall(c, this.env, b.portCallId, { by: user?.name ?? 'system', notes: b.notes, requireSailed: false, billing: await this.billing() });
       await this.audit.record(c, { action: 'CREATE', entity: 'Invoice', entityId: row.id, entityLabel: `${row.number} (${row.vcn})`, after: toApi(row) });
       await publishState(c, this.env, row, { event: EVENTS.revenue.invoiceDrafted });
       return this.detail(c, row);
@@ -134,7 +145,7 @@ export class InvoicesController {
   async issue(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
-      const row = await issueInvoice(c, this.env, before, user?.name ?? 'system');
+      const row = await issueInvoice(c, this.env, before, user?.name ?? 'system', new Date(), (await this.billing()).paymentTermsDays);
       await this.audit.record(c, { action: 'ISSUE', entity: 'Invoice', entityId: row.id, entityLabel: row.number, before: { status: before.status }, after: { status: row.status, issuedAt: iso(row.issued_at), dueAt: iso(row.due_at) } });
       await publishState(c, this.env, row, { event: EVENTS.revenue.invoiceIssued, data: { dueAt: iso(row.due_at) } });
       return this.detail(c, row);
@@ -211,7 +222,7 @@ export class InvoicesController {
   }
 }
 
-export interface RaiseOptions { by: string; notes?: string; requireSailed?: boolean; proforma?: boolean; now?: Date }
+export interface RaiseOptions { by: string; notes?: string; requireSailed?: boolean; proforma?: boolean; now?: Date; billing?: BillingContext }
 /** Raises the draft account for a call from the rate card. Shared by the API and the event consumer, so both price identically. */
 export async function raiseForCall(c: Queryable, env: Env, ref: string, o: RaiseOptions): Promise<Row> {
   const snap = await findCallSnapshot(c, ref); if (!snap) throw notFound('Port call not found');
@@ -220,11 +231,11 @@ export async function raiseForCall(c: Queryable, env: Env, ref: string, o: Raise
   if (o.requireSailed && !snap.atd) throw badRequest(`Call ${snap.vcn} has not sailed — raise a pro-forma estimate instead`);
   const call = await billableCall(c, snap);
   const tariffs = await activeTariffs(c);
-  const j = getJurisdiction(env.JURISDICTION);
+  const b = o.billing ?? billingFromEnv(env);
   const raw = buildLines(call, tariffs, { implyServices: true });
   if (!raw.length) throw badRequest('Nothing to bill on this call yet — add services or cargo operations first');
-  const totals = computeTotals(raw, j.tax.ratePct);
-  const billTo = await billToFor(c, snap.agent_code, snap.agent_name, j.tax.registrationLabel);
+  const totals = computeTotals(raw, b.taxRate, b.roundTotalsToWholeUnit);
+  const billTo = await billToFor(c, snap.agent_code, snap.agent_name, b.taxRegistrationLabel);
   const now = o.now ?? new Date();
   // a pro-forma draft raised at berthing is finalised in place when the call sails
   if (existing.rows[0]) {
@@ -235,17 +246,17 @@ export async function raiseForCall(c: Queryable, env: Env, ref: string, o: Raise
     });
   }
   return insertInvoice(c, {
-    number: await nextInvoiceNumber(c, env, now), portCallId: snap.id, vcn: snap.vcn, vesselId: snap.vessel_id, vesselName: call.vesselName, vesselImo: call.vesselImo,
-    billTo, lines: totals.lines as Line[], subtotal: totals.subtotal, taxName: j.tax.name, taxRatePct: j.tax.ratePct, taxAmount: totals.taxAmount, total: totals.total, currency: j.currency.code,
+    number: await nextInvoiceNumber(c, env, now, b.invoicePrefix), portCallId: snap.id, vcn: snap.vcn, vesselId: snap.vessel_id, vesselName: call.vesselName, vesselImo: call.vesselImo,
+    billTo, lines: totals.lines as Line[], subtotal: totals.subtotal, taxName: b.taxName, taxRatePct: b.taxRate, taxAmount: totals.taxAmount, total: totals.total, currency: b.currency,
     status: 'DRAFT', proforma: !!o.proforma, notes: o.notes ?? (o.proforma ? 'Pro-forma — issued on sailing' : ''),
     history: [{ from: '', to: 'DRAFT', at: now.toISOString(), by: o.by, note: o.proforma ? `Pro-forma raised at berthing for ${snap.vcn}` : `Raised on call ${snap.vcn}` }], createdAt: now,
   });
 }
 
 /** Issue: the account leaves the desk, the payment clock starts. */
-export async function issueInvoice(c: Queryable, env: Env, before: Row, by: string, now = new Date()): Promise<Row> {
+export async function issueInvoice(c: Queryable, env: Env, before: Row, by: string, now = new Date(), termsDays = env.PAYMENT_TERMS_DAYS): Promise<Row> {
   if (before.status !== 'DRAFT') throw conflict(`A ${before.status.toLowerCase()} invoice cannot be issued`);
   if (!(before.lines ?? []).length) throw badRequest('An invoice needs at least one line before it can be issued');
-  const due = new Date(now.getTime() + env.PAYMENT_TERMS_DAYS * 86400000);
+  const due = new Date(now.getTime() + (termsDays || env.PAYMENT_TERMS_DAYS) * 86400000);
   return updateInvoice(c, before.id, { status: 'ISSUED', proforma: false, issuedAt: now, dueAt: due, history: [...(before.history ?? []), { from: 'DRAFT', to: 'ISSUED', at: now.toISOString(), by, note: `Issued, payable by ${due.toISOString().slice(0, 10)}` }] });
 }

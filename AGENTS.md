@@ -71,10 +71,18 @@ pnpm e2e                                   # Playwright drives + parity diffs
 - English strings are i18n keys; Arabic values live in the catalogues; every definition,
   instrument and notification carries `*_ar` fields.
 - External counterparts are adapters in `integration-hub`, configured at runtime (Settings →
-  Integrations, also `/platform/integrations`), never hard-wired: a service calls one through
+  Integrations), never hard-wired: a service calls one through
   `IntegrationClient` from service-kit (`POST /internal/call/:adapter`), credentials are sealed
   and never read back, and inbound deliveries arrive signed on
   `POST /api/integrations/inbound/:key` and reach services as `integration.inbound.received`.
+- Every setting has exactly one home and is read where it matters. Platform sections (`org`,
+  `billing`, `notifications`, `smtp`, `ai`) are declared in `SETTING_FIELDS` in contracts; a module's
+  values live in `MODULE_SETTING_DEFAULTS` under `module:<key>`. A service reads a value through
+  `SettingsClient` at the moment it decides (never captured at boot); nothing gets a knob that no
+  service reads. Settings → the landing at `/admin/settings` is one card per section and per module,
+  each saying who reads it. Service tests pin `MDM_URL: 'http://127.0.0.1:1'` so the seeded
+  fallbacks apply, or stand up a small settings server when the test changes a value; the client
+  caches for thirty seconds, so a test that changes a value invalidates the key.
 
 ## Verification bar
 Before calling a change done: unit and contract tests green, integration tests on the native

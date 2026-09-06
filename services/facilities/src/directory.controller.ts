@@ -1,9 +1,10 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { type PageQuery } from '@maritime/contracts';
-import { CurrentUser, type Principal, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, lookupOptions, paged, parsePage, scopeWhere } from '@maritime/service-kit';
+import { CurrentUser, type Principal, KIT_ENV, KIT_POOL, RequirePerm, escapeLike, lookupOptions, paged, parsePage, scopeWhere, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import { SUBJECT_SCOPE } from './scope';
 import type { Env } from './env';
+import { policyOf } from './policy';
 import {
   AUDIT_RESULTS, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, ISPS_STATUS,
   OBLIGATION_STATUS, SUBJECT_KINDS, auditApi, directoryDashboard, obligationApi,
@@ -16,7 +17,8 @@ import { renewalWorkList } from './compliance';
 
 @Controller('facilities')
 export class DirectoryController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  private policy() { return policyOf(this.settings, this.env); }
 
   /** The directory dashboard: who is on the register, in what standing, and what is coming up. */
   @RequirePerm('facilities.view', 'dashboard.view') @Get('dashboard')
@@ -34,7 +36,7 @@ export class DirectoryController {
       facilities: facilities.rows.map((f) => ({ ispsStatus: f.isps_status, status: f.status, facilityType: f.facility_type })),
       instruments: instruments.rows.map((i) => ({ status: i.status, expiryDate: i.expiry_date ? new Date(i.expiry_date).toISOString() : null, subjectKind: i.subject_kind })),
       audits: audits.rows.map((a) => ({ date: new Date(a.audited_on).toISOString(), result: a.result })),
-    }, new Date(), this.env.RENEWAL_WINDOW_DAYS);
+    }, new Date(), (await this.policy()).RENEWAL_WINDOW_DAYS);
     // the federal security reviews: with the authority, cleared in the last year, sent back, or never submitted
     const reviews = await this.pool.query<Row>(`SELECT icp_review->>'status' AS status, icp_review->>'decidedAt' AS decided_at, count(*) AS n FROM port_facilities GROUP BY 1, 2`);
     const yearAgo = Date.now() - YEAR;
@@ -52,7 +54,7 @@ export class DirectoryController {
       ...dash,
       securityReviews,
       watchlist: worst.rows.map((c) => ({ id: c.id, code: c.code, name: c.name, category: c.category, status: c.status, rating: Number(c.rating) })),
-      renewals: (await renewalWorkList(this.pool, this.env.RENEWAL_WINDOW_DAYS)).slice(0, 10),
+      renewals: (await renewalWorkList(this.pool, (await this.policy()).RENEWAL_WINDOW_DAYS)).slice(0, 10),
       generatedAt: new Date().toISOString(),
     };
   }
@@ -75,7 +77,7 @@ export class DirectoryController {
       visitTypes, accreditationCategories,
       licensedTypes: types.rows.map((r) => ({ type: r.type, count: Number(r.n) })),
       terminals: terminals.rows.map((r) => ({ terminal: r.terminal, count: Number(r.n) })),
-      renewalWindowDays: this.env.RENEWAL_WINDOW_DAYS,
+      renewalWindowDays: (await this.policy()).RENEWAL_WINDOW_DAYS,
     };
   }
 
@@ -83,10 +85,10 @@ export class DirectoryController {
    * Nothing is asked of the instruments service to produce it. */
   @RequirePerm('facilities.view') @Get('renewals')
   async renewals(@Query() query: { window?: string; subjectKind?: string; overdue?: string }) {
-    const rows = await renewalWorkList(this.pool, Number(query.window) || this.env.RENEWAL_WINDOW_DAYS, {
+    const rows = await renewalWorkList(this.pool, Number(query.window) || (await this.policy()).RENEWAL_WINDOW_DAYS, {
       subjectKind: query.subjectKind, overdue: query.overdue === 'true',
     });
-    return paged(rows, { total: rows.length, page: 1, limit: rows.length, overdue: rows.filter((r) => r.overdue).length, windowDays: Number(query.window) || this.env.RENEWAL_WINDOW_DAYS });
+    return paged(rows, { total: rows.length, page: 1, limit: rows.length, overdue: rows.filter((r) => r.overdue).length, windowDays: Number(query.window) || (await this.policy()).RENEWAL_WINDOW_DAYS });
   }
 
   @RequirePerm('facilities.view') @Get('obligations')

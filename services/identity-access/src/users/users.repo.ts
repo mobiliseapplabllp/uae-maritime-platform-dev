@@ -37,6 +37,13 @@ export class UsersRepo {
   async byEmail(email: string, c: Queryable = this.pool): Promise<UserRow | null> { const r = await c.query<UserRow>(`${SELECT} WHERE lower(u.email) = lower($1)`, [email]); return r.rows[0] ?? null; }
   async bySubject(sub: string, c: Queryable = this.pool): Promise<UserRow | null> { const r = await c.query<UserRow>(`${SELECT} WHERE u.subject = $1 OR u.id::text = $1`, [sub]); return r.rows[0] ?? null; }
   /** How many active accounts hold every permission — the platform must never lose its last one. */
+  /** The active accounts holding a permission, or the wildcard: who an audience notice is for when it is escalated. */
+  async holdersOf(perm: string, limit = 50, c: Queryable = this.pool): Promise<Array<{ id: string; name: string; email: string; phone: string; roleName: string }>> {
+    const r = await c.query<{ id: string; name: string; email: string; phone: string; role_name: string }>(
+      `SELECT u.id, u.name, u.email, u.phone, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id
+        WHERE u.active AND ($1 = ANY(r.permissions) OR '*' = ANY(r.permissions)) ORDER BY u.name LIMIT $2`, [perm, limit]);
+    return r.rows.map((x) => ({ id: x.id, name: x.name, email: x.email, phone: x.phone ?? '', roleName: x.role_name }));
+  }
   async activeWildcardHolders(c: Queryable = this.pool, exceptUserId?: string): Promise<number> {
     const r = await c.query<{ n: string }>(`SELECT count(*) AS n FROM users u JOIN roles r ON r.id = u.role_id WHERE u.active AND '*' = ANY(r.permissions) AND ($1::uuid IS NULL OR u.id <> $1)`, [exceptUserId ?? null]);
     return Number(r.rows[0].n);

@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, getJurisdiction, type PageQuery } from '@maritime/contracts';
-import { scopeWhere, scopeOfRecord, isNational, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, forbidden, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal, IntegrationClient, badGateway } from '@maritime/service-kit';
+import { scopeWhere, scopeOfRecord, isNational, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, forbidden, notFound, paged, parsePage, unprocessable, withTx, zod, type Principal, IntegrationClient, badGateway, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import { SEAFARER_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import { backfillVocabulary, certRules, certVocab, rankVocab } from './vocab';
@@ -44,7 +44,13 @@ type ListQuery = PageQuery & { rank?: string; status?: string; nationality?: str
 
 @Controller('seafarers')
 export class SeafarersController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  /** Crew → settings laid over the environment: the medical horizon, the sign-on margin and whether the CoC is checked at sign-on. Read at the moment they matter. */
+  private async policy(): Promise<Env> {
+    const s = await this.settings.moduleGet('crew', { medicalExpiringDays: this.env.MEDICAL_EXPIRING_DAYS, signOnMarginDays: this.env.SIGN_ON_MARGIN_DAYS, cocVerifyOnSignOn: this.env.COC_VERIFY_ON_SIGN_ON });
+    const flag = (v: unknown, d: boolean) => (v == null || v === '' ? d : v === true || v === 'true');
+    return { ...this.env, MEDICAL_EXPIRING_DAYS: Number(s.medicalExpiringDays) || this.env.MEDICAL_EXPIRING_DAYS, SIGN_ON_MARGIN_DAYS: Number(s.signOnMarginDays) || this.env.SIGN_ON_MARGIN_DAYS, COC_VERIFY_ON_SIGN_ON: flag(s.cocVerifyOnSignOn, this.env.COC_VERIFY_ON_SIGN_ON) };
+  }
 
   private now() { return new Date(); }
   private async certsFor(ids: string[], now = new Date()) {
@@ -93,12 +99,13 @@ export class SeafarersController {
   /** The vocabularies the crew screens draw their dropdowns from — the masters as this service mirrors them. Declared before `:id`. */
   @RequirePerm('seafarers.view') @Get('reference')
   async reference() {
+    const policy = await this.policy();
     const [ranks, certTypes] = await Promise.all([rankVocab(this.pool), certVocab(this.pool)]);
     return {
       ranks: ranks.options.map((o) => ({ code: o.code, label: o.label, labelAr: o.labelAr, department: o.meta.department ?? '', officer: o.meta.officer === true, cocGrade: o.meta.cocGrade ?? '' })),
       certTypes: certRules(certTypes),
       statuses: SEAFARER_STATUS,
-      signOn: { marginDays: this.env.SIGN_ON_MARGIN_DAYS, cocVerified: this.env.COC_VERIFY_ON_SIGN_ON, medicalWindowDays: this.env.MEDICAL_EXPIRING_DAYS, expiringDays: this.env.CERT_EXPIRING_DAYS },
+      signOn: { marginDays: policy.SIGN_ON_MARGIN_DAYS, cocVerified: policy.COC_VERIFY_ON_SIGN_ON, medicalWindowDays: policy.MEDICAL_EXPIRING_DAYS, expiringDays: this.env.CERT_EXPIRING_DAYS },
       mandatory: certRules(certTypes).filter((r) => r.mandatory).map((r) => r.code),
     };
   }
@@ -119,7 +126,7 @@ export class SeafarersController {
       id: s.id, name: s.name, rank: s.rank, status: s.status, currentVesselName: s.current_vessel_name,
       certExpiries: (certs.get(s.id) ?? []).map((c) => ({ certType: c.certType, expiryDate: c.expiryDate, kind: c.kind })),
       days: (service.get(s.id) ?? []).reduce((t, x) => t + x.days, 0),
-    })), this.env, now);
+    })), await this.policy(), now);
   }
 
   @RequirePerm('seafarers.view') @Get(':id')
@@ -363,7 +370,7 @@ export class SeafarersController {
       const now = new Date();
       const rules = certRules(await certVocab(c));
       const certs = await certsOf(c, s.id, now, this.env.CERT_EXPIRING_DAYS, rules);
-      const { failures } = documentGate(certs, this.env, now, rules);
+      const { failures } = documentGate(certs, await this.policy(), now, rules);
       if (failures.length && !body.override) throw unprocessable('Documents block this sign-on', { data: { failures } });
       if (failures.length && body.override && !body.overrideReason) throw badRequest('An override requires a written reason');
       const rank = body.rank ? await this.rankOf(c, body.rank) : null;

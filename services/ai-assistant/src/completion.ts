@@ -36,7 +36,9 @@ export interface CompletionRequest {
   language: Language;
 }
 export interface CompletionResult { text: string; profile: string; grounded: boolean }
-export interface CompletionClient { readonly profile: string; complete(request: CompletionRequest): Promise<CompletionResult> }
+/** What Settings → AI assistant may vary per request: the profile key reported, the temperature a gateway composes at, and the key it presents. */
+export interface CompletionOptions { profile?: string; temperature?: number; apiKey?: string }
+export interface CompletionClient { readonly profile: string; complete(request: CompletionRequest, options?: CompletionOptions): Promise<CompletionResult> }
 export const COMPLETION_CLIENT = Symbol('COMPLETION_CLIENT');
 
 /** The standing contract sent with every request. It is the service's, and no retrieved content can replace it. */
@@ -60,7 +62,8 @@ const CITATION = (i: number) => `[${i + 1}]`;
 export class LocalCompletionClient implements CompletionClient {
   constructor(readonly profile = 'platform-local') {}
 
-  async complete(request: CompletionRequest): Promise<CompletionResult> {
+  /** The composer has no temperature: the same question over the same records always produces the same words. */
+  async complete(request: CompletionRequest, options: CompletionOptions = {}): Promise<CompletionResult> {
     const lines: string[] = [];
     for (const f of request.findings) lines.push(f);
 
@@ -87,7 +90,7 @@ export class LocalCompletionClient implements CompletionClient {
         : 'I could not find a record in the platform that answers that. Try a vessel name, a call number, a licence number or an invoice number.');
     }
 
-    return { text: lines.join('\n'), profile: this.profile, grounded: request.grounding.length > 0 || request.findings.length > 0 };
+    return { text: lines.join('\n'), profile: options.profile || this.profile, grounded: request.grounding.length > 0 || request.findings.length > 0 };
   }
 }
 
@@ -110,20 +113,23 @@ export class GatewayCompletionClient implements CompletionClient {
     private readonly timeoutMs = 20_000,
   ) {}
 
-  async complete(request: CompletionRequest): Promise<CompletionResult> {
+  async complete(request: CompletionRequest, options: CompletionOptions = {}): Promise<CompletionResult> {
     /* Composed first, so a gateway that is slow, down or misconfigured costs the reader nothing. The profile on
      * the way out is always the configured one: the reader is told which profile answered, not which code path. */
+    const profile = options.profile || this.profile;
+    const apiKey = options.apiKey || this.apiKey;
     const local = await this.fallback.complete(request);
-    const grounded: CompletionResult = { ...local, profile: this.profile };
+    const grounded: CompletionResult = { ...local, profile };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const res = await fetch(this.url, {
         method: 'POST',
         signal: controller.signal,
-        headers: { 'content-type': 'application/json', ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}) },
+        headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
         body: JSON.stringify({
-          profile: this.profile,
+          profile,
+          ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
           contract: request.contract,
           question: request.question,
           language: request.language,
@@ -137,7 +143,7 @@ export class GatewayCompletionClient implements CompletionClient {
       if (!res.ok) return grounded;
       const body = (await res.json()) as { text?: string };
       const text = typeof body.text === 'string' ? body.text.trim() : '';
-      return text ? { text, profile: this.profile, grounded: grounded.grounded } : grounded;
+      return text ? { text, profile, grounded: grounded.grounded } : grounded;
     } catch {
       return grounded;
     } finally {

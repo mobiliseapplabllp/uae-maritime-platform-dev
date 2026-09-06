@@ -35,20 +35,33 @@ test.describe('foundation screens', () => {
     await page.keyboard.press('Escape');
     await expect(box).toBeHidden();
   });
-  test('settings and roles round-trip through the API', async ({ page }) => {
+  test('settings round-trip through the API: a card opens its section, a save is read back', async ({ page }) => {
     await login(page);
     await page.goto('/admin/settings');
-    await page.getByRole('tab', { name: 'Operations' }).click();
-    const field = page.getByLabel('Anchorage wait alert (hours)');
-    await field.fill('26');
-    await page.getByRole('button', { name: /Save Operations/ }).click();
-    await expect(page.getByText('Operations settings saved')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Platform settings' })).toBeVisible();
+    // the landing shows every platform section and every module's settings as a card, with the values that matter
+    await expect(page.getByTestId('settings-card-notifications')).toContainText('Escalate after');
+    await expect(page.getByTestId('settings-card-module-ops')).toContainText('Channel limit');
+    await page.getByTestId('settings-card-notifications').click();
+    await expect(page.getByRole('heading', { name: 'Notifications — settings' })).toBeVisible();
+    const field = page.getByLabel('Escalate unread critical alerts after (hours)');
+    await field.fill('5');
+    await page.getByRole('button', { name: /Save Notifications/ }).click();
+    await expect(page.getByText('Notifications settings saved')).toBeVisible();
     await page.reload();
-    await page.getByRole('tab', { name: 'Operations' }).click();
-    await expect(page.getByLabel('Anchorage wait alert (hours)')).toHaveValue('26');
-    await page.getByLabel('Anchorage wait alert (hours)').fill('24');
-    await page.getByRole('button', { name: /Save Operations/ }).click();
-    await expect(page.getByText('Operations settings saved')).toBeVisible();
+    await expect(page.getByLabel('Escalate unread critical alerts after (hours)')).toHaveValue('5');
+    await expect(page.getByTestId('escalation-panel')).toContainText('sent on after 5 h');
+    await page.getByLabel('Escalate unread critical alerts after (hours)').fill('4');
+    await page.getByRole('button', { name: /Save Notifications/ }).click();
+    await expect(page.getByText('Notifications settings saved')).toBeVisible();
+    // a module's settings reach the module: the surveillance thresholds are what Live Traffic judges alerts against
+    await page.goto('/admin/settings');
+    await page.getByTestId('settings-card-module-ops').click();
+    await expect(page.getByRole('heading', { name: 'Harbour Operations — settings' })).toBeVisible();
+    await expect(page.getByTestId('module-settings-used-by')).toContainText('Live Traffic');
+    // the old tabbed address still lands on the right page
+    await page.goto('/admin/settings?tab=integrations');
+    await expect(page.getByTestId('integrations-panel')).toBeVisible();
   });
   test('a role without admin rights is refused', async ({ page }) => {
     await login(page, 'shipping-agent');

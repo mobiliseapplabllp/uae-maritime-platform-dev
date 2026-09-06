@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { NATIONAL_SCOPE, type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere, recordScope } from '@maritime/service-kit';
+import { NATIONAL_SCOPE, type TenancyScope, EVENTS, getJurisdiction, makeEvent, type Actor, type EventEnvelope, type BillingProfile } from '@maritime/contracts';
+import { AuditClient, badRequest, conflict, enqueue, eventFromContext, nextNumber, type Queryable, scopeWhere, recordScope, type SettingsClient } from '@maritime/service-kit';
 import { INVOICE_SCOPE } from './scope';
 import type { Env } from './env';
 
@@ -29,12 +29,39 @@ export interface Row {
   payments: Payment[]; cancel_reason: string; notes: string; history: HistoryEntry[]; reminded_at: Date | null; payment_intent: PaymentIntent | null; created_at: Date; updated_at: Date;
 }
 
-/** Lines rounded to two decimals, then subtotal and tax summed in minor units. */
-export function computeTotals(raw: Omit<Line, 'amount'>[], taxRatePct: number) {
+/** Lines rounded to two decimals, then subtotal and tax summed in minor units. With whole-unit rounding on (Finance → settings)
+ * the grand total is taken to the nearest unit and the difference shown as its own line, so the lines still add up to the total. */
+export function computeTotals(raw: Omit<Line, 'amount'>[], taxRatePct: number, roundToWholeUnit = false) {
   const lines: Line[] = raw.map((l) => ({ ...l, amount: round2(l.qty * l.rate) }));
   const subtotalM = lines.reduce((s, l) => s + toMinor(l.amount), 0);
   const taxM = Math.round((subtotalM * taxRatePct) / 100);
-  return { lines, subtotal: subtotalM / 100, taxAmount: taxM / 100, total: (subtotalM + taxM) / 100 };
+  let totalM = subtotalM + taxM;
+  if (roundToWholeUnit) {
+    const roundedM = Math.round(totalM / 100) * 100; const diffM = roundedM - totalM;
+    if (diffM) { lines.push({ code: 'RND', description: 'Rounding to the whole unit', unit: 'adjustment', qty: 1, rate: diffM / 100, amount: diffM / 100 } as Line); totalM = roundedM; }
+  }
+  return { lines, subtotal: subtotalM / 100, taxAmount: taxM / 100, total: totalM / 100 };
+}
+
+/** What a billing document is raised under: Settings → Billing & tax and the Finance module's settings, with the jurisdiction
+ * profile and the environment behind them. Read when an account is raised, issued or chased — never captured at boot. */
+export interface BillingContext extends BillingProfile { invoicePrefix: string; paymentTermsDays: number; overdueReminderDays: number; roundTotalsToWholeUnit: boolean }
+export function billingFromEnv(env: Env): BillingContext {
+  const j = getJurisdiction(env.JURISDICTION);
+  return { taxName: j.tax.name, taxRate: j.tax.ratePct, taxRegistrationLabel: j.tax.registrationLabel, placeOfSupply: '', serviceCode: '', currency: j.currency.code,
+    invoicePrefix: env.INVOICE_PREFIX, paymentTermsDays: env.PAYMENT_TERMS_DAYS, overdueReminderDays: env.OVERDUE_REMINDER_DAYS, roundTotalsToWholeUnit: false };
+}
+const numOr = (v: unknown, d: number) => (v === '' || v == null || !Number.isFinite(Number(v)) ? d : Number(v));
+export async function billingOf(settings: SettingsClient | null | undefined, env: Env): Promise<BillingContext> {
+  const base = billingFromEnv(env); if (!settings) return base;
+  const b = await settings.get<Partial<Record<keyof BillingProfile, unknown>>>('billing', {});
+  const f = await settings.moduleGet<Partial<Record<'invoicePrefix' | 'paymentTermsDays' | 'overdueReminderDays' | 'roundTotalsToWholeUnit', unknown>>>('finance', {});
+  return {
+    taxName: String(b.taxName || base.taxName), taxRate: numOr(b.taxRate, base.taxRate), taxRegistrationLabel: String(b.taxRegistrationLabel || base.taxRegistrationLabel),
+    placeOfSupply: String(b.placeOfSupply ?? ''), serviceCode: String(b.serviceCode ?? ''), currency: String(b.currency || base.currency),
+    invoicePrefix: String(f.invoicePrefix || base.invoicePrefix), paymentTermsDays: numOr(f.paymentTermsDays, base.paymentTermsDays), overdueReminderDays: numOr(f.overdueReminderDays, base.overdueReminderDays),
+    roundTotalsToWholeUnit: f.roundTotalsToWholeUnit == null ? base.roundTotalsToWholeUnit : f.roundTotalsToWholeUnit === true || f.roundTotalsToWholeUnit === 'true',
+  };
 }
 
 const LIQUID = /CRUDE|POL|EDIBLE|LNG|LPG|CHEMICAL/i;
@@ -122,8 +149,8 @@ export async function insertInvoice(c: Queryable, n: NewInvoice): Promise<Row> {
   return (await findInvoice(c, r.rows[0].id, NATIONAL_SCOPE))!;
 }
 /** `${prefix}-YYYY-NNNNN`: one atomic series per calendar year. */
-export async function nextInvoiceNumber(c: Queryable, env: Env, when: Date): Promise<string> {
-  const series = `${env.INVOICE_PREFIX}-${when.getUTCFullYear()}`; return nextNumber(c, series, `${series}-`, 5);
+export async function nextInvoiceNumber(c: Queryable, env: Env, when: Date, prefix = env.INVOICE_PREFIX): Promise<string> {
+  const series = `${prefix || env.INVOICE_PREFIX}-${when.getUTCFullYear()}`; return nextNumber(c, series, `${series}-`, 5);
 }
 export const newId = () => randomUUID();
 export const taxOf = (jurisdiction: string) => { const j = getJurisdiction(jurisdiction); return { name: j.tax.name, ratePct: j.tax.ratePct, registrationLabel: j.tax.registrationLabel, currency: j.currency.code }; };

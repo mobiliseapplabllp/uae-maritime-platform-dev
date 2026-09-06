@@ -63,13 +63,13 @@ export async function fullCompany(c: Q, row: CompanyRow, env?: Env): Promise<Com
   const facilities = await c.query<FacilityRow>('SELECT * FROM port_facilities WHERE operator_id = $1 ORDER BY code', [row.id]);
   const accreditations = env ? positionOf(await cyclesFor(c, row.id, env)) : [];
   const visits = await visitsFor(c, 'COMPANY', row.id);
-  return companyApi(row, { instruments, audits, obligations, history, facilities: facilities.rows.map((f) => facilityApi(f)), accreditations, visits });
+  return companyApi(row, { instruments, audits, obligations, history, facilities: facilities.rows.map((f) => facilityApi(f, { auditIntervalMonths: env?.AUDIT_INTERVAL_MONTHS })), accreditations, visits, auditIntervalMonths: env?.AUDIT_INTERVAL_MONTHS });
 }
 
 /** The whole facility record: operator, ISPS standing, capability and capacity, and its inspection and audit history. */
-export async function fullFacility(c: Q, row: FacilityRow): Promise<FacilityApi> {
+export async function fullFacility(c: Q, row: FacilityRow, env?: Env): Promise<FacilityApi> {
   const instruments = await instrumentsFor(c, [row.id]);
   const audits = await auditsFor(c, 'FACILITY', row.id);
   const obligations = await obligationsFor(c, 'FACILITY', row.id);
-  return facilityApi(row, { instruments, audits, obligations });
+  return facilityApi(row, { instruments, audits, obligations, auditIntervalMonths: env?.AUDIT_INTERVAL_MONTHS });
 }

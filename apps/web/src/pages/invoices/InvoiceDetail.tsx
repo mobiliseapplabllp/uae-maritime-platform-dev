@@ -46,10 +46,8 @@ export default function InvoiceDetail() {
   const err = useCallback((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })), [dispatch]);
   const load = useCallback(() => api.get<Invoice>(`/invoices/${id}`).then((r) => setDoc(r.data)).catch(err), [id, err]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    if (!hasPerm(user, 'settings.view')) return;
-    api.get<{ values: { org?: OrgSettings } }>('/settings', { headers: { 'X-Quiet': '1' } }).then((r) => setOrg(r.data.values?.org || {})).catch(() => {});
-  }, [user]);
+  // the issuer block: Settings → Organisation as the invoice service reads it, so anyone who may see the invoice sees who issued it
+  useEffect(() => { api.get<{ issuer?: OrgSettings }>('/invoices/meta', { headers: { 'X-Quiet': '1' } }).then((r) => setOrg(r.data.issuer || {})).catch(() => {}); }, []);
 
   if (!doc) return <Skeleton variant="rounded" height={420} />;
   const taxName = doc.taxName || profile.tax.name;

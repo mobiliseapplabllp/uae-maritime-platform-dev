@@ -10,7 +10,7 @@ import type { Env } from './env';
 import {
   COMM_DIRECTIONS, DOC_TYPES, LIVE_STATUS, PRIORITY_OF, TASK_STATUS, allowed, buildTimeline, incidentApi, incidentCard, incidentDashboard, incidentRowApi,
   isLive, isReopen, iso, publishIncident, publishIncidentDeleted, riskMatrix, transitionsFor,
-  type CaseFile, type CommRow, type DashboardCase, type DocRow, type HistoryRow, type IncidentRow, type LogRow, type MatrixCase, type Row, type TaskRow,
+  type CasePolicy, type CaseFile, type CommRow, type DashboardCase, type DocRow, type HistoryRow, type IncidentRow, type LogRow, type MatrixCase, type Row, type TaskRow,
 } from './incidents';
 
 /* The incident desk.
@@ -68,10 +68,21 @@ export class IncidentsController {
   ) {}
 
   private now() { return new Date(); }
-  private async sla() {
-    const s = await this.settings.moduleGet('incidents', { mttaTargetMin: this.env.MTTA_TARGET_MIN, mttrTargetHrs: this.env.MTTR_TARGET_HRS });
-    return { mttaTargetMin: Number(s.mttaTargetMin) || this.env.MTTA_TARGET_MIN, mttrTargetHrs: Number(s.mttrTargetHrs) || this.env.MTTR_TARGET_HRS };
+  /* The desk's rules, from Incident Desk → module settings: the response targets, which severities page the desk, how long a
+   * closed case may be reopened, and how soon an injury must be reported. Read when they matter, so a change applies at once. */
+  private async rules() {
+    const s = await this.settings.moduleGet<Record<string, unknown>>('incidents', { mttaTargetMin: this.env.MTTA_TARGET_MIN, mttrTargetHrs: this.env.MTTR_TARGET_HRS, autoNotifySeverity: 'HIGH', reopenWindowDays: 30, injuryReportHrs: 24 });
+    const sev = String(s.autoNotifySeverity ?? 'HIGH').toUpperCase();
+    return {
+      mttaTargetMin: Number(s.mttaTargetMin) || this.env.MTTA_TARGET_MIN, mttrTargetHrs: Number(s.mttrTargetHrs) || this.env.MTTR_TARGET_HRS,
+      autoNotifySeverity: (INCIDENT_SEVERITY as readonly string[]).includes(sev) ? sev : 'HIGH',
+      reopenWindowDays: Math.max(0, Number(s.reopenWindowDays) || 0), injuryReportHrs: Number(s.injuryReportHrs) > 0 ? Number(s.injuryReportHrs) : 24,
+    };
   }
+  private async sla() { const r = await this.rules(); return { mttaTargetMin: r.mttaTargetMin, mttrTargetHrs: r.mttrTargetHrs }; }
+  private async policy(): Promise<CasePolicy> { return { injuryReportHrs: (await this.rules()).injuryReportHrs }; }
+  /** Whether a severity pages the desk: at or above the configured floor. */
+  private notifies(severity: string, floor: string) { const rank = (INCIDENT_SEVERITY as readonly string[]); return rank.indexOf(severity) >= rank.indexOf(floor); }
   /* Every handler that touches one case comes through these two, so the tenancy filter lives here: a case in
    * another port is not found rather than found and refused, and a handler added later cannot forget it. */
   private async load(c: Pool | PoolClient, id: string, scope: TenancyScope): Promise<IncidentRow> {
@@ -129,7 +140,8 @@ export class IncidentsController {
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM incidents ${w}`, args);
     const rows = await this.pool.query<IncidentRow>(`SELECT * FROM incidents ${w} ORDER BY ${SORT[p.sortField]} ${p.sortDir} NULLS LAST, number DESC LIMIT ${p.limit} OFFSET ${p.offset}`, args);
-    return paged(rows.rows.map(incidentRowApi), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
+    const policy = await this.policy();
+    return paged(rows.rows.map((i) => incidentRowApi(i, policy)), { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
   }
 
   /** The desk's landing analytics. Declared before `:id` so the word is not read as an id. */
@@ -144,12 +156,17 @@ export class IncidentsController {
     scopeWhere(user.scope, ww, wa, INCIDENT_SCOPE);
     const ow = ['status = ANY($1)']; const oa: unknown[] = [LIVE_STATUS];
     scopeWhere(user.scope, ow, oa, INCIDENT_SCOPE);
-    const [windowed, everOpen, sla] = await Promise.all([
+    const rules = await this.rules();
+    const where = ['injuries > 0', 'status = ANY($1)', `reported_at < $2::timestamptz - ($3::text || ' hours')::interval`, `NOT EXISTS (SELECT 1 FROM incident_documents d WHERE d.incident_id = incidents.id AND d.doc_type = 'REPORT')`];
+    const ia: unknown[] = [LIVE_STATUS, now, String(rules.injuryReportHrs)];
+    scopeWhere(user.scope, where, ia, INCIDENT_SCOPE);
+    const [windowed, everOpen, injuryOverdue] = await Promise.all([
       this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE ${ww.join(' AND ')}`, wa),
       this.pool.query<DashboardCase>(`SELECT ${cols} FROM incidents WHERE ${ow.join(' AND ')} ORDER BY reported_at`, oa),
-      this.sla(),
+      this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM incidents WHERE ${where.join(' AND ')}`, ia),
     ]);
-    return incidentDashboard(windowed.rows, everOpen.rows, sla, now);
+    const sla = { mttaTargetMin: rules.mttaTargetMin, mttrTargetHrs: rules.mttrTargetHrs };
+    return { ...incidentDashboard(windowed.rows, everOpen.rows, sla, now), rules, injuryReportsOverdue: Number(injuryOverdue.rows[0].n) };
   }
 
   /** The 5×5 likelihood × consequence heatmap, initial next to residual. */
@@ -168,7 +185,7 @@ export class IncidentsController {
   async get(@Param('id') id: string, @CurrentUser() user: Principal) {
     const i = await this.load(this.pool, id, user.scope);
     const file = await this.caseFile(this.pool, i.id);
-    return { ...incidentApi(i, file), timeline: buildTimeline(file) };
+    return { ...incidentApi(i, file, await this.policy()), timeline: buildTimeline(file) };
   }
 
   /** The merged timeline on its own — status changes, log entries and attachments, newest first. */
@@ -226,7 +243,11 @@ export class IncidentsController {
         [row.id, '', 'OPEN', reportedAt, user?.id ?? null, user?.name ?? 'Marine control room', 'Incident logged']);
       await this.note(c, row.id, user, 'Incident logged in the portal; duty officer paged', reportedAt);
       await this.audit.record(c, { action: 'CREATE', entity: 'Incident', entityId: row.id, entityLabel: row.number, after: incidentApi(row) });
-      return this.publish(c, row, EVENTS.maritimeCentre.incidentOpened);
+      // whether the desk is paged is the module's own rule: at or above the configured severity
+      const rules = await this.rules();
+      const notify = this.notifies(row.severity, rules.autoNotifySeverity);
+      if (notify) await this.note(c, row.id, user, `Desk notified — ${row.severity} is at or above the ${rules.autoNotifySeverity} notification floor`, reportedAt);
+      return this.publish(c, row, EVENTS.maritimeCentre.incidentOpened, { notify, autoNotifySeverity: rules.autoNotifySeverity });
     });
   }
 
@@ -297,6 +318,12 @@ export class IncidentsController {
       }
       if (body.to === 'RESOLVED' && !body.note && !before.outcome) throw badRequest('A resolution summary is required');
       const reopen = isReopen(from, body.to);
+      // a closed case reopens only inside the module's window; after that the desk logs a new case that refers to it
+      if (reopen && from === 'CLOSED' && before.closed_at) {
+        const { reopenWindowDays } = await this.rules();
+        const closedDays = Math.floor((this.now().getTime() - new Date(before.closed_at).getTime()) / 86_400_000);
+        if (reopenWindowDays > 0 && closedDays > reopenWindowDays) throw conflict(`${before.number} was closed ${closedDays} days ago and the reopen window is ${reopenWindowDays} days — log a new case and refer to it`);
+      }
       const sets = ['status = $2']; const args: unknown[] = [before.id, body.to];
       if (body.to === 'ACKNOWLEDGED') sets.push('acknowledged_at = COALESCE(acknowledged_at, now())');
       if (body.to === 'RESPONDING' && !reopen) sets.push('responding_at = COALESCE(responding_at, now())');

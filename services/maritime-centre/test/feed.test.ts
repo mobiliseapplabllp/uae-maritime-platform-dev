@@ -53,7 +53,11 @@ describe('the AIS/LRIT feed', () => {
     expect(ships).toHaveLength(2);
     const t0 = new Date('2026-09-05T10:00:00Z');
     const out = await poll(t0);
-    expect(out).toMatchObject({ status: 'ok', mode: 'stub', received: 3, matched: 2 }); expect(out.skipped).toEqual(['9999999: not on the register']);
+    expect(out).toMatchObject({ status: 'ok', mode: 'stub', received: 3, matched: 2, targets: 3 }); expect(out.skipped).toEqual([]);
+    // a ship not on the register is still a target on the picture — traffic, not a case file
+    const stranger = (await pool.query<{ vessel_id: string | null; name: string; category: string; source: string }>("SELECT vessel_id, name, category, source FROM ais_targets WHERE mmsi = '000000000'")).rows[0];
+    expect(stranger).toMatchObject({ vessel_id: null, category: 'other', source: 'AIS (stub contract)' });
+    expect((await pool.query<{ n: string }>('SELECT count(*)::int AS n FROM ais_targets WHERE vessel_id IS NOT NULL')).rows[0].n).toBe(2);
     const a = await fixOf(ships[0].id); const b = await fixOf(ships[1].id);
     expect(a).toMatchObject({ nav_status: 'UNDERWAY', source: 'AIS (stub contract)' }); expect(Number(a.lat)).toBe(25.2); expect(Number(a.lon)).toBe(55.2); expect(a.received_at.toISOString()).toBe(t0.toISOString());
     expect(b).toMatchObject({ nav_status: 'MOORED' });

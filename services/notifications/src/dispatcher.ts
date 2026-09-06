@@ -2,6 +2,7 @@ import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/commo
 import type { Pool } from 'pg';
 import { EVENTS, STREAM_PREFIX, type EventEnvelope } from '@maritime/contracts';
 import { KIT_BUS, KIT_POOL, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { DeliveryService } from './delivery';
 
 /** Turns selected domain events into notifications. Rules are data so the studio can extend them later. */
 export const RULES: Array<{ type: string; audiencePerm: string; severity: string; /** When given, the rule fires only for events it answers true for. */ when?: (d: Record<string, unknown>) => boolean; title: (d: Record<string, unknown>) => string; body?: (d: Record<string, unknown>) => string; link?: (d: Record<string, unknown>) => string }> = [
@@ -19,7 +20,14 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
   { type: EVENTS.mdm.settingsChanged, audiencePerm: 'settings.view', severity: 'info', title: (d) => `Settings changed: ${d.key}`, link: () => '/admin/settings' },
   { type: EVENTS.ports.berthed, audiencePerm: 'portcalls.view', severity: 'success', title: (d) => `${d.vesselName} berthed at ${d.berthCode}`, link: (d) => `/port-calls/${d.portCallId}` },
   { type: EVENTS.inspection.detention, audiencePerm: 'inspections.view', severity: 'error', title: (d) => `Detention: ${d.vesselName}`, link: (d) => `/inspections/${d.inspectionId}` },
-  { type: EVENTS.maritimeCentre.incidentOpened, audiencePerm: 'incidents.view', severity: 'error', title: (d) => `${d.severity} incident: ${d.title}`, link: (d) => `/incidents/${d.incidentId}` },
+  // the desk is paged at or above the severity Incident Desk → module settings names; a case below it is on the register without a notice
+  { type: EVENTS.maritimeCentre.incidentOpened, audiencePerm: 'incidents.view', severity: 'error', when: (d) => d.notify !== false, title: (d) => `${d.severity} incident: ${d.title}`, link: (d) => `/incidents/${d.incidentId}` },
+  // the picture's derived signals, judged against Harbour Operations' thresholds
+  { type: EVENTS.maritimeCentre.alertRaised, audiencePerm: 'nmc.view', severity: 'error', when: (d) => d.severity === 'error', title: (d) => `${String(d.type).replace(/_/g, ' ')} — ${d.vesselName}`, body: (d) => String(d.note ?? ''), link: () => '/nmc/map' },
+  { type: EVENTS.maritimeCentre.alertRaised, audiencePerm: 'nmc.view', severity: 'warning', when: (d) => d.severity !== 'error' && d.derived === true, title: (d) => `${String(d.type).replace(/_/g, ' ')} — ${d.vesselName}`, body: (d) => String(d.note ?? ''), link: () => '/nmc/map' },
+  // the agents' hourly sweep: a decision nobody has reviewed inside the window, an agent left suspended past the notice window
+  { type: EVENTS.ai.decisionOverdue, audiencePerm: 'agents.view', severity: 'warning', title: (d) => `Decision awaiting review for ${d.waitingHours} h — ${d.agentName ?? d.agentId}`, body: (d) => `${d.action ?? ''}${d.entityLabel ? ` on ${d.entityLabel}` : ''}. The review window is ${d.escalationHours} h.`, link: () => '/agents/escalations' },
+  { type: EVENTS.ai.agentSuspensionNotice, audiencePerm: 'agents.configure', severity: 'warning', title: (d) => `${d.name} has been suspended for ${d.suspendedHours} h`, body: (d) => `${d.reason ?? ''}${d.by ? ` — by ${d.by}` : ''}. Reinstate it or keep the suspension under review.`, link: () => '/agents' },
   { type: EVENTS.instruments.suspended, audiencePerm: 'facilities.view', severity: 'warning', title: (d) => `Instrument suspended: ${d.number}`, link: (d) => `/facilities/${d.instrumentId}` },
   { type: EVENTS.instruments.revoked, audiencePerm: 'facilities.view', severity: 'error', title: (d) => `Instrument revoked: ${d.number} — ${d.entityName}`, body: (d) => String(d.note ?? ''), link: (d) => `/facilities/${d.instrumentId}` },
   { type: EVENTS.instruments.issued, audiencePerm: 'facilities.view', severity: 'success', title: (d) => `${d.typeLabel ?? 'Instrument'} issued: ${d.number} — ${d.entityName}`, link: (d) => `/facilities/${d.instrumentId}` },
@@ -27,6 +35,7 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
   { type: EVENTS.instruments.expiring, audiencePerm: 'facilities.view', severity: 'warning', title: (d) => `${d.typeLabel ?? 'Instrument'} ${d.number} expires in ${d.daysLeft} days — ${d.entityName}`, link: (d) => `/facilities/${d.instrumentId}` },
   { type: EVENTS.workflow.requestDecided, audiencePerm: 'services.view', severity: 'info', title: (d) => `Application ${d.requestNo} ${String(d.outcome).toLowerCase()}`, link: (d) => `/services/requests/${d.requestId}` },
   { type: EVENTS.ships.vesselRegistered, audiencePerm: 'registry.view', severity: 'success', title: (d) => `Registry granted: ${d.vesselName}`, link: (d) => `/registry/${d.registrationId}` },
+  { type: EVENTS.ships.certExpiring, audiencePerm: 'vessels.view', severity: 'warning', title: (d) => `Certificates expiring: ${d.vesselName} — ${d.count} within ${d.windowDays} days`, body: (d) => (Array.isArray(d.certificates) ? (d.certificates as { certType: string; daysLeft: number }[]).map((x) => `${x.certType} in ${x.daysLeft} d`).join('; ') : ''), link: (d) => `/vessels/${d.vesselId}` },
   { type: EVENTS.facilities.accreditationDue, audiencePerm: 'facilities.view', severity: 'warning', title: (d) => `${d.scheme ?? d.category} accreditation of ${d.companyName} ends in ${d.daysLeft} days`, link: (d) => `/companies/${d.companyId}` },
   { type: EVENTS.facilities.accreditationExpired, audiencePerm: 'facilities.view', severity: 'error', title: (d) => `${d.scheme ?? d.category} accreditation of ${d.companyName} has expired`, link: (d) => `/companies/${d.companyId}` },
   { type: EVENTS.facilities.accreditationRenewed, audiencePerm: 'facilities.view', severity: 'success', title: (d) => `${d.scheme ?? d.category} accreditation renewed — ${d.companyName} (cycle ${d.cycleNo})`, link: (d) => `/companies/${d.companyId}` },
@@ -52,10 +61,12 @@ export const RULES: Array<{ type: string; audiencePerm: string; severity: string
 @Injectable()
 export class Dispatcher implements OnModuleInit, OnModuleDestroy {
   private sub?: Subscription;
-  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool) {}
+  constructor(@Inject(KIT_BUS) private readonly bus: EventBus, @Inject(KIT_POOL) private readonly pool: Pool, private readonly delivery: DeliveryService) {}
   async onModuleInit() { this.sub = await this.bus.subscribe('notifications-dispatcher', [`${STREAM_PREFIX}.>`], (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
   async handle(event: EventEnvelope) {
+    // the scheduled escalation sweep, on the window Settings → Notifications sets
+    if (event.type === EVENTS.scheduler.escalateNotifications) { await withInbox(this.pool, event, async () => { await this.delivery.escalate(); }); return; }
     const rule = RULES.find((r) => r.type === event.type); if (!rule) return;
     if (rule.when && !rule.when((event.data ?? {}) as Record<string, unknown>)) return;
     const d = (event.data ?? {}) as Record<string, unknown>;

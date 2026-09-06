@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { buildWorld } from '@maritime/world';
-import { PASSWORD_MIN } from '@maritime/contracts';
+import { PASSWORD_MIN, SETTING_SECTIONS } from '@maritime/contracts';
 import { createDb, runMigrations, withTx } from '@maritime/service-kit';
 import { env } from './env';
 
@@ -19,6 +19,8 @@ export async function seedMdm(databaseUrl: string, profile?: string) {
       `INSERT INTO settings(key, value, updated_by) VALUES ($1, $2, $3)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value || (SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb) FROM jsonb_each(settings.value) e WHERE EXCLUDED.value ? e.key)`,
       [s.key, JSON.stringify(s.value), 'seed']);
+    // a platform section the catalogue no longer carries leaves with its values; its keys live in a module's settings now
+    await c.query(`DELETE FROM settings WHERE key NOT LIKE 'module:%' AND NOT (key = ANY($1))`, [[...SETTING_SECTIONS]]);
     /* The password floor is a platform constant. A stored minimum below it never applied (the policy clamps), so it is raised
      * rather than left to mislead the Settings screen. */
     await c.query(`UPDATE settings SET value = value || jsonb_build_object('passwordMinLength', $1::int) WHERE key = 'module:admin' AND coalesce((value->>'passwordMinLength')::int, 0) < $1::int`, [PASSWORD_MIN]);

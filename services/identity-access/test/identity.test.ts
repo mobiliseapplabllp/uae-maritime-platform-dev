@@ -342,3 +342,19 @@ describe('identity-access — access controls', () => {
     expect(cycles[0].openedBy).toBe('Access review schedule');
   });
 });
+
+describe('identity — who holds a permission', () => {
+  it('names the active accounts holding a permission or the wildcard, for the escalation of an audience notice', async () => {
+    const r = await request(server as never).get('/internal/principals?perm=inspections.view&limit=5').set('x-service-token', 'development-service-token');
+    expect(r.status).toBe(200);
+    expect(r.body.data.perm).toBe('inspections.view');
+    expect(r.body.data.items.length).toBeGreaterThanOrEqual(1); expect(r.body.data.items.length).toBeLessThanOrEqual(5);
+    for (const h of r.body.data.items) { expect(h.email).toMatch(/@/); expect(typeof h.name).toBe('string'); expect(typeof h.roleName).toBe('string'); }
+    // an administrator holds everything through the wildcard, so a permission no role spells out still reaches the administrators
+    const rare = await request(server as never).get('/internal/principals?perm=no.such.permission').set('x-service-token', 'development-service-token');
+    expect(rare.status).toBe(200);
+    expect(rare.body.data.items.every((h: { roleName: string }) => /admin/i.test(h.roleName))).toBe(true);
+    expect((await request(server as never).get('/internal/principals').set('x-service-token', 'development-service-token')).status).toBe(400);
+    expect((await request(server as never).get('/internal/principals?perm=inspections.view')).status).toBe(401);
+  });
+});

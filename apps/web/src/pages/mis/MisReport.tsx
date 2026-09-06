@@ -52,7 +52,13 @@ export default function MisReport() {
     setData(null);
     api.get<MisData>('/reports/mis', { params: { months: m } }).then((r) => setData(r.data)).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
   }, [dispatch]);
-  useEffect(() => { load(12); }, [load]);
+  const [footer, setFooter] = useState('');
+  // MIS Reports → module settings: the period a report opens on, and the footer printed under it
+  useEffect(() => {
+    api.get<{ values: { defaultPeriodMonths?: number; exportFooter?: string } }>('/module-settings/mis', { headers: { 'X-Quiet': '1' } })
+      .then((r) => { const m = Math.min(36, Math.max(3, Number(r.data.values?.defaultPeriodMonths) || 12)); setMonths(m); setFooter(String(r.data.values?.exportFooter ?? '')); load(m); })
+      .catch(() => load(12));
+  }, [load]);
 
   const csv = async (name: string, rows: MisMonth[], columns: ExportColumn[]) => {
     const { exportCsv } = await import('../../utils/exportUtils');
@@ -250,6 +256,7 @@ export default function MisReport() {
           )}
         </>
       )}
+      {footer && <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, textAlign: 'center' }} data-testid="mis-export-footer">{footer}</Typography>}
     </>
   );
 }

@@ -30,7 +30,7 @@ beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });
   await a.query(`DROP DATABASE IF EXISTS ${DB}`); await a.query(`CREATE DATABASE ${DB}`); await a.end();
   await seedSeafarers(URL, 'AE');
-  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET } as never);
+  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', MDM_URL: 'http://127.0.0.1:1', JWT_SECRET: SECRET } as never);
   const base = { scope: { level: 'NATIONAL' }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const resolver = new StaticPrincipalResolver({
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Admin', perms: ['*'] },

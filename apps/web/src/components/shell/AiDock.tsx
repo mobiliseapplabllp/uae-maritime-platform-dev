@@ -1,7 +1,7 @@
 /* In-portal assistant drawer — answers from this portal's live records and returns links that navigate straight to the citing screen. */
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Drawer, Box, Typography, IconButton, TextField, Chip, Stack, Divider, keyframes, Button } from '@mui/material';
+import { Alert, Drawer, Box, Typography, IconButton, TextField, Chip, Stack, Divider, keyframes, Button } from '@mui/material';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
@@ -33,14 +33,18 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [status, setStatus] = useState<{ enabled: boolean; profile: string; composer: string; budget: { dailyTokens: number; remaining: number | null; exhausted: boolean } } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  // Settings → AI assistant decides whether the dock answers at all, and how much of the day's budget is left
+  useEffect(() => { if (open) api.get<typeof status>('/ai/status', { headers: { 'X-Quiet': '1' } }).then((r) => setStatus(r.data)).catch(() => setStatus(null)); }, [open, messages.length]);
+  const blocked = status ? (!status.enabled ? 'The assistant is switched off in Settings → AI assistant.' : status.budget.exhausted ? 'The assistant has spent today\'s token budget; it resumes tomorrow or when the budget is raised in Settings → AI assistant.' : null) : null;
 
   useEffect(() => { if (open && !suggestions.length) api.get<string[]>('/ai/suggestions', { headers: { 'X-Quiet': '1' } }).then((r) => setSuggestions(r.data)).catch(() => {}); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { try { sessionStorage.setItem('ai-chat', JSON.stringify(messages.slice(-30))); } catch { /* ignore */ } bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
 
   const send = (text?: string) => {
     const message = (text || input).trim();
-    if (!message || thinking) return;
+    if (!message || thinking || blocked) return;
     setInput('');
     setMessages((m) => [...m, { role: 'user', text: message }]);
     setThinking(true);
@@ -58,6 +62,8 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
         <IconButton onClick={onClose} aria-label="Close"><CloseRoundedIcon /></IconButton>
       </Box>
       <Divider />
+      {blocked && <Alert severity="warning" sx={{ m: 2, mb: 0 }} data-testid="ai-dock-blocked">{blocked}</Alert>}
+      {status && !blocked && <Typography sx={{ px: 2, pt: 1, fontSize: 10.5, color: 'text.secondary', fontFamily: MONO }} data-testid="ai-dock-status">{status.composer} · {status.profile}{status.budget.dailyTokens > 0 ? ` · ${(status.budget.remaining ?? 0).toLocaleString('en-GB')} tokens left today` : ''}</Typography>}
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {messages.length === 0 && (
           <Box sx={{ mt: 2 }}>

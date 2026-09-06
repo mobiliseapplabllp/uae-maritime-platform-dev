@@ -62,6 +62,16 @@ export class NotificationsController {
     const day = await this.pool.query<{ channel: string; status: string; n: string }>("SELECT channel, status, count(*)::text AS n FROM deliveries WHERE created_at > now() - interval '24 hours' GROUP BY channel, status");
     const last24h: Record<string, Record<string, number>> = { email: { sent: 0, failed: 0, skipped: 0 }, sms: { sent: 0, failed: 0, skipped: 0 } };
     for (const r of day.rows) last24h[r.channel][r.status] = Number(r.n);
-    return { items: rows.rows.map(deliveryApi), last24h };
+    const esc = await this.pool.query<{ n: string; pending: string }>(
+      `SELECT (SELECT count(*) FROM notifications WHERE escalated_at > now() - interval '24 hours')::text AS n,
+              (SELECT count(*) FROM notifications n WHERE n.severity = 'error' AND n.escalated_at IS NULL AND n.created_at > now() - interval '48 hours'
+                 AND NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id = n.id AND (n.user_id IS NULL OR r.user_id = n.user_id)))::text AS pending`);
+    const prefs = await this.delivery.prefs();
+    const smtp = await this.delivery.smtp();
+    return { items: rows.rows.map(deliveryApi), last24h, escalation: { hours: prefs.escalationHours, escalated24h: Number(esc.rows[0].n), unreadCritical: Number(esc.rows[0].pending) }, channels: { email: prefs.emailEnabled, sms: prefs.smsEnabled, relay: smtp ? `${smtp.host}:${smtp.port}` : 'messaging adapter' } };
   }
+
+  /** Runs the escalation sweep now rather than at the scheduler's next half hour — after shortening the window, for instance. */
+  @RequirePerm('settings.manage') @Post('escalate')
+  async escalateNow() { return this.delivery.escalate(); }
 }

@@ -15,6 +15,8 @@ export const envSchema = baseEnvSchema.extend({
   ACCREDITATION_REMINDER_DAYS: z.string().default('90,30,7'),
   /** An instrument expiring inside this window is on the renewal work list. */
   RENEWAL_WINDOW_DAYS: z.coerce.number().default(90),
+  /** How often a regulated company or facility is audited; a record past its interval reads as audit overdue. */
+  AUDIT_INTERVAL_MONTHS: z.coerce.number().default(12),
   /** How long a company has to clear an obligation raised against it when none is set. */
   OBLIGATION_DUE_DAYS: z.coerce.number().default(30),
 });

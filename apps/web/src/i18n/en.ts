@@ -11,7 +11,7 @@ const en = {
   incidents: {
     crumb: 'Incidents',
     dashboardTitle: 'Incident dashboard', dashboardSub: 'Response posture across HSE, marine, security, cargo and equipment cases — trailing 12 months', openRegister: 'Open register',
-    kpiOpen: 'Open cases', kpiOpenSub: '{{n}} high / critical', kpiLogged: 'Logged YTD', kpiLoggedSub: '{{n}} closed YTD', kpiMttr: 'Mean time to resolve', kpiMttrSub: 'acknowledge in ~{{n}} min', kpiInjuries: 'Injuries YTD', kpiInjuriesSub: 'recordable — personnel category',
+    kpiOpen: 'Open cases', kpiOpenSub: '{{n}} high / critical', kpiLogged: 'Logged YTD', kpiLoggedSub: '{{n}} closed YTD', kpiMttr: 'Mean time to resolve', kpiMttrSub: 'acknowledge in ~{{n}} min', kpiInjuries: 'Injuries YTD', kpiInjuriesSub: 'recordable — personnel category', kpiInjuriesOverdue: '{{n}} injury report(s) past the {{h}} h deadline',
     byMonth: 'Incidents by month', byMonthSub: 'Stacked by severity — trailing 12 months', ageing: 'Open-case ageing', ageingSub: 'Everything not yet resolved, by age bucket', byType: 'By incident type', trailing12: 'Trailing 12 months',
     liveOpen: 'Live open cases', liveOpenSub: 'Oldest first — click to open the case file', allClear: 'No open cases — all clear ✅', byCategory: 'By category', byCategorySub: 'Where the cases come from',
     registerTitle: 'Incident register', registerSub: 'Every logged case — search, filter, drill into the case file', logIncident: 'Log incident', logTitle: 'Log a new incident', logSub: 'A case number is assigned automatically; the lifecycle starts at OPEN', searchPlaceholder: 'Search case no, title, craft…', logged: 'Incident {{number}} logged',
@@ -403,7 +403,6 @@ const en = {
     outbox: { title: 'Unpublished events', help: 'Events written inside a transaction but not yet on the bus. A few in flight is normal; a backlog that persists means data is drifting between services.' },
     sla: { title: 'Service Levels', subtitle: 'Measured as real requests through the gateway — the path a client actually takes, timed end to end', now: 'Now', target: 'Target', p95: 'P95 24h', p50: 'Median', building: 'Collecting — a trend appears once there is more than one hour of history.' },
     incidents: { title: 'Outage History', subtitle: 'State changes recorded with measured durations, including restarts detected from uptime going backwards', all: 'All', openOnly: 'Open', target: 'Target', kind: 'Kind', started: 'Started', ended: 'Ended', duration: 'Duration', detail: 'Detail', ongoing: 'Ongoing', none: 'No incidents recorded.', restartedFrom: 'restarted — previous uptime {{sec}}s' },
-    integrations: { title: 'Integrations', subtitle: 'Every counterpart the platform speaks to, as an adapter — where it points, how it authenticates, and what it has done lately' },
     compliance: {
       title: 'RFP Compliance',
       subtitle: '{{n}} commitments from the RFP and Technical Architecture Document traced against the code that exists — compiled {{at}}',

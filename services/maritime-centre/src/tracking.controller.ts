@@ -1,8 +1,8 @@
-import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, ServiceOnly, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, ServiceOnly, SettingsClient, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
 import { detectMode, fencesContaining, vesselsWithin } from './spatial';
 import { seedGeofences } from './geofences';
@@ -13,6 +13,8 @@ import {
   restrictionApi, restrictionZones, trackSummary, recordFix, type AlertRow, type PositionRow, type RestrictionRow, type VesselFacts,
 } from './tracking';
 import { AIS_SOURCE, feedApi, feedState, pollAis } from './feed';
+import { sweepAisGaps, thresholdsOf } from './surveillance';
+import { CATEGORIES, CATEGORY_LABEL, PORTS_LAYER, searchTargets, targetApi, targetByKey, targetsWithin, trackOf, type Category } from './targets';
 import { IntegrationClient } from '@maritime/service-kit';
 
 /* Tracking and surveillance.
@@ -40,6 +42,7 @@ const alertBody = z.object({
   note: text(1000).default(''), at: z.preprocess(blank, z.string().nullable().optional()), incidentId: z.preprocess(blank, z.string().trim().nullable().optional()),
 });
 const ackBody = z.object({ note: text(500).default('') });
+const watchBody = z.object({ key: z.string().trim().min(1).max(80) });
 const restrictionBody = z.object({
   kind: z.enum(RESTRICTION_KINDS).default('AREA_CLOSURE'), label: text(200).min(1), reason: text(2000).default(''),
   area: z.array(pointBody).min(3, 'A restricted area needs at least three points'),
@@ -50,7 +53,7 @@ const decisionBody = z.object({ status: z.enum(['APPROVED', 'REJECTED', 'WITHDRA
 
 @Controller('tracking')
 export class TrackingController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   private async vesselFacts(ids: string[]): Promise<Map<string, VesselFacts>> {
     if (!ids.length) return new Map();
@@ -70,12 +73,94 @@ export class TrackingController {
     return {
       positions: positions.rows.map((p) => positionApi(p, facts.get(p.vessel_id), this.env.POSITION_STALE_MIN)),
       alerts: alerts.rows.map(alertApi),
+      // the thresholds the derived alerts are judged against, from Harbour Operations' settings
+      thresholds: await thresholdsOf(this.settings),
       restrictions: restrictions.rows.map(restrictionApi),
       generatedAt: new Date().toISOString(),
       coverage: coverageNote(this.env.JURISDICTION),
       port: portCentre(this.env.JURISDICTION, this.env.PICTURE_ZOOM_KM),
       zones: [...chartZones(this.env.JURISDICTION), ...restrictionZones(restrictions.rows)],
     };
+  }
+
+  /* ------------------------------------------------------------------------ the map's targets --- */
+
+  /** Every ship in a window of the map — the register's own and everyone else the feed reported — or the clusters they fall into when there are too many to draw. */
+  @RequirePerm('nmc.view') @Get('targets')
+  async targets(@Query() q: { minLat?: string; maxLat?: string; minLon?: string; maxLon?: string; zoom?: string; categories?: string; limit?: string; hours?: string }) {
+    const n = (v: string | undefined, d: number) => { const x = Number(v); return Number.isFinite(x) ? x : d; };
+    const bbox = { minLat: Math.max(-90, n(q.minLat, -90)), maxLat: Math.min(90, n(q.maxLat, 90)), minLon: Math.max(-180, n(q.minLon, -180)), maxLon: Math.min(180, n(q.maxLon, 180)) };
+    if (bbox.minLat >= bbox.maxLat || bbox.minLon >= bbox.maxLon) throw badRequest('the window is empty');
+    const categories = String(q.categories ?? '').split(',').map((s) => s.trim()).filter((s): s is Category => (CATEGORIES as string[]).includes(s));
+    const out = await targetsWithin(this.pool, bbox, { categories: categories.length ? categories : undefined, zoom: n(q.zoom, 6), limit: n(q.limit, 2000), maxAgeHours: Math.min(168, Math.max(1, n(q.hours, 24))) });
+    const now = Date.now();
+    const totals = await this.pool.query<{ all: string; registered: string; fresh: string }>(`SELECT (SELECT count(*) FROM ais_targets WHERE vessel_id IS NULL AND received_at > now() - interval '24 hours') + (SELECT count(*) FROM positions) AS all, (SELECT count(*) FROM positions) AS registered, (SELECT count(*) FROM ais_targets WHERE received_at > now() - interval '1 hour') AS fresh`);
+    return {
+      targets: out.targets.map((t) => targetApi(t, now)), clusters: out.clusters, total: out.total, clustered: out.clustered, generatedAt: new Date(now).toISOString(),
+      totals: { all: Number(totals.rows[0].all), registered: Number(totals.rows[0].registered), freshHour: Number(totals.rows[0].fresh) },
+      legend: CATEGORIES.map((c) => ({ key: c, label: CATEGORY_LABEL[c] })), coverage: coverageNote(this.env.JURISDICTION), thresholds: await thresholdsOf(this.settings),
+    };
+  }
+
+  /** The map's own layers: the ports of the region and the published sea areas. */
+  @RequirePerm('nmc.view') @Get('layers')
+  async layers() {
+    const fences = await this.pool.query<{ id: string; code: string; name: string; kind: string; alert_on: string; geojson: unknown }>('SELECT id::text, code, name, kind, alert_on, geojson FROM geofences WHERE active ORDER BY kind, code');
+    const restrictions = await this.pool.query<RestrictionRow>(`SELECT * FROM restrictions WHERE status IN ('PROPOSED', 'APPROVED') ORDER BY created_at`);
+    return {
+      ports: PORTS_LAYER, home: portCentre(this.env.JURISDICTION, this.env.PICTURE_ZOOM_KM),
+      areas: fences.rows.map((f) => ({ id: f.id, code: f.code, name: f.name, kind: f.kind, alertOn: f.alert_on, geojson: f.geojson })),
+      zones: chartZones(this.env.JURISDICTION), restrictions: restrictionZones(restrictions.rows),
+    };
+  }
+
+  /** My fleet: the ships this person follows, with where each is now. */
+  @RequirePerm('nmc.view') @Get('watch')
+  async watch(@CurrentUser() user: Principal) {
+    const rows = await this.pool.query<{ mmsi: string; vessel_id: string | null; name: string; added_at: Date }>('SELECT mmsi, vessel_id, name, added_at FROM watch_list WHERE user_id = $1 ORDER BY added_at DESC', [user.id]);
+    const items = [];
+    for (const w of rows.rows) { const t = await targetByKey(this.pool, w.vessel_id ? `vessel:${w.vessel_id}` : w.mmsi); items.push({ mmsi: w.mmsi, vesselId: w.vessel_id, name: t ? targetApi(t).name : w.name, addedAt: iso(w.added_at), target: t ? targetApi(t) : null }); }
+    return items;
+  }
+  @RequirePerm('nmc.view') @Post('watch')
+  async follow(@Body(zod(watchBody)) body: z.infer<typeof watchBody>, @CurrentUser() user: Principal) {
+    const t = await targetByKey(this.pool, body.key);
+    if (!t) throw notFound('No such target on the picture');
+    const api = targetApi(t);
+    await this.pool.query('INSERT INTO watch_list(user_id, mmsi, vessel_id, name) VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, mmsi) DO UPDATE SET name = EXCLUDED.name, vessel_id = EXCLUDED.vessel_id', [user.id, api.mmsi, t.vessel_id, api.name]);
+    return { following: true, mmsi: api.mmsi, name: api.name };
+  }
+  @RequirePerm('nmc.view') @Delete('watch/:mmsi')
+  async unfollow(@Param('mmsi') mmsi: string, @CurrentUser() user: Principal) {
+    const r = await this.pool.query('DELETE FROM watch_list WHERE user_id = $1 AND mmsi = $2', [user.id, mmsi]);
+    return { following: false, removed: r.rowCount ?? 0 };
+  }
+
+  /** The search box: a name, an MMSI, an IMO or a call sign, the register's own ships first. */
+  @RequirePerm('nmc.view') @Get('targets/search')
+  async searchTargets(@Query('q') q?: string, @Query('limit') limit?: string) {
+    const rows = await searchTargets(this.pool, String(q ?? ''), Number(limit) || 10);
+    const now = Date.now();
+    return rows.map((t) => targetApi(t, now));
+  }
+
+  /** One ship as the card shows her: what AIS says, what the register knows, and whether this person follows her. */
+  @RequirePerm('nmc.view') @Get('targets/:key')
+  async target(@Param('key') key: string, @CurrentUser() user: Principal) {
+    const t = await targetByKey(this.pool, key);
+    if (!t) throw notFound('No such target on the picture');
+    const api = targetApi(t);
+    const w = await this.pool.query('SELECT 1 FROM watch_list WHERE user_id = $1 AND mmsi = $2', [user.id, api.mmsi]);
+    const alerts = t.vessel_id ? await this.pool.query<AlertRow>('SELECT * FROM mda_alerts WHERE vessel_id = $1 AND NOT acknowledged ORDER BY at DESC LIMIT 5', [t.vessel_id]) : { rows: [] as AlertRow[] };
+    return { ...api, following: (w.rowCount ?? 0) > 0, alerts: alerts.rows.map(alertApi), destinationPort: PORTS_LAYER.find((p) => p.code === api.destination.toUpperCase().replace(/\\s+/g, ''))?.name ?? null };
+  }
+  @RequirePerm('nmc.view') @Get('targets/:key/track')
+  async targetTrack(@Param('key') key: string, @Query('hours') hoursQ?: string) {
+    const t = await targetByKey(this.pool, key);
+    if (!t) throw notFound('No such target on the picture');
+    const hours = Math.min(720, Math.max(1, Number.parseInt(String(hoursQ ?? 24), 10) || 24));
+    const track = await trackOf(this.pool, t, hours);
+    return { key, mmsi: t.mmsi, hours, track, summary: trackSummary(track.map((f) => ({ ...f, navStatus: '' }))) };
   }
 
   /** Every current fix as a paged, searchable list — the same targets, for a table rather than a chart. */
@@ -121,7 +206,8 @@ export class TrackingController {
   /** Read the feed now rather than at the next scheduled minute — after switching the adapter live, for instance. */
   @RequirePerm('nmc.manage', 'settings.manage') @Post('feed/poll')
   async pollNow(@CurrentUser() user: Principal) {
-    const out = await withTx(this.pool, async (c) => pollAis(c, { env: this.env, hub: this.hub }, { correlationId: `feed:${user.id}` }));
+    const thresholds = await thresholdsOf(this.settings);
+    const out = await withTx(this.pool, async (c) => pollAis(c, { env: this.env, hub: this.hub, thresholds }, { correlationId: `feed:${user.id}` }));
     await this.audit.record(this.pool, { action: 'POLL', entity: 'Feed', entityId: AIS_SOURCE, entityLabel: 'AIS/LRIT feed', after: { status: out.status, mode: out.mode, received: out.received, matched: out.matched } });
     return out;
   }
@@ -129,7 +215,17 @@ export class TrackingController {
   /** The AIS adapter's way in. Service-only: a ship's position is reported by the feed, never typed by a person. */
   @ServiceOnly() @Post('positions')
   async ingest(@Body(zod(fixBody)) body: z.infer<typeof fixBody>) {
-    return withTx(this.pool, async (c) => recordFix(c, this.env, body));
+    const thresholds = await thresholdsOf(this.settings);
+    return withTx(this.pool, async (c) => recordFix(c, this.env, body, { thresholds }));
+  }
+
+  /** Runs the AIS gap sweep now rather than at the scheduler's next minute — after tightening the threshold, for instance. */
+  @RequirePerm('nmc.manage') @Post('alerts/sweep')
+  async sweepNow() {
+    const thresholds = await thresholdsOf(this.settings);
+    const out = await withTx(this.pool, async (c) => sweepAisGaps(c, this.env, thresholds));
+    await this.audit.record(this.pool, { action: 'AIS_GAP_SWEEP', entity: 'MdaAlert', entityId: 'sweep', entityLabel: `AIS gap sweep — ${out.raised} raised`, after: out });
+    return out;
   }
 
   /* --------------------------------------------------------------------------- alerts --- */
@@ -307,6 +403,6 @@ export class TrackingController {
   @RequirePerm('nmc.view') @Get('incidents')
   async openIncidents() {
     const r = await this.pool.query<IncidentRow>('SELECT * FROM incidents WHERE status = ANY($1) ORDER BY reported_at DESC LIMIT 50', [LIVE_STATUS]);
-    return r.rows.map(incidentRowApi);
+    return r.rows.map((i) => incidentRowApi(i));
   }
 }

@@ -174,7 +174,7 @@ export class AgentsController {
       const before = agentApi(a);
       const at = new Date();
       const updated = (await c.query<AgentRecord>(
-        'UPDATE agents SET suspended = $2, suspended_reason = $3, suspended_by = $4, suspended_at = $5, updated_at = now() WHERE agent_id = $1 RETURNING *',
+        'UPDATE agents SET suspended = $2, suspended_reason = $3, suspended_by = $4, suspended_at = $5, suspension_noticed_at = NULL, updated_at = now() WHERE agent_id = $1 RETURNING *',
         [a.agent_id, body.suspended, body.suspended ? reason : '', body.suspended ? user.name : '', body.suspended ? at : null])).rows[0];
       await c.query('INSERT INTO agent_changes(agent_id, field, from_value, to_value, by_id, by, reason) VALUES ($1,$2,$3,$4,$5,$6,$7)',
         [a.agent_id, 'suspended', String(a.suspended), String(body.suspended), user.id, user.name, reason || 'Reinstated after investigation']);

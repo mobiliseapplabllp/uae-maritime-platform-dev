@@ -25,7 +25,7 @@ export function findBerthConflict(active: Occupant[], berthId: string, from: Dat
   return null;
 }
 /** Every reason a berth cannot take a ship in a window, in the order the harbour master would check them. Pure, so it is testable without a database. */
-export function berthProblems(berth: BerthLimits, active: Occupant[], outages: OutageSpan[], from: Date, to: Date, o: { excludeId?: string | null; vessel?: Applicant } = {}): { status: 400 | 409; message: string } | null {
+export function berthProblems(berth: BerthLimits, active: Occupant[], outages: OutageSpan[], from: Date, to: Date, o: { excludeId?: string | null; vessel?: Applicant; /** Turnaround the harbour keeps clear on either side of a hold — Harbour Operations → settings. */ slackHours?: number } = {}): { status: 400 | 409; message: string } | null {
   if (berth.status !== 'OPERATIONAL') return { status: 400, message: `Berth ${berth.code} is under maintenance` };
   const loa = o.vessel?.loa ?? null; const loaMax = Number(berth.loa_max) || 0;
   if (loa && loaMax && loa > loaMax) return { status: 409, message: `${o.vessel?.vesselName ?? 'The vessel'} (LOA ${loa} m) exceeds the ${berth.code} limit of ${loaMax} m` };
@@ -33,8 +33,9 @@ export function berthProblems(berth: BerthLimits, active: Occupant[], outages: O
   if (draft && draftMax && draft > draftMax) return { status: 409, message: `Draft ${draft} m exceeds the ${berth.code} limit of ${draftMax} m` };
   const outage = outages.find((x) => overlaps(x.from_at.getTime(), x.to_at.getTime(), from.getTime(), to.getTime()));
   if (outage) return { status: 409, message: `Berth ${berth.code} is out of service — ${outage.reason || outage.kind.toLowerCase()} from ${iso(outage.from_at)!.slice(0, 16).replace('T', ' ')} to ${iso(outage.to_at)!.slice(0, 16).replace('T', ' ')}` };
-  const clash = findBerthConflict(active, berth.id, from, to, o.excludeId);
-  if (clash) return { status: 409, message: `Berth ${berth.code} is held by call ${clash.vcn} in that window` };
+  const slack = Math.max(0, Number(o.slackHours) || 0) * 3_600_000;
+  const clash = findBerthConflict(active, berth.id, new Date(from.getTime() - slack), new Date(to.getTime() + slack), o.excludeId);
+  if (clash) return { status: 409, message: `Berth ${berth.code} is held by call ${clash.vcn} in that window${slack ? ` (with ${Number(o.slackHours)} h turnaround either side)` : ''}` };
   return null;
 }
 export async function loadBerth(c: Queryable, ref: string): Promise<BerthLimits | null> {
@@ -46,7 +47,7 @@ export async function activeOccupants(c: Queryable, berthId: string): Promise<Oc
   return r.rows.map((x) => ({ id: x.id, vcn: x.vcn, berthId: x.berth_id, atb: x.atb, etb: x.etb, etd: x.etd }));
 }
 /** Loads the berth and refuses the allocation when any rule fails; returns the berth when the window is clear. */
-export async function assertBerthAvailable(c: Queryable, ref: string, from: Date, to: Date, o: { excludeId?: string | null; vessel?: Applicant } = {}): Promise<BerthLimits> {
+export async function assertBerthAvailable(c: Queryable, ref: string, from: Date, to: Date, o: { excludeId?: string | null; vessel?: Applicant; slackHours?: number } = {}): Promise<BerthLimits> {
   const berth = await loadBerth(c, ref); if (!berth) throw badRequest('Selected berth does not exist');
   const outages = await c.query<OutageSpan>('SELECT from_at, to_at, kind, reason FROM berth_outages WHERE berth_id = $1 AND from_at < $3 AND to_at > $2 ORDER BY from_at', [berth.id, from, to]);
   const problem = berthProblems(berth, await activeOccupants(c, berth.id), outages.rows, from, to, o);

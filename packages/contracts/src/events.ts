@@ -23,7 +23,7 @@ export const EVENTS = {
   },
   mdm: { goldenUpdated: 'mdm.golden.updated', lookupChanged: 'mdm.lookup.changed', settingsChanged: 'mdm.settings.changed', companyUpserted: 'mdm.company.upserted', vesselUpserted: 'mdm.vessel.upserted' },
   audit: { recorded: 'audit.recorded' },
-  notifications: { notified: 'notifications.notified' },
+  notifications: { notified: 'notifications.notified', escalated: 'notifications.escalated' },
   documents: { uploaded: 'documents.document.uploaded', scanned: 'documents.document.scanned', deleted: 'documents.document.deleted', legalHoldChanged: 'documents.document.legal-hold-changed', purged: 'documents.document.purged' },
   workflow: {
     requestSubmitted: 'workflow.request.submitted', requestDecided: 'workflow.request.decided', definitionPromoted: 'workflow.definition.promoted',
@@ -44,7 +44,7 @@ export const EVENTS = {
     vesselRegistered: 'ships.vessel.registered', certIssued: 'ships.certificate.issued', registryClosed: 'ships.registry.closed',
     // added by the ships service: every change to a ship, to its certificate list and to its file with the registrar
     vesselCreated: 'ships.vessel.created', vesselUpdated: 'ships.vessel.updated', vesselDeleted: 'ships.vessel.deleted',
-    certUpdated: 'ships.certificate.updated', certDeleted: 'ships.certificate.deleted',
+    certUpdated: 'ships.certificate.updated', certDeleted: 'ships.certificate.deleted', certExpiring: 'ships.certificate.expiring',
     registrationLodged: 'ships.registration.lodged', registrationUpdated: 'ships.registration.updated', registrationTransitioned: 'ships.registration.transitioned',
     registrationGranted: 'ships.registration.granted', registrationDeleted: 'ships.registration.deleted',
     // the registry ledger: every transaction against an entry, and the attested transcripts issued from it
@@ -127,12 +127,12 @@ export const EVENTS = {
     // added with the dynamic adapters: an operator changed how a counterpart is reached, a call ran out of attempts, a counterpart pushed a delivery
     adapterChanged: 'integration.adapter.changed', callDead: 'integration.call.dead', inboundReceived: 'integration.inbound.received',
   },
-  scheduler: { slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant', pollAisPositions: 'scheduler.poll.ais-positions' },
+  scheduler: { escalateNotifications: 'scheduler.escalate.notifications', sweepAuditRetention: 'scheduler.sweep.audit-retention', slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant', pollAisPositions: 'scheduler.poll.ais-positions' },
   ai: {
     draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded',
     // added by the agentic runtime: the escalation the autonomy ladder forced, the human outcome on it, and every change to what an agent is allowed to do
-    decisionEscalated: 'ai.decision.escalated', decisionReviewed: 'ai.decision.reviewed', decisionOverridden: 'ai.decision.overridden',
-    agentConfigured: 'ai.agent.configured', agentSuspended: 'ai.agent.suspended', agentRan: 'ai.agent.ran',
+    decisionEscalated: 'ai.decision.escalated', decisionReviewed: 'ai.decision.reviewed', decisionOverridden: 'ai.decision.overridden', decisionOverdue: 'ai.decision.overdue',
+    agentConfigured: 'ai.agent.configured', agentSuspended: 'ai.agent.suspended', agentSuspensionNotice: 'ai.agent.suspension-notice', agentRan: 'ai.agent.ran',
     // added by the assistant: an answer given from the platform's own records, with the records it cited
     answered: 'ai.assistant.answered', conversationStarted: 'ai.assistant.conversation-started',
     // added by the model platform: the registry lifecycle, and the two things a model can do wrong quietly —

@@ -1,6 +1,6 @@
 import type { Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
-import { ASSISTANT_CONTRACT, type CompletionClient, type GroundingBlock, type Language } from './completion';
+import { ASSISTANT_CONTRACT, type CompletionClient, type CompletionOptions, type GroundingBlock, type Language } from './completion';
 import { DEFAULT_DENSE_WEIGHT, embedQueryDense, search, type CorpusIndex, type Hit, type IndexedDoc } from './retrieval';
 import { detectVectorMode, recall } from './vectors';
 import { plan, runTools, type Citation, type Row, type ToolRefusal, type ToolRun } from './tools';
@@ -20,6 +20,8 @@ export interface AnswerRequest {
   permissions: readonly string[];
   history?: { role: 'user' | 'assistant'; text: string }[];
   language?: Language;
+  /** What Settings → AI assistant asks of the completion client for this turn. */
+  completionOptions?: CompletionOptions;
 }
 export interface Source { label: string; link: string }
 export interface AnswerResult {
@@ -152,7 +154,7 @@ export async function answer(deps: AssistantDeps, request: AnswerRequest): Promi
     refusals: refused.map((r) => r.message),
     history: (request.history ?? []).slice(-deps.env.HISTORY_TURNS),
     language,
-  });
+  }, request.completionOptions);
 
   const citations = [
     ...tools.flatMap((t) => t.citations.map((c) => ({ ...c }))),

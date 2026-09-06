@@ -48,6 +48,27 @@ describe('mdm', () => {
     const made = events.find((e) => e.data.change === 'created' && e.data.code === 'LNG'); expect(made?.data.lookup).toMatchObject({ category: 'vesselType', code: 'LNG', label: 'LNG Carrier', labelAr: 'ناقلة غاز', active: true }); expect(made?.data.count).toBeGreaterThan(5);
     const gone = events.find((e) => e.data.change === 'deactivated' && e.data.code === 'LNG'); expect(gone?.data.lookup.active).toBe(false);
   });
+  it('keeps every platform section to the keys it declares, says when each changed, and tests the mail relay for real', async () => {
+    const all = await g('/settings');
+    expect(all.body.data.sections).toEqual(['org', 'billing', 'notifications', 'smtp', 'ai']);
+    expect(Object.keys(all.body.data.values).sort()).toEqual(['ai', 'billing', 'notifications', 'org', 'smtp']);
+    expect(all.body.data.fields.billing).toContain('taxRate'); expect(all.body.data.values.billing).not.toHaveProperty('invoicePrefix');
+    expect(all.body.data.meta.billing).toHaveProperty('updatedAt');
+    // a retired or mistyped key is refused rather than stored
+    const bad = await request(server as never).put('/settings/billing').set('authorization', admin).send({ invoicePrefix: 'X' });
+    expect(bad.status).toBe(400); expect(bad.body.message).toMatch(/Unknown settings: invoicePrefix/);
+    const put = await request(server as never).put('/settings/billing').set('authorization', admin).send({ taxRate: 7.5, placeOfSupply: 'Dubai' });
+    expect(put.body.data).toMatchObject({ taxRate: 7.5, placeOfSupply: 'Dubai', taxName: 'VAT' });
+    expect((await g('/settings')).body.data.meta.billing.updatedBy).toBe('Admin');
+    // the relay test connects: an address nobody listens on comes back as a failure, not a simulated success
+    await request(server as never).put('/settings/smtp').set('authorization', admin).send({ host: '127.0.0.1', port: 1, secure: false });
+    const smtp = await request(server as never).post('/settings/smtp/test').set('authorization', admin);
+    expect(smtp.status).toBe(201); expect(smtp.body.data).toMatchObject({ ok: false, status: 'FAILED', authenticated: false }); expect(smtp.body.data.detail).toMatch(/cannot reach 127\.0\.0\.1:1/);
+    // the organisation's identity travels on the public jurisdiction profile
+    await request(server as never).put('/settings/org').set('authorization', admin).send({ portName: 'Khalifa Port (test)', timezone: 'Asia/Dubai' });
+    const j = await request(server as never).get('/jurisdiction');
+    expect(j.body.data.org).toMatchObject({ portName: 'Khalifa Port (test)' }); expect(j.body.data.timezone).toBe('Asia/Dubai'); expect(j.body.data.org).not.toHaveProperty('taxId');
+  });
   it('masks secrets in settings, keeps them on masked round-trips and merges module settings over defaults', async () => {
     await request(server as never).put('/settings/smtp').set('authorization', admin).send({ password: 'super-secret' });
     const all = await g('/settings'); expect(all.body.data.values.smtp.password).toBe('••••••••');

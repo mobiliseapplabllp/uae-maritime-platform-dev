@@ -55,6 +55,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/admin/access-reviews', perm: 'users.view', element: L(() => import('../pages/admin/AccessReviewsPage')) },
   { path: '/admin/access-reviews/:id', perm: 'users.view', element: L(() => import('../pages/admin/AccessReviewDetail')) },
   { path: '/admin/settings', perm: 'settings.view', element: L(() => import('../pages/admin/SettingsPage')) },
+  { path: '/admin/settings/:section', perm: 'settings.view', element: L(() => import('../pages/admin/SettingsSection')) },
   { path: '/settings/module/:moduleKey', element: L(() => import('../pages/ModuleSettingsPage')) },
   { path: '/profile', element: L(() => import('../pages/ProfilePage')) },
   ...vesselRoutes, ...registryRoutes, ...riskRoutes, ...portCallRoutes, ...opsRoutes, ...nmcRoutes,

@@ -5,10 +5,13 @@ import { KIT_ENV, KIT_LOGGER, KIT_POOL, SecretBox, badRequest, enqueue, eventFro
 import type { Env } from './env';
 import { ADAPTERS, operationOf } from './adapters/registry';
 import type { AdapterDefinition, AdapterOperation, CallOutcome, CallRequest } from './adapters/types';
-import { loadAdapter, type AdapterRow } from './catalogue';
+import { ROW_COLUMNS, loadAdapter, type AdapterRow } from './catalogue';
 import { loadFixture, materialise } from './stubs';
+import { AisStreamCollector, boxesOf, isStreamUrl, positionsAnswer, probeStream, type StreamStats } from './adapters/aisstream';
 
 export interface TestOutcome { key: string; mode: 'stub' | 'live'; ok: boolean; httpStatus: number | null; durationMs: number; detail: string; target: string | null }
+/** The adapter whose live counterpart is a stream rather than a request: the hub keeps the connection and answers from its buffer. */
+export const STREAM_ADAPTER = 'ais-lrit';
 
 @Injectable()
 export class HubClient implements OnModuleInit {
@@ -19,7 +22,28 @@ export class HubClient implements OnModuleInit {
     @Inject(KIT_LOGGER) private readonly log: AppLogger,
   ) { this.box = new SecretBox(env.HUB_KEY ?? env.JWT_SECRET, 'hub'); }
 
-  async onModuleInit() { await this.registerAll(); }
+  private stream: AisStreamCollector | null = null;
+  private streamTimer: ReturnType<typeof setInterval> | null = null;
+  async onModuleInit() {
+    await this.registerAll();
+    await this.syncStream().catch((e) => this.log.warn({ err: (e as Error).message }, 'AIS stream not started'));
+    // the row is the truth: a key entered or a mode switched from the console takes effect within the minute even if this instance was not told
+    this.streamTimer = setInterval(() => { this.syncStream().catch(() => {}); }, 60_000); this.streamTimer.unref?.();
+  }
+  onModuleDestroy() { if (this.streamTimer) clearInterval(this.streamTimer); this.stream?.stop(); this.stream = null; }
+
+  /** Starts, reconfigures or stops the AIS collector to match the adapter's row: live, enabled, a stream address and a key. */
+  async syncStream(): Promise<StreamStats | null> {
+    const r = await this.pool.query<AdapterRow>(`SELECT ${ROW_COLUMNS} FROM adapters WHERE key = $1`, [STREAM_ADAPTER]);
+    const row = r.rows[0];
+    const live = !!row && row.enabled && !this.env.HUB_FORCE_STUB && row.mode === 'live' && isStreamUrl(row.base_url);
+    const apiKey = live ? (this.box.openAll(row.secrets ?? {}).apiKey ?? '') : '';
+    if (!live || !apiKey) { if (this.stream) { this.stream.stop(); this.stream = null; this.log.info({}, 'AIS stream stopped'); } return null; }
+    const cfg = { url: String(row.base_url), apiKey, boundingBoxes: boxesOf(row.schedule), classB: row.schedule?.classB === true };
+    if (!this.stream) { this.stream = new AisStreamCollector(cfg, this.log); this.stream.start(); } else this.stream.configure(cfg);
+    return this.stream.status();
+  }
+  streamStatus(): StreamStats | null { return this.stream?.status() ?? null; }
 
   /** The registry is code; the row carries what an operator may change at runtime and is never overwritten by a restart. */
   async registerAll() {
@@ -135,6 +159,15 @@ export class HubClient implements OnModuleInit {
   }
 
   private async liveCall(def: AdapterDefinition, op: AdapterOperation, payload: Record<string, unknown>, row: AdapterRow) {
+    // the AIS stream answers from the hub's own buffer: a poll never leaves the platform
+    if (def.key === STREAM_ADAPTER && isStreamUrl(row.base_url)) {
+      if (op.key !== 'positions') return { status: 501, body: { error: `${op.key} is not answered by a stream; the track store keeps its own history` } };
+      const s = this.stream?.status();
+      // nothing has come down the line yet and the counterpart has complained, or the line is down: say so rather than hand back an empty sea
+      if (!s || (!s.lastMessageAt && (!s.connected || s.lastError))) return { status: 502, body: { error: s?.lastError || 'the AIS stream is not connected — check the key and the address in Settings → Integrations' } };
+      const since = payload.since ? new Date(String(payload.since)) : null;
+      return { status: 200, body: positionsAnswer(this.stream!.snapshot(since && !Number.isNaN(since.getTime()) ? since : null), String(payload.since ?? '')) };
+    }
     // Path parameters are substituted and then removed, so they are not also sent in the body.
     const rest: Record<string, unknown> = { ...payload };
     const path = op.path.replace(/\{([a-zA-Z0-9_]+)\}/g, (m, k: string) => {
@@ -173,6 +206,20 @@ export class HubClient implements OnModuleInit {
     const target = base + (row.health_path || def.healthPath || '/');
     const ins = await this.pool.query<{ id: string }>(`INSERT INTO calls(adapter, operation, request, status, mode, correlation_id) VALUES ($1,'test-connection','{}','pending','live',$2) RETURNING id::text`, [key, correlationId ?? null]);
     let httpStatus: number | null = null; let error = '';
+    // a stream is tested by subscribing: the running collector's own state when there is one, a short probe otherwise
+    if (def.key === STREAM_ADAPTER && isStreamUrl(row.base_url)) {
+      const running = this.stream?.status();
+      let detail = '';
+      if (running?.connected) detail = `connected since ${running.connectedAt}; ${running.targets} ships in the buffer, ${running.messages} messages${running.lastMessageAt ? `, last ${running.lastMessageAt}` : ''}`;
+      else {
+        const apiKey = this.box.openAll(row.secrets ?? {}).apiKey ?? '';
+        if (!apiKey) error = 'no API key is set for the stream';
+        else { const p = await probeStream({ url: String(row.base_url), apiKey, boundingBoxes: boxesOf(row.schedule) }, row.timeout_ms); if (p.ok) detail = p.detail; else error = p.detail; }
+      }
+      const durationMs = Date.now() - started;
+      await this.pool.query(`UPDATE calls SET status = $2, http_status = NULL, attempts = 1, duration_ms = $3, error = $4, finished_at = now() WHERE id = $1`, [ins.rows[0].id, error ? 'failed' : 'ok', durationMs, error || null]);
+      return { key, mode, ok: !error, httpStatus: null, durationMs, target: String(row.base_url), detail: error ? `${row.base_url} — ${error}` : `${row.base_url} — ${detail}` };
+    }
     try {
       const res = await fetch(target, { method: 'GET', headers: this.liveHeaders(row), signal: AbortSignal.timeout(row.timeout_ms) });
       httpStatus = res.status; await res.text().catch(() => '');

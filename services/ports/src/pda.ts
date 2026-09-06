@@ -39,17 +39,20 @@ export function basisOf(call: CallApi, o: { tugsOver250?: number; tugsUnder250?:
 }
 
 /** The estimate: what the call already carries, then the standard pre-arrival heads every account shows. */
-export function buildEstimate(call: CallApi, tariffs: Record<string, TariffHead>, jurisdiction: string) {
+/** The tax an estimate is raised under: Settings → Billing & tax when given, the jurisdiction profile otherwise. */
+export interface EstimateTax { ratePct: number; name: string; currency: string }
+export function buildEstimate(call: CallApi, tariffs: Record<string, TariffHead>, jurisdiction: string, o: { tax?: EstimateTax | null; tugsOver250?: number; tugsUnder250?: number } = {}) {
   const j = getJurisdiction(jurisdiction);
-  const basis = basisOf(call);
+  const tax: EstimateTax = o.tax ?? { ratePct: j.tax.ratePct, name: j.tax.name, currency: j.currency.code };
+  const basis = basisOf(call, { tugsOver250: o.tugsOver250, tugsUnder250: o.tugsUnder250 });
   const raw = knownLines(call, tariffs);
   const have = new Set(raw.map((l) => l.code));
   const add = (code: string, qty: number, suffix: string) => { const t = tariffs[code]; if (!t || !qty || have.has(code)) return; raw.push({ code: t.code, description: `${t.name} — ${suffix}`, unit: t.unit, qty, rate: t.rate }); have.add(code); };
   add('PIL', 2, 'inward + outward');
   add('TUG', basis.tugs * 2, `${basis.tugs} tugs × 2 movements`);
   add('BH', basis.grt * basis.plannedDays, `${basis.plannedDays} days alongside (planned)`);
-  const totals = computeTotals(raw, j.tax.ratePct);
-  return { ...totals, taxRate: j.tax.ratePct, taxName: j.tax.name, currency: j.currency.code, basis };
+  const totals = computeTotals(raw, tax.ratePct);
+  return { ...totals, taxRate: tax.ratePct, taxName: tax.name, currency: tax.currency, basis };
 }
 
 export interface VarianceLine { code: string; estimated: number; actual: number; delta: number }

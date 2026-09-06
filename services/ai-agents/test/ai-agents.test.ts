@@ -7,7 +7,7 @@ import { AuditClient, PRINCIPAL_RESOLVER, StaticPrincipalResolver, createApp, lo
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedAiAgents } from '../src/seed';
-import { applyEvent } from '../src/consumer';
+import { applyEvent, sweepDecisions } from '../src/consumer';
 import { adjudicate, raisesAutonomy, type AgentPolicy } from '../src/autonomy';
 import { bias, drift, performance, serviceLevels, confidenceDistribution, type MetricAgent, type MetricDecision } from '../src/metrics';
 import { coverage, requiredRate, type CoverageDecision, type CoverageRequest, type CoverageService } from '../src/coverage';
@@ -782,5 +782,62 @@ describe('ai-agents — the coverage endpoint', () => {
 
   it('is gated on agents.view like the rest of the module', async () => {
     expect((await g('/agents/coverage', nobody)).status).toBe(403);
+  });
+});
+
+/* ======================================================================== the hourly sweep === */
+
+describe('ai-agents — the hourly sweep, on the windows AI Agents → module settings sets', () => {
+  it('chases a decision left awaiting review past the escalation window, once, and reports which', async () => {
+    await clearOutbox();
+    const pending = (await pool.query<{ id: string; agent_id: string }>(`SELECT id, agent_id FROM decisions WHERE review_status = 'PENDING' AND NOT superseded AND disposition IN ('AWAITING_REVIEW', 'ESCALATED') ORDER BY at DESC LIMIT 2`)).rows;
+    expect(pending.length).toBe(2);
+    // one waited six hours, one is fresh; the window is the seeded four
+    await pool.query('UPDATE decisions SET at = now() - interval \'6 hours\', chased_at = NULL WHERE id = $1', [pending[0].id]);
+    await pool.query('UPDATE decisions SET at = now(), chased_at = NULL WHERE id = $1', [pending[1].id]);
+    const tick = makeEvent({ type: EVENTS.scheduler.sweepDecisions, source: 'scheduler', data: {} });
+    const c = await pool.connect();
+    let out: Awaited<ReturnType<typeof sweepDecisions>>;
+    try { out = await sweepDecisions(c, { env, audit }, tick); } finally { c.release(); }
+    expect(out).toMatchObject({ escalationHours: 4, suspensionNoticeHours: 4 });
+    expect(out.chased).toBeGreaterThanOrEqual(1);
+    const overdue = await outbox(EVENTS.ai.decisionOverdue);
+    const chased = overdue.find((e) => e.data.decisionId === pending[0].id);
+    expect(chased).toBeDefined();
+    expect(chased!.data).toMatchObject({ agentId: pending[0].agent_id, escalationHours: 4 });
+    expect(chased!.data.waitingHours).toBeGreaterThanOrEqual(6);
+    expect(overdue.some((e) => e.data.decisionId === pending[1].id)).toBe(false);
+    expect((await pool.query('SELECT chased_at FROM decisions WHERE id = $1', [pending[0].id])).rows[0].chased_at).not.toBeNull();
+    // the next sweep finds nothing new to chase
+    await clearOutbox();
+    const c2 = await pool.connect();
+    try { expect((await sweepDecisions(c2, { env, audit }, makeEvent({ type: EVENTS.scheduler.sweepDecisions, source: 'scheduler', data: {} }))).chased).toBe(0); } finally { c2.release(); }
+    expect(await outbox(EVENTS.ai.decisionOverdue)).toEqual([]);
+  });
+  it('reminds the desk of an agent left suspended past the notice window, once, and forgets the reminder on reinstatement', async () => {
+    await clearOutbox();
+    const agentId = (await pool.query<{ agent_id: string }>(`SELECT agent_id FROM agents WHERE agent_id LIKE 'a%' ORDER BY agent_id LIMIT 1`)).rows[0].agent_id;
+    const wasSuspended = (await pool.query<{ suspended: boolean }>('SELECT suspended FROM agents WHERE agent_id = $1', [agentId])).rows[0].suspended;
+    if (!wasSuspended) expect((await post(`/agents/${agentId}/suspend`, { suspended: true, reason: 'Output under investigation' }, governor)).status).toBe(201);
+    await pool.query('UPDATE agents SET suspended_at = now() - interval \'5 hours\', suspension_noticed_at = NULL WHERE agent_id = $1', [agentId]);
+    const c = await pool.connect();
+    try { expect((await sweepDecisions(c, { env, audit }, makeEvent({ type: EVENTS.scheduler.sweepDecisions, source: 'scheduler', data: {} }))).noticed).toBeGreaterThanOrEqual(1); } finally { c.release(); }
+    const notices = (await outbox(EVENTS.ai.agentSuspensionNotice)).filter((e) => e.data.agentId === agentId);
+    expect(notices).toHaveLength(1);
+    expect(notices[0].data).toMatchObject({ suspensionNoticeHours: 4, reason: 'Output under investigation' });
+    expect(notices[0].data.suspendedHours).toBeGreaterThanOrEqual(5);
+    expect((await pool.query('SELECT suspension_noticed_at FROM agents WHERE agent_id = $1', [agentId])).rows[0].suspension_noticed_at).not.toBeNull();
+    await clearOutbox();
+    const c2 = await pool.connect();
+    try { await sweepDecisions(c2, { env, audit }, makeEvent({ type: EVENTS.scheduler.sweepDecisions, source: 'scheduler', data: {} })); } finally { c2.release(); }
+    expect((await outbox(EVENTS.ai.agentSuspensionNotice)).filter((e) => e.data.agentId === agentId)).toEqual([]);
+    // reinstated: the mark is cleared, so a later suspension is reminded afresh
+    expect((await post(`/agents/${agentId}/suspend`, { suspended: false, reason: 'Investigation closed' }, governor)).status).toBe(201);
+    expect((await pool.query('SELECT suspension_noticed_at FROM agents WHERE agent_id = $1', [agentId])).rows[0].suspension_noticed_at).toBeNull();
+  });
+  it('the scheduler tick is consumed through the inbox, once', async () => {
+    const tick = makeEvent({ type: EVENTS.scheduler.sweepDecisions, source: 'scheduler', data: {} });
+    expect(await withInbox(pool, tick, async (c) => { await sweepDecisions(c, { env, audit }, tick); })).toBe(true);
+    expect(await withInbox(pool, tick, async (c) => { await sweepDecisions(c, { env, audit }, tick); })).toBe(false);
   });
 });

@@ -33,7 +33,7 @@ beforeAll(async () => {
     });
   });
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => { port = (fake.address() as { port: number }).port; r(); }));
-  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, INTEGRATION_HUB_URL: `http://127.0.0.1:${port}` } as never);
+  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', MDM_URL: 'http://127.0.0.1:1', JWT_SECRET: SECRET, INTEGRATION_HUB_URL: `http://127.0.0.1:${port}` } as never);
   const base = { scope: { level: 'NATIONAL' }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const resolver = new StaticPrincipalResolver({
     fin: { ...base, id: 'fin', sub: 'fin', name: 'Finance Officer', perms: ['invoices.view', 'invoices.pay'] },

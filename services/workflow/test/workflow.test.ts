@@ -146,7 +146,7 @@ beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });
   await a.query(`DROP DATABASE IF EXISTS ${DB}`); await a.query(`CREATE DATABASE ${DB}`); await a.end();
   seeded = await seedWorkflow(URL, 'AE');
-  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, RULES_MODE: 'inline', RUNTIME_ENVIRONMENT: 'PROD', JURISDICTION: 'AE' } as never);
+  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', MDM_URL: 'http://127.0.0.1:1', JWT_SECRET: SECRET, RULES_MODE: 'inline', RUNTIME_ENVIRONMENT: 'PROD', JURISDICTION: 'AE' } as never);
   const principal = (id: string, perms: string[], name = id) => ({ id, sub: id, name, email: `${id}@maritime.example`, perms, scope: { level: 'NATIONAL' }, kind: 'user' as const, active: true });
   const resolver = new StaticPrincipalResolver({
     admin: principal('admin', ['*'], 'Admin'), registrar: principal('registrar', ['services.view', 'services.assess', 'services.approve', 'services.manage'], 'Registrar of Ships'),

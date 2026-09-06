@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, NATIONAL_SCOPE, RESOURCE_TYPES } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, paged, scopeWhere, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, paged, scopeWhere, withTx, zod, type Principal, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { OPEN_STATUSES } from './calls';
 import { BERTH_SCOPE, CALL_SCOPE, RESOURCE_SCOPE, scopedWhere } from './scope';
@@ -26,7 +26,8 @@ const fmtQty = (n: number) => new Intl.NumberFormat('en-AE').format(n);
 
 @Controller('ops')
 export class OpsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  private ops() { return this.settings.moduleGet('ops', { anchorageAlertHrs: 24, scheduleWindowDays: 5 }); }
 
   /** Everything the quay view needs in one call: the estate with its occupants, who is at anchor and who is inbound. */
   @RequirePerm('portcalls.view') @Get('twin')
@@ -36,6 +37,7 @@ export class OpsController {
     const cw = ['pc.status = ANY($1)']; const ca: unknown[] = [OPEN_STATUSES];
     scopeWhere(user.scope, cw, ca, { ...CALL_SCOPE, alias: 'pc' });
     const active = (await this.pool.query<TwinCall>(`${CALL_SQL} WHERE ${cw.join(' AND ')} ORDER BY pc.eta`, ca)).rows;
+    const anchorageAlertHrs = Number((await this.ops()).anchorageAlertHrs) || 24;
     const byBerth = new Map(active.filter((c) => c.status === 'BERTHED' && c.berth_id).map((c) => [String(c.berth_id), c]));
     const brief = (c: TwinCall) => ({ callId: c.id, vcn: c.vcn, vesselId: c.vessel_id, vessel: c.vessel_name, type: c.v_type, loa: num(c.v_loa) });
     return {
@@ -44,7 +46,9 @@ export class OpsController {
         return { id: a.id, code: a.code, name: a.name, terminal: a.terminal, berthType: a.berthType, loaMax: a.loaMax, draftMax: a.draftMax, status: a.status,
           occupiedBy: c ? { ...brief(c), atb: iso(c.atb), etd: iso(c.etd), cargo: (c.cargo_ops ?? []).map((o) => `${String(o.operation).toLowerCase()} ${fmtQty(Number(o.qty))} ${o.unit} ${o.cargoType}`).join('; ') } : null };
       }),
-      anchorage: active.filter((c) => c.status === 'AT_ANCHORAGE').map((c) => ({ ...brief(c), since: iso(c.ata), etb: iso(c.etb) })),
+      // a ship waiting beyond the harbour's own limit (Harbour Operations → settings) is flagged, so the board shows who has waited too long
+      anchorage: active.filter((c) => c.status === 'AT_ANCHORAGE').map((c) => { const waitingHours = c.ata ? Math.round(((Date.now() - new Date(c.ata).getTime()) / 3_600_000) * 10) / 10 : null; return { ...brief(c), since: iso(c.ata), etb: iso(c.etb), waitingHours, alert: waitingHours != null && waitingHours > anchorageAlertHrs }; }),
+      anchorageAlertHrs,
       inbound: active.filter((c) => c.status === 'ANNOUNCED' || c.status === 'CONFIRMED').map((c) => ({ ...brief(c), eta: iso(c.eta)!, status: c.status })).sort((a, b) => a.eta.localeCompare(b.eta)),
     };
   }
@@ -52,7 +56,7 @@ export class OpsController {
   /** The day programme: expected arrivals, planned berthings, planned sailings and what actually sailed, grouped by day. */
   @RequirePerm('portcalls.view') @Get('schedule')
   async schedule(@CurrentUser() user: Principal, @Query('days') daysQ?: string) {
-    const days = Math.min(14, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || 5));
+    const days = Math.min(14, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || Number((await this.ops()).scheduleWindowDays) || 5));
     const start = dayStart(); const from = new Date(start.getTime() - DAY); const to = new Date(start.getTime() + days * DAY);
     const sw = ["pc.status <> 'CANCELLED'", '((pc.eta BETWEEN $1 AND $2) OR (pc.etd BETWEEN $1 AND $2) OR (pc.atd BETWEEN $1 AND $2) OR pc.status = \'BERTHED\')'];
     const sa: unknown[] = [from, to];
@@ -75,7 +79,7 @@ export class OpsController {
   /** Berth window planner: every berth a lane, calls as planned or actual blocks, overlaps computed here. */
   @RequirePerm('portcalls.view') @Get('berth-plan')
   async berthPlan(@CurrentUser() user: Principal, @Query('from') fromQ?: string, @Query('days') daysQ?: string) {
-    const winDays = Math.min(30, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || 5));
+    const winDays = Math.min(30, Math.max(1, Number.parseInt(String(daysQ ?? ''), 10) || Number((await this.ops()).scheduleWindowDays) || 5));
     const from = fromQ && !Number.isNaN(new Date(fromQ).getTime()) ? new Date(fromQ) : new Date(Date.now() - DAY);
     const to = new Date(from.getTime() + (winDays + 1) * DAY);
     const sb = scopedWhere(user.scope, BERTH_SCOPE);

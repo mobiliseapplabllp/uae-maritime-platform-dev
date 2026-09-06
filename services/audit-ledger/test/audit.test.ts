@@ -30,7 +30,7 @@ describe('audit ledger', () => {
     await bus.drain();
     const list = await request(server as never).get('/audit?limit=10').set('authorization', admin);
     expect(list.body.meta.total).toBe(5); expect(list.body.data[0].hash).toMatch(/^[0-9a-f]{64}$/);
-    const v = await request(server as never).get('/audit/verify').set('authorization', admin); expect(v.body.data).toEqual({ ok: true, checked: 5, brokenAt: null });
+    const v = await request(server as never).get('/audit/verify').set('authorization', admin); expect(v.body.data).toEqual({ ok: true, checked: 5, brokenAt: null, anchor: null });
   });
   it('refuses updates and deletes at the database and detects tampering', async () => {
     const pool = new Pool({ connectionString: URL });

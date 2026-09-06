@@ -178,7 +178,14 @@ export const instrumentApi = (i: InstrumentRow, now = new Date()) => ({
 });
 export type InstrumentApi = ReturnType<typeof instrumentApi>;
 
-export interface CompanyExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; history?: ReturnType<typeof statusEntryApi>[]; facilities?: FacilityApi[]; accreditations?: CycleApi[]; visits?: VisitApi[] }
+/** When the next audit falls due under the desk's interval, and whether it already has: a record never audited is due now. */
+export function auditDueOf(lastAuditAt: string | null | undefined, months: number, now = new Date()) {
+  if (!months) return { auditDueAt: null as string | null, auditOverdue: false };
+  if (!lastAuditAt) return { auditDueAt: null as string | null, auditOverdue: true };
+  const due = new Date(lastAuditAt); due.setUTCMonth(due.getUTCMonth() + months);
+  return { auditDueAt: due.toISOString(), auditOverdue: due.getTime() < now.getTime() };
+}
+export interface CompanyExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; history?: ReturnType<typeof statusEntryApi>[]; facilities?: FacilityApi[]; accreditations?: CycleApi[]; visits?: VisitApi[]; auditIntervalMonths?: number }
 /** The company as the directory, the detail screen and every read-model event see it. */
 export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
   const instruments = extra.instruments ?? [];
@@ -193,7 +200,7 @@ export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
     instruments, instrumentsHeld: instruments.length,
     inForce: instruments.filter((i) => i.status === 'ISSUED' && i.inForce).length,
     expiringSoon: instruments.filter((i) => i.status === 'ISSUED' && i.daysToExpiry != null && i.daysToExpiry >= 0 && i.daysToExpiry <= 90).length,
-    audits, auditCount: audits.length, lastAuditAt: audits[0]?.date ?? null, lastAuditResult: audits[0]?.result ?? null,
+    audits, auditCount: audits.length, lastAuditAt: audits[0]?.date ?? null, lastAuditResult: audits[0]?.result ?? null, ...auditDueOf(audits[0]?.date ?? null, extra.auditIntervalMonths ?? 12),
     nonConformities: audits.filter((a) => a.result === 'NON_CONFORMITY').length,
     obligations, openObligations: obligations.filter((o) => o.status === 'OPEN').length,
     overdueObligations: obligations.filter((o) => o.status === 'OPEN' && o.overdue).length,
@@ -211,7 +218,7 @@ export function companyApi(c: CompanyRow, extra: CompanyExtras = {}) {
 }
 export type CompanyApi = ReturnType<typeof companyApi>;
 
-export interface FacilityExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[] }
+export interface FacilityExtras { instruments?: InstrumentApi[]; audits?: AuditApi[]; obligations?: ObligationApi[]; auditIntervalMonths?: number }
 export function facilityApi(f: FacilityRow, extra: FacilityExtras = {}, now = new Date()) {
   const instruments = extra.instruments ?? [];
   const audits = extra.audits ?? [];
@@ -225,7 +232,7 @@ export function facilityApi(f: FacilityRow, extra: FacilityExtras = {}, now = ne
     capabilities: f.capabilities ?? [], loaMax: num(f.loa_max), draftMax: num(f.draft_max),
     capacity: num(f.capacity_value), capacityUnit: f.capacity_unit, status: f.status, remarks: f.remarks,
     instruments, instrumentsHeld: instruments.length, audits, auditCount: audits.length,
-    lastAuditAt: audits[0]?.date ?? null, lastAuditResult: audits[0]?.result ?? null,
+    lastAuditAt: audits[0]?.date ?? null, lastAuditResult: audits[0]?.result ?? null, ...auditDueOf(audits[0]?.date ?? null, extra.auditIntervalMonths ?? 12, now),
     obligations: extra.obligations ?? [], openObligations: (extra.obligations ?? []).filter((o) => o.status === 'OPEN').length,
     createdAt: iso(f.created_at), updatedAt: iso(f.updated_at),
   };

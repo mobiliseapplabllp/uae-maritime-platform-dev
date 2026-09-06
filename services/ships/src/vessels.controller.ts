@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, type PageQuery } from '@maritime/contracts';
-import { CurrentUser, scopeWhere, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, IntegrationClient, badGateway } from '@maritime/service-kit';
+import { CurrentUser, scopeWhere, type Principal, AuditClient, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, IntegrationClient, badGateway, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import { VESSEL_SCOPE, scopedWhere } from './scope';
 import type { Env } from './env';
 import {
@@ -51,14 +51,19 @@ type ListQuery = PageQuery & { type?: string; flag?: string; status?: string; ag
 
 @Controller('vessels')
 export class VesselsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  /** Ships → settings: how many days before expiry a certificate reads EXPIRING, and how far ahead a dry dock is flagged. Read at the moment they matter. */
+  private async ships(): Promise<{ certExpiringDays: number; dryDockReminderDays: number }> {
+    const s = await this.settings.moduleGet('ships', { certExpiringDays: this.env.CERT_EXPIRING_DAYS, dryDockReminderDays: 60 });
+    return { certExpiringDays: Number(s.certExpiringDays) || this.env.CERT_EXPIRING_DAYS, dryDockReminderDays: Number(s.dryDockReminderDays) || 60 };
+  }
 
   private now() { return new Date(); }
   private async certsByVessel(ids: string[], now = new Date()): Promise<Map<string, CertApi[]>> {
     const out = new Map<string, CertApi[]>();
     if (!ids.length) return out;
     const r = await this.pool.query<CertRow>('SELECT * FROM vessel_certificates WHERE vessel_id = ANY($1) ORDER BY expiry_date', [ids]);
-    for (const c of r.rows) { const l = out.get(c.vessel_id) ?? []; l.push(certApi(c, now, this.env.CERT_EXPIRING_DAYS)); out.set(c.vessel_id, l); }
+    for (const c of r.rows) { const l = out.get(c.vessel_id) ?? []; l.push(certApi(c, now, (await this.ships()).certExpiringDays)); out.set(c.vessel_id, l); }
     return out;
   }
   private async agents(codes: string[]): Promise<Map<string, string>> {
@@ -82,7 +87,7 @@ export class VesselsController {
      * filtered page. */
     let bands: Map<string, string> | undefined;
     if (query.riskBand) {
-      const scored = await computeScores(this.pool, this.env.CERT_EXPIRING_DAYS, now);
+      const scored = await computeScores(this.pool, (await this.ships()).certExpiringDays, now);
       bands = new Map(scored.rows.map((r) => [r.vesselId, r.band as string]));
       args.push(scored.rows.filter((r) => r.band === query.riskBand).map((r) => r.vesselId));
       where.push(`id = ANY($${args.length})`);
@@ -95,6 +100,17 @@ export class VesselsController {
     const agents = await this.agents(rows.rows.map((v) => v.agent_code));
     const out = rows.rows.map((v) => vesselApi(v, this.env.JURISDICTION, { certificates: certs.get(v.id) ?? [], agentName: agents.get(v.agent_code) ?? null, riskBand: bands?.get(v.id) ?? null }));
     return paged(out, { total: Number(total.rows[0].n), page: p.page, limit: p.limit });
+  }
+
+  /** Ships whose next dry dock falls inside the reminder window (Ships → settings), soonest first. Declared before `:id`. */
+  @RequirePerm('vessels.view') @Get('dry-dock-due')
+  async dryDockDue(@CurrentUser() user: Principal) {
+    const { dryDockReminderDays } = await this.ships();
+    const where = ['next_dry_dock IS NOT NULL', `next_dry_dock <= now() + ($1 || ' days')::interval`, "status <> 'INACTIVE'"]; const args: unknown[] = [String(dryDockReminderDays)];
+    scopeWhere(user.scope, where, args, VESSEL_SCOPE);
+    const rows = await this.pool.query<VesselRow>(`SELECT * FROM vessels WHERE ${where.join(' AND ')} ORDER BY next_dry_dock, name LIMIT 200`, args);
+    const now = Date.now();
+    return { reminderDays: dryDockReminderDays, vessels: rows.rows.map((v) => ({ id: v.id, name: v.name, imo: v.imo, type: v.type, classSociety: v.class_society, lastDryDock: iso(v.last_dry_dock), nextDryDock: iso(v.next_dry_dock), daysLeft: v.next_dry_dock ? Math.ceil((new Date(v.next_dry_dock).getTime() - now) / 86_400_000) : null, overdue: !!v.next_dry_dock && new Date(v.next_dry_dock).getTime() < now })) };
   }
 
   /** The vessel module's landing analytics. Declared before `:id` so the word is not read as an id. */
@@ -135,8 +151,9 @@ export class VesselsController {
     const r = await this.pool.query<CertRow & { vessel_name: string; vessel_imo: string; registry_state: string; reg_certificate_no: string; certificate_expires_on: Date | null }>(
       `SELECT c.*, v.name AS vessel_name, v.imo AS vessel_imo, v.registry_state, v.certificate_no AS reg_certificate_no, v.certificate_expires_on
          FROM vessel_certificates c JOIN vessels v ON v.id = c.vessel_id WHERE v.status = 'ACTIVE'`);
+    const { certExpiringDays } = await this.ships();
     let rows = r.rows.map((c) => {
-      const api = certApi(c, now, this.env.CERT_EXPIRING_DAYS);
+      const api = certApi(c, now, certExpiringDays);
       // the certificate of registry is on this register too, but its standing is read off the ship's registry entry rather than the instrument register
       const isCoR = c.cert_type === 'Certificate of Registry';
       const corOnRegister = isCoR && !!c.number && c.reg_certificate_no === c.number;
@@ -164,7 +181,7 @@ export class VesselsController {
     if (!v) throw notFound('Vessel not found');
     const now = this.now();
     const [certs, calls, inspections, incidents, crew, position, agentName] = await Promise.all([
-      certsOf(this.pool, v.id, now, this.env.CERT_EXPIRING_DAYS),
+      certsOf(this.pool, v.id, now, (await this.ships()).certExpiringDays),
       this.pool.query<CallRow>('SELECT * FROM port_calls WHERE vessel_id = $1 ORDER BY eta DESC NULLS LAST LIMIT 20', [v.id]),
       this.pool.query<Row>('SELECT * FROM inspections WHERE vessel_id = $1 ORDER BY planned_at DESC NULLS LAST LIMIT 12', [v.id]),
       this.pool.query<Row>('SELECT * FROM incidents WHERE vessel_id = $1 ORDER BY reported_at DESC NULLS LAST LIMIT 12', [v.id]),
@@ -246,7 +263,7 @@ export class VesselsController {
   async card(@Param('id') id: string, @CurrentUser() user: Principal) {
     const v = await findVessel(this.pool, id, user.scope);
     if (!v) throw notFound('Vessel not found');
-    return vesselCard(v, await certsOf(this.pool, v.id, this.now(), this.env.CERT_EXPIRING_DAYS), this.env.JURISDICTION);
+    return vesselCard(v, await certsOf(this.pool, v.id, this.now(), (await this.ships()).certExpiringDays), this.env.JURISDICTION);
   }
 
   @RequirePerm('vessels.create') @Post()
@@ -312,9 +329,9 @@ export class VesselsController {
       const r = await c.query<CertRow>('INSERT INTO vessel_certificates(vessel_id, cert_type, number, issuer, issue_date, expiry_date, remarks) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *',
         [v.id, body.certType, body.number ?? '', body.issuer ?? '', body.issueDate || null, body.expiryDate, body.remarks ?? '']);
       const cert = r.rows[0];
-      await this.audit.record(c, { action: 'CERT_ADD', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, after: certApi(cert, this.now(), this.env.CERT_EXPIRING_DAYS) });
+      await this.audit.record(c, { action: 'CERT_ADD', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, after: certApi(cert, this.now(), (await this.ships()).certExpiringDays) });
       await publishCertificate(c, this.env, v, cert, EVENTS.ships.certIssued);
-      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), this.env.CERT_EXPIRING_DAYS) }) };
+      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), (await this.ships()).certExpiringDays) }) };
     });
   }
 
@@ -332,9 +349,9 @@ export class VesselsController {
       if (!keys.length) throw badRequest('Nothing to update');
       const r = await c.query<CertRow>(`UPDATE vessel_certificates SET ${keys.map((k, i) => `${map[k]} = $${i + 2}`).concat('updated_at = now()').join(', ')} WHERE id = $1 RETURNING *`, [before.id, ...keys.map((k) => (body as Row)[k])]);
       const cert = r.rows[0];
-      await this.audit.record(c, { action: 'CERT_UPDATE', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, before: certApi(before, this.now(), this.env.CERT_EXPIRING_DAYS), after: certApi(cert, this.now(), this.env.CERT_EXPIRING_DAYS) });
+      await this.audit.record(c, { action: 'CERT_UPDATE', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, before: certApi(before, this.now(), (await this.ships()).certExpiringDays), after: certApi(cert, this.now(), (await this.ships()).certExpiringDays) });
       await publishCertificate(c, this.env, v, cert, EVENTS.ships.certUpdated);
-      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), this.env.CERT_EXPIRING_DAYS) }) };
+      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), (await this.ships()).certExpiringDays) }) };
     });
   }
 
@@ -347,10 +364,10 @@ export class VesselsController {
       const cert = found.rows[0];
       if (!cert) throw notFound('Certificate not found');
       if (cert.instrument_id) throw conflict(`${cert.cert_type} was issued on the instrument register — withdraw it there, not on the ship`);
-      await this.audit.record(c, { action: 'CERT_DELETE', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, before: certApi(cert, this.now(), this.env.CERT_EXPIRING_DAYS) });
+      await this.audit.record(c, { action: 'CERT_DELETE', entity: 'Vessel', entityId: v.id, entityLabel: `${v.name} — ${cert.cert_type}`, before: certApi(cert, this.now(), (await this.ships()).certExpiringDays) });
       await c.query('DELETE FROM vessel_certificates WHERE id = $1', [cert.id]);
       await publishCertificateDeleted(c, this.env, v, cert);
-      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), this.env.CERT_EXPIRING_DAYS) }) };
+      return { ...vesselApi(v, this.env.JURISDICTION, { certificates: await certsOf(c, v.id, this.now(), (await this.ships()).certExpiringDays) }) };
     });
   }
 }

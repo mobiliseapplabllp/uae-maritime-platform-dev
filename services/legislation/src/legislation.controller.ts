@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, INSTRUMENT_STATUS, INSTRUMENT_TRANSITIONS, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, lookupOptions, notFound, paged, parsePage, withTx, zod, type Principal } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, lookupOptions, notFound, paged, parsePage, withTx, zod, type Principal, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import {
   ACK_CLASSES, allocateRefNo, ackApi, canApprove, canAcknowledge, canSupersede, canTransition, instrumentApi,
@@ -28,7 +28,7 @@ const body = z.object({
   type: text(40).min(1), category: text(120).default('General'), status: z.enum(INSTRUMENT_STATUS).optional(),
   issuedBy: text(160).default(''), issuedDate: dateish, effectiveDate: dateish, expiryDate: dateish,
   summary: text(2000).default(''), body: text(60_000).default(''), tags: z.array(text(60)).max(30).default([]),
-  supersedes: text(60).default(''), ackRequired: z.coerce.boolean().default(false),
+  supersedes: text(60).default(''), ackRequired: z.coerce.boolean().optional(),
   ackClass: z.enum(ACK_CLASSES).default('ALL_STAFF'), ackClassValue: text(120).default(''), ackDueDays: z.coerce.number().int().min(1).max(365).nullish(),
   sourceNote: text(600).default(''), withdrawalReason: text(600).optional(),
   /** Whether the public portal shows the instrument once it is in force; the type master decides whether the type is shown at all. */
@@ -54,7 +54,9 @@ const at = (v: string | null | undefined) => (v == null || v === '' ? null : new
 
 @Controller('legislation')
 export class LegislationController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  /** Legislation → settings: whether a new notice asks for acknowledgment, how long the reader has, and how long a superseded instrument stays on the desk's register. */
+  private legis() { return this.settings.moduleGet('legis', { ackRequiredDefault: false, ackReminderDays: this.env.ACK_DUE_DAYS, showSupersededDays: 0 }); }
 
   private load(c: Q, id: string, lock = false) { return loadInstrument(c, id, lock); }
   private full(c: Q, row: InstrumentRow) { return fullInstrument(c, row); }
@@ -89,6 +91,8 @@ export class LegislationController {
     if (query.issuedBy) add((i) => `lower(issued_by) = lower($${i})`, query.issuedBy);
     if (query.tag) add((i) => `tags ? $${i}`, query.tag);
     if (query.ackRequired !== undefined && query.ackRequired !== '') add((i) => `ack_required = $${i}`, String(query.ackRequired) === 'true');
+    // a superseded or withdrawn instrument leaves the desk's default view after the window in Legislation → settings; asking for the status shows it still
+    if (!query.status) { const days = Number((await this.legis()).showSupersededDays) || 0; if (days > 0) add((i) => `NOT (status IN ('SUPERSEDED', 'WITHDRAWN') AND updated_at < now() - ($${i} || ' days')::interval)`, String(days)); }
     if (p.q) add((i) => `(ref_no ILIKE $${i} OR title ILIKE $${i} OR coalesce(title_ar,'') ILIKE $${i} OR summary ILIKE $${i} OR body ILIKE $${i} OR category ILIKE $${i} OR tags::text ILIKE $${i})`, `%${escapeLike(p.q)}%`);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = await this.pool.query<{ n: string }>(`SELECT count(*) AS n FROM legal_instruments ${w}`, args);
@@ -146,7 +150,7 @@ export class LegislationController {
     const done = new Set(acknowledged.map((a) => a.userId));
     const recipients = row.ack_required ? await recipientsOf(this.pool, row.ack_class, row.ack_class_value) : [];
     const outstanding = recipients.filter((p) => !done.has(p.id));
-    const dueDays = row.ack_due_days ?? this.env.ACK_DUE_DAYS;
+    const dueDays = row.ack_due_days ?? (Number((await this.legis()).ackReminderDays) || this.env.ACK_DUE_DAYS);
     const from = row.effective_date ?? row.issued_date;
     return {
       instrumentId: row.id, refNo: row.ref_no, title: row.title, status: row.status, ackRequired: row.ack_required,
@@ -178,7 +182,7 @@ export class LegislationController {
            approved_by_id, approved_by, approved_at, public)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) RETURNING *`,
         [refNo, b.title, b.titleAr ?? null, b.type, b.category, status, b.issuedBy, issued, at(b.effectiveDate ?? null), at(b.expiryDate ?? null), b.summary, b.body, JSON.stringify(b.tags),
-          b.supersedes, b.ackRequired, b.ackClass, b.ackClassValue, b.ackDueDays ?? null, user?.id ?? null, user?.name ?? '', b.sourceNote,
+          b.supersedes, b.ackRequired ?? (await this.legis()).ackRequiredDefault === true, b.ackClass, b.ackClassValue, b.ackDueDays ?? null, user?.id ?? null, user?.name ?? '', b.sourceNote,
           status === 'DRAFT' ? null : user?.id ?? null, status === 'DRAFT' ? '' : user?.name ?? '', status === 'DRAFT' ? null : new Date(), b.public ?? true]);
       const row = r.rows[0];
       await this.audit.record(c, { action: 'CREATE', entity: 'LegalInstrument', entityId: row.id, entityLabel: row.ref_no, after: instrumentApi(row) });

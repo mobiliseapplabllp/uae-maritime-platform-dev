@@ -115,7 +115,7 @@ export class InspectionsController {
   private async publish(c: PoolClient, i: InspectionRow, event: string, data: Row = {}) {
     return publishInspection(c, this.env, i, { findings: await this.findingsOf(c, i.id), detention: await this.detentionOf(c, i.id) }, { event, data });
   }
-  private async settingsOf() { return this.settings.moduleGet<Record<string, unknown>>('inspect', { passScorePct: this.env.PASS_SCORE_PCT, findingDueDays: this.env.FINDING_DUE_DAYS }); }
+  private async settingsOf() { return this.settings.moduleGet<Record<string, unknown>>('inspect', { passScorePct: this.env.PASS_SCORE_PCT, findingDueDays: this.env.FINDING_DUE_DAYS, detentionThreshold: 1 }); }
   /** The Smart Inspection records on one survey, for the screen and for the read model. */
   private async smartOf(c: Pool | PoolClient, id: string) {
     const [reports, notices, recommendations, prediction, timeline] = await Promise.all([
@@ -459,6 +459,10 @@ export class InspectionsController {
       if (body.result === 'SATISFACTORY' && open.length) throw badRequest('Cannot close as satisfactory with open findings — close or reclassify them first');
       const passMark = before.pass_score_pct ?? (await this.passMark());
       const score = scoreChecklist(before.checklist ?? [], passMark);
+      /* Inspection → settings: with this many detainable findings still open the survey is a detention ground; closing it as anything
+       * less needs the surveyor's reason on the record. */
+      const detainableOpen = open.filter((f) => f.detainable).length; const threshold = Math.max(1, Number((await this.settingsOf()).detentionThreshold) || 1);
+      if (detainableOpen >= threshold && body.result !== 'DETAINED' && !(body.remarks ?? '').trim()) throw badRequest(`${detainableOpen} detainable finding(s) are open and the detention threshold is ${threshold} — close as detained, or record in the remarks why the ship is not detained`);
       const detained = body.result === 'DETAINED';
       const r = await c.query<InspectionRow>(
         `UPDATE inspections SET status = 'CLOSED', result = $2, detention = $3, closed_at = now(), score_pct = $4, critical_fail = $5, pass_score_pct = $6,

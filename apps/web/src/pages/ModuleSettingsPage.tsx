@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Card, Grid, Box, Typography, Skeleton, Button, TextField, MenuItem, Switch, FormControlLabel, Chip, Stack, Autocomplete } from '@mui/material';
 import SaveRoundedIcon from '@mui/icons-material/SaveRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
+import ArrowBackRoundedIcon from '@mui/icons-material/ArrowBackRounded';
 import SettingsSuggestRoundedIcon from '@mui/icons-material/SettingsSuggestRounded';
 import api from '../api/client';
 import { useAppDispatch, useUser } from '../store';
@@ -12,6 +13,7 @@ import PageHeader from '../components/common/PageHeader';
 import { MODULES } from '../modules';
 import { StatePage } from '../components/common/StatePage';
 import { useProfile } from '../config/runtime';
+import { MODULE_CARDS } from './admin/settings/catalogue';
 
 /* Every module carries its own settings page; values loop straight back into that module's behaviour. */
 interface F { k: string; label: string; type?: 'number' | 'switch' | 'select' | 'text' | 'multiselect'; help?: string; options?: string[]; /** Options drawn from the permission catalogue rather than an inline list. */ optionsFrom?: 'permissions'; cols?: number }
@@ -20,13 +22,14 @@ const FIELDS: Record<string, F[]> = {
     { k: 'vcnPrefix', label: 'VCN prefix', help: 'Applied to every NEW vessel call number' },
     { k: 'anchorageAlertHrs', label: 'Anchorage wait alert (hours)', type: 'number', help: 'Waiting beyond this raises an operations flag' },
     { k: 'defaultTugsUnder250m', label: 'Default tugs — LOA < 250 m', type: 'number' }, { k: 'defaultTugsOver250m', label: 'Default tugs — LOA ≥ 250 m', type: 'number' },
+    { k: 'berthWindowSlackHrs', label: 'Berth window slack (hours)', type: 'number', help: 'A berthing is refused when another call is within this margin of it' },
     { k: 'scheduleWindowDays', label: 'Schedule window (days)', type: 'number', help: 'Default span of the vessel schedule board' },
-    { k: 'channelSpeedLimitKn', label: 'Channel speed limit (kn)', type: 'number', help: 'Referenced by surveillance speed alerts' },
-    { k: 'aisGapAlertMin', label: 'AIS gap alert (minutes)', type: 'number' }, { k: 'anchorDriftNm', label: 'Anchor drift threshold (NM)', type: 'number' },
-    { k: 'zoneEntryWatch', label: 'Alert on unannounced zone entry', type: 'switch' },
+    { k: 'channelSpeedLimitKn', label: 'Channel speed limit (kn)', type: 'number', help: 'A fix over this in the approach channel raises a speed alert' },
+    { k: 'aisGapAlertMin', label: 'AIS gap alert (minutes)', type: 'number', help: 'A target silent for longer is raised by the five-minute sweep' }, { k: 'anchorDriftNm', label: 'Anchor drift threshold (NM)', type: 'number', help: 'Measured from where she anchored' },
+    { k: 'zoneEntryWatch', label: 'Alert on zone entry and exit', type: 'switch', help: 'Crossings of the published sea areas that ask to be told' },
   ],
   ships: [{ k: 'certExpiringDays', label: 'Certificate expiring window (days)', type: 'number', help: 'Drives EXPIRING status across certificates, stats and reports' }, { k: 'dryDockReminderDays', label: 'Dry-dock reminder (days ahead)', type: 'number' }, { k: 'riskRefreshMinutes', label: 'Risk score refresh (minutes)', type: 'number' }],
-  crew: [{ k: 'medicalExpiringDays', label: 'Medical expiring window (days)', type: 'number' }, { k: 'minRestHours', label: 'Minimum rest hours (24 h)', type: 'number' }, { k: 'cocVerifyOnSignOn', label: 'Verify CoC on sign-on', type: 'switch' }],
+  crew: [{ k: 'medicalExpiringDays', label: 'Medical expiring window (days)', type: 'number', help: 'Drives the EXPIRING medical status and the crew dashboard' }, { k: 'signOnMarginDays', label: 'Sign-on margin (days)', type: 'number', help: 'A document expiring inside this margin of sign-on is queried' }, { k: 'cocVerifyOnSignOn', label: 'Verify CoC on sign-on', type: 'switch' }],
   legis: [{ k: 'ackRequiredDefault', label: 'New notices require acknowledgment by default', type: 'switch' }, { k: 'ackReminderDays', label: 'Acknowledgment reminder (days)', type: 'number' }, { k: 'showSupersededDays', label: 'Show superseded instruments for (days)', type: 'number' }],
   incidents: [
     { k: 'mttaTargetMin', label: 'Acknowledge target — MTTA (minutes)', type: 'number', help: 'Shown against actuals on the incident dashboard' },
@@ -35,7 +38,7 @@ const FIELDS: Record<string, F[]> = {
     { k: 'reopenWindowDays', label: 'Reopen window (days)', type: 'number' }, { k: 'injuryReportHrs', label: 'Injury report deadline (hours)', type: 'number' },
   ],
   inspect: [
-    { k: 'findingDueDays', label: 'Finding rectification default (days)', type: 'number' }, { k: 'detentionThreshold', label: 'Detainable findings for detention', type: 'number' }, { k: 'passScorePct', label: 'Checklist pass score (%)', type: 'number' }, { k: 'requireEvidencePhotos', label: 'Evidence photos mandatory on findings', type: 'switch' },
+    { k: 'findingDueDays', label: 'Finding rectification default (days)', type: 'number' }, { k: 'detentionThreshold', label: 'Detainable findings for detention', type: 'number' }, { k: 'passScorePct', label: 'Checklist pass score (%)', type: 'number' },
     // the Smart Inspection programme and its six KPI targets — measured from the survey desk's events, graded against these
     { k: 'kpiProgrammeStart', label: 'Programme start date (YYYY-MM-DD)', help: 'Empty means the day of the first instrumented survey' }, { k: 'kpiProgrammeMonths', label: 'Programme length (months)', type: 'number' },
     { k: 'kpiDossierTargetPct', label: 'Dossier before boarding — target (%)', type: 'number' }, { k: 'kpiAiReportTargetPct', label: 'Reports first drafted by AI — target (%)', type: 'number' },
@@ -44,11 +47,11 @@ const FIELDS: Record<string, F[]> = {
     { k: 'kpiReportReductionTargetPct', label: 'Report time reduction — target (%)', type: 'number' }, { k: 'kpiReportBaselineMinutes', label: 'Report turnaround baseline (minutes)', type: 'number', help: '0 measures the baseline from manual reports on the platform' },
     { k: 'kpiRestrictionTargetPct', label: 'Restrictions routed in time — target (%)', type: 'number' }, { k: 'kpiRestrictionMinutes', label: 'Restriction routing window (minutes)', type: 'number' },
   ],
-  facil: [{ k: 'licenceValidityYears', label: 'Licence validity (years)', type: 'number' }, { k: 'auditIntervalMonths', label: 'Audit interval (months)', type: 'number' }, { k: 'renewalReminderDays', label: 'Renewal reminder (days ahead)', type: 'number' }],
+  facil: [{ k: 'auditIntervalMonths', label: 'Audit interval (months)', type: 'number', help: 'Sets the audit-due date on every company and facility' }, { k: 'renewalReminderDays', label: 'Renewal reminder (days ahead)', type: 'number', help: 'The renewal window on accreditations and licences' }],
   finance: [{ k: 'invoicePrefix', label: 'Invoice number prefix', help: 'Applied to every NEW invoice' }, { k: 'paymentTermsDays', label: 'Payment terms (days)', type: 'number' }, { k: 'overdueReminderDays', label: 'Overdue reminder cadence (days)', type: 'number' }, { k: 'roundTotalsToWholeUnit', label: 'Round totals to the whole currency unit', type: 'switch' }],
   mis: [{ k: 'defaultPeriodMonths', label: 'Default report period (months)', type: 'number' }, { k: 'exportFooter', label: 'Export footer text', cols: 8 }],
   masters: [{ k: 'allowHardDelete', label: 'Allow hard delete of master entries', type: 'switch' }],
-  agents: [{ k: 'defaultAutonomy', label: 'Default autonomy level', type: 'select', options: ['ASSIST', 'SUPERVISED', 'AUTONOMOUS'] }, { k: 'escalationHours', label: 'Escalate unreviewed decisions after (hours)', type: 'number' }, { k: 'suspensionNoticeHours', label: 'Suspension notice (hours)', type: 'number' }],
+  agents: [{ k: 'escalationHours', label: 'Chase an unreviewed decision after (hours)', type: 'number', help: 'The hourly sweep publishes it as overdue, once' }, { k: 'suspensionNoticeHours', label: 'Suspension notice after (hours)', type: 'number', help: 'The desk is reminded of an agent still suspended' }],
   // Users & security: read by the identity service at the moment each one matters, never captured at boot
   admin: [
     { k: 'accessTokenMinutes', label: 'Access token lifetime (minutes)', type: 'number', help: 'Short-lived; refreshed silently while the person is active' },
@@ -67,12 +70,14 @@ const FIELDS: Record<string, F[]> = {
 
 export default function ModuleSettingsPage() {
   const { moduleKey = '' } = useParams();
+  const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const user = useUser();
   const profile = useProfile();
   const canManage = hasPerm(user, 'settings.manage');
   const mod = MODULES.find((m) => m.key === moduleKey);
   const fields = FIELDS[moduleKey];
+  const card = MODULE_CARDS.find((m) => m.key === moduleKey);
   const [vals, setVals] = useState<Record<string, any> | null>(null);
   const [defaults, setDefaults] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
@@ -102,10 +107,11 @@ export default function ModuleSettingsPage() {
   return (
     <>
       <PageHeader icon={SettingsSuggestRoundedIcon} iconColor={mod.color} title={`${mod.name} — settings`} sub="Module-scoped configuration; every value loops back into this module's behaviour without a restart"
-        actions={canManage && (
+        actions={(
           <Stack direction="row" spacing={1}>
-            <Button startIcon={<RestartAltRoundedIcon />} onClick={() => setVals({ ...defaults })} disabled={busy}>Reset to defaults</Button>
-            <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={save} disabled={busy}>Save settings</Button>
+            <Button startIcon={<ArrowBackRoundedIcon />} onClick={() => navigate('/admin/settings')}>All settings</Button>
+            {canManage && <Button startIcon={<RestartAltRoundedIcon />} onClick={() => setVals({ ...defaults })} disabled={busy}>Reset to defaults</Button>}
+            {canManage && <Button variant="contained" startIcon={<SaveRoundedIcon />} onClick={save} disabled={busy}>Save settings</Button>}
           </Stack>
         )} />
       <Card sx={{ p: 2.5 }}>
@@ -130,8 +136,15 @@ export default function ModuleSettingsPage() {
         </Grid>
         <Box sx={{ mt: 2 }}><Chip size="small" variant="outlined" label={canManage ? 'Saved values override the platform defaults; Reset restores them.' : 'Read-only — the settings.manage permission is required to change these.'} sx={{ fontSize: 11 }} /></Box>
       </Card>
+      {card && (
+        <Card sx={{ p: 2, mt: 2 }} data-testid="module-settings-used-by">
+          <Typography sx={{ fontWeight: 700, mb: 0.5 }}>Where this is used</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{card.blurb}</Typography>
+          <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2.25 }}>{card.readBy.map((r) => <Typography component="li" variant="body2" key={r}>{r}</Typography>)}</Stack>
+        </Card>
+      )}
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-        Examples of live hooks: VCN and invoice prefixes stamp new records; the certificate window drives EXPIRING statuses; incident MTTA/MTTR targets appear on the incident dashboard; {profile.tax.name} settings feed every new invoice.
+        A saved value is read by the module's service on its next request; the {profile.tax.name} head itself is a platform setting under Billing & tax.
       </Typography>
     </>
   );

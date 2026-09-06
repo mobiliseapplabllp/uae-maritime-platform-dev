@@ -2,7 +2,7 @@ import { Controller, Get, Inject, Param, Query } from '@nestjs/common';
 import type { Pool } from 'pg';
 import type { PageQuery } from '@maritime/contracts';
 import { KIT_POOL, RequirePerm, paged, parsePage, escapeLike, notFound } from '@maritime/service-kit';
-import { verifyChain } from './ledger';
+import { anchorOf, verifyChain } from './ledger';
 
 interface Row { seq: string; event_id: string; at: Date; service: string; actor_id: string; actor_name: string; actor_email: string; actor_kind: string; action: string; entity: string; entity_id: string | null; entity_label: string | null; before: unknown; after: unknown; note: string | null; ip: string | null; correlation_id: string | null; prev_hash: string; hash: string }
 const toApi = (r: Row) => ({ id: r.event_id, seq: Number(r.seq), at: r.at, service: r.service, actor: { id: r.actor_id, name: r.actor_name, email: r.actor_email, kind: r.actor_kind }, action: r.action, entity: r.entity, entityId: r.entity_id, entityLabel: r.entity_label, before: r.before, after: r.after, note: r.note, ip: r.ip, correlationId: r.correlation_id, hash: r.hash, prevHash: r.prev_hash });
@@ -28,6 +28,12 @@ export class AuditController {
   }
   @RequirePerm('audit.view') @Get('verify')
   verify(@Query('limit') limit?: string) { return verifyChain(this.pool, Math.min(1_000_000, Number(limit) || 100000)); }
+  /** What retention has done to the ledger: the anchor, what is left and how far back it reaches. */
+  @RequirePerm('audit.view') @Get('retention')
+  async retention() {
+    const span = await this.pool.query<{ n: string; oldest: Date | null; newest: Date | null }>('SELECT count(*) AS n, min(at) AS oldest, max(at) AS newest FROM audit_entries');
+    return { anchor: await anchorOf(this.pool), entries: Number(span.rows[0].n), oldestAt: span.rows[0].oldest ? new Date(span.rows[0].oldest).toISOString() : null, newestAt: span.rows[0].newest ? new Date(span.rows[0].newest).toISOString() : null };
+  }
   @RequirePerm('audit.view') @Get('summary')
   async summary() {
     const r = await this.pool.query<{ action: string; n: string }>('SELECT action, count(*) AS n FROM audit_entries GROUP BY action ORDER BY n DESC LIMIT 20');

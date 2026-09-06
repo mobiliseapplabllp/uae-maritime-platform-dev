@@ -2,9 +2,10 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, typeAllowedFor, type PageQuery } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal, scopeWhere } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup, badRequest, conflict, escapeLike, paged, parsePage, withTx, zod, type Principal, scopeWhere, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import { COMPANY_SCOPE } from './scope';
 import type { Env } from './env';
+import { policyOf } from './policy';
 import {
   AUDIT_RESULTS, COMPANY_STATUS, auditApi, canChangeStatus, companyApi, cycleApi, obligationApi, ratingFrom, visitApi,
   publishCompany, publishCompanyDeleted, type CompanyRow,
@@ -50,7 +51,8 @@ const SORT: Record<string, string> = { code: 'code', name: 'name', category: 'ca
 
 @Controller('facilities/companies')
 export class CompaniesController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+  private policy() { return policyOf(this.settings, this.env); }
 
   @RequirePerm('facilities.view') @Get()
   async list(@Query() query: PageQuery & { category?: string; type?: string; status?: string; rating?: string; city?: string }, @CurrentUser() user: Principal) {
@@ -98,7 +100,7 @@ export class CompaniesController {
   @RequirePerm('facilities.view') @Get(':id/renewals')
   async renewals(@Param('id') id: string, @CurrentUser() user: Principal, @Query('window') window?: string) {
     const c = await loadCompany(this.pool, id, user.scope);
-    return renewalWorkList(this.pool, Number(window) || this.env.RENEWAL_WINDOW_DAYS, { subjectId: c.id });
+    return renewalWorkList(this.pool, Number(window) || (await this.policy()).RENEWAL_WINDOW_DAYS, { subjectId: c.id });
   }
 
   /* The accreditation position: the latest cycle under each scheme the company has held, and the history behind it. */
@@ -230,7 +232,7 @@ export class CompaniesController {
         event: EVENTS.facilities.companyAudited,
         data: { auditNo: done.row.number, result: done.row.result, auditor: done.row.auditor, rating: done.rating, previousRating: Number(before.rating), audits: done.audits },
       });
-      return { audit: auditApi(done.row), rating: Number(after.rating), previousRating: Number(before.rating), obligation: done.obligation ? obligationApi(done.obligation) : null, company: await fullCompany(c, after, this.env) };
+      return { audit: auditApi(done.row), rating: Number(after.rating), previousRating: Number(before.rating), obligation: done.obligation ? obligationApi(done.obligation) : null, company: await fullCompany(c, after, await this.policy()) };
     });
   }
 

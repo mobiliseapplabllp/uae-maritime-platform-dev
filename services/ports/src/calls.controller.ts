@@ -2,11 +2,11 @@ import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Query } from '
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS, PORTCALL_STATUS, PORTCALL_TRANSITIONS, canTransition, getJurisdiction, type PageQuery, type PortCallStatus } from '@maritime/contracts';
-import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, enqueue, escapeLike, eventFromContext, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal, type Queryable } from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, enqueue, escapeLike, eventFromContext, notFound, paged, parsePage, scopeWhere, withTx, zod, type Principal, type Queryable, KIT_SETTINGS, SettingsClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { assertBerthAvailable } from './berthing';
 import { CARGO_OPERATIONS, CARGO_UNITS, CLOSED_STATUSES, OPEN_STATUSES, SERVICE_TYPES, VIEW_SQL, findCall, insertCall, lockCall, movementsOf, newId, nextVcn, publishState, sofOf, stamp, toApi, toMT, updateCall, type CallApi, type CargoOp, type CallService, type HistoryEntry, type Patch, type SofEntry, type View } from './calls';
-import { buildEstimate, variance } from './pda';
+import { buildEstimate, type EstimateTax, variance } from './pda';
 import { CALL_SCOPE } from './scope';
 import { activeTariffs } from './subjects';
 import { HOUR, iso } from './history';
@@ -40,7 +40,16 @@ const words = (s: string) => s.replace(/_/g, ' ').toLowerCase();
 
 @Controller('port-calls')
 export class PortCallsController {
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {}
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
+
+  /** Harbour Operations → settings: the VCN prefix, the tug rule of thumb, the turnaround kept clear between holds. Read at the moment they matter. */
+  private ops() { return this.settings.moduleGet('ops', { vcnPrefix: this.env.VCN_PREFIX, defaultTugsUnder250m: 2, defaultTugsOver250m: 3, berthWindowSlackHrs: 0, anchorageAlertHrs: 24, scheduleWindowDays: 5 }); }
+  /** Settings → Billing & tax, with the jurisdiction profile behind it. */
+  private async tax(): Promise<EstimateTax> {
+    const j = getJurisdiction(this.env.JURISDICTION);
+    const b = await this.settings.get<{ taxRate?: unknown; taxName?: unknown; currency?: unknown }>('billing', {});
+    const rate = Number(b.taxRate); return { ratePct: Number.isFinite(rate) && b.taxRate !== '' && b.taxRate != null ? rate : j.tax.ratePct, name: String(b.taxName || j.tax.name), currency: String(b.currency || j.currency.code) };
+  }
 
   @RequirePerm('portcalls.view') @Get()
   async list(@Query() query: ListQuery, @CurrentUser() user: Principal) {
@@ -79,11 +88,11 @@ export class PortCallsController {
     const inv = await c.query<{ id: string; number: string; status: string; lines: unknown; subtotal: string; tax_amount: string; total: string; currency: string; issued_at: Date | null }>(
       "SELECT id, number, status, lines, subtotal, tax_amount, total, currency, issued_at FROM invoices WHERE port_call_id = $1 AND status <> 'CANCELLED' ORDER BY updated_at DESC LIMIT 1", [row.id]);
     const i = inv.rows[0];
-    const j = getJurisdiction(this.env.JURISDICTION);
+    const tax = await this.tax();
     return {
       ...call, sof: sofOf(call), movements: movementsOf(call),
       charges: {
-        currency: call.pda?.currency ?? j.currency.code, taxName: j.tax.name, services: call.services.length, cargoParcels: call.cargoOps.length,
+        currency: call.pda?.currency ?? tax.currency, taxName: tax.name, services: call.services.length, cargoParcels: call.cargoOps.length,
         estimate: call.pda ? { number: call.pda.number, subtotal: call.pda.subtotal, taxAmount: call.pda.taxAmount, total: call.pda.total, generatedAt: call.pda.generatedAt } : null,
         invoice: i ? { id: i.id, number: i.number, status: i.status, subtotal: Number(i.subtotal), taxAmount: Number(i.tax_amount), total: Number(i.total), currency: i.currency, issuedAt: iso(i.issued_at) } : null,
       },
@@ -102,12 +111,12 @@ export class PortCallsController {
       let berthId: string | null = null; let berthCode: string | null = null;
       if (b.berthId) {
         const from = b.etb ?? b.eta; const to = b.etd ?? new Date(from.getTime() + this.env.DEFAULT_STAY_HOURS * HOUR);
-        const berth = await assertBerthAvailable(c, b.berthId, from, to, { vessel: { vesselName: vessel.name, loa: Number(vessel.loa) || null, draft: b.draftArrival ?? (Number(vessel.max_draft) || null) } });
+        const berth = await assertBerthAvailable(c, b.berthId, from, to, { slackHours: Number((await this.ops()).berthWindowSlackHrs) || 0, vessel: { vesselName: vessel.name, loa: Number(vessel.loa) || null, draft: b.draftArrival ?? (Number(vessel.max_draft) || null) } });
         berthId = berth.id; berthCode = berth.code;
       }
       const history: HistoryEntry[] = [{ from: '', to: 'ANNOUNCED', at: now.toISOString(), by: user?.name ?? 'system', note: 'Call announced' }];
       const row = await insertCall(c, {
-        vcn: await nextVcn(c, this.env, b.eta), vesselId: vessel.id, vesselName: vessel.name, vesselImo: vessel.imo, vesselType: vessel.type, vesselFlag: vessel.flag,
+        vcn: await nextVcn(c, this.env, b.eta, String((await this.ops()).vcnPrefix || this.env.VCN_PREFIX)), vesselId: vessel.id, vesselName: vessel.name, vesselImo: vessel.imo, vesselType: vessel.type, vesselFlag: vessel.flag,
         agentCode, agentName: b.agentName ?? agent?.name ?? '', purpose: b.purpose ?? '', eta: b.eta, etb: b.etb ?? null, etd: b.etd ?? null, berthId, berthCode,
         prevPort: b.prevPort ?? '', nextPort: b.nextPort ?? '', draftArrival: b.draftArrival ?? null, crew: b.crew ?? { count: 0, master: '' }, remarks: b.remarks ?? '', statusHistory: history,
       });
@@ -133,7 +142,7 @@ export class PortCallsController {
         else {
           const from = b.etb ?? before.etb ?? b.eta ?? before.eta;
           const to = b.etd ?? before.etd ?? new Date(from.getTime() + this.env.DEFAULT_STAY_HOURS * HOUR);
-          const berth = await assertBerthAvailable(c, b.berthId, from, to, { excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: b.draftArrival ?? (Number(before.draft_arrival) || Number(before.v_max_draft) || null) } });
+          const berth = await assertBerthAvailable(c, b.berthId, from, to, { slackHours: Number((await this.ops()).berthWindowSlackHrs) || 0, excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: b.draftArrival ?? (Number(before.draft_arrival) || Number(before.v_max_draft) || null) } });
           patch.berthId = berth.id; patch.berthCode = berth.code;
         }
       }
@@ -171,14 +180,14 @@ export class PortCallsController {
       let berthLabel = before.berth_code ?? '';
       if (to === 'CONFIRMED' && ref) {
         const start = before.etb ?? before.eta; const end = before.etd ?? new Date(start.getTime() + this.env.DEFAULT_STAY_HOURS * HOUR);
-        const berth = await assertBerthAvailable(c, ref, start, end, { excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: Number(before.draft_arrival) || Number(before.v_max_draft) || null } });
+        const berth = await assertBerthAvailable(c, ref, start, end, { slackHours: Number((await this.ops()).berthWindowSlackHrs) || 0, excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: Number(before.draft_arrival) || Number(before.v_max_draft) || null } });
         patch.berthId = berth.id; patch.berthCode = berth.code; berthLabel = berth.code;
       }
       if (to === 'AT_ANCHORAGE') patch.ata = before.ata ?? when;
       if (to === 'BERTHED') {
         const berthRef = ref || before.berth_id; if (!berthRef) throw badRequest('Select a berth before berthing the vessel');
         const end = before.etd && before.etd > when ? before.etd : new Date(when.getTime() + this.env.DEFAULT_STAY_HOURS * HOUR);
-        const berth = await assertBerthAvailable(c, String(berthRef), when, end, { excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: Number(before.draft_arrival) || Number(before.v_max_draft) || null } });
+        const berth = await assertBerthAvailable(c, String(berthRef), when, end, { slackHours: Number((await this.ops()).berthWindowSlackHrs) || 0, excludeId: before.id, vessel: { vesselName: before.vessel_name, loa: Number(before.v_loa) || null, draft: Number(before.draft_arrival) || Number(before.v_max_draft) || null } });
         patch.berthId = berth.id; patch.berthCode = berth.code; patch.ata = before.ata ?? when; patch.atb = when; berthLabel = berth.code;
       }
       if (to === 'SAILED') { if (!before.atb) throw badRequest('Cannot sail a call that never berthed'); patch.atd = when; }
@@ -311,7 +320,8 @@ export class PortCallsController {
       const call = toApi(before);
       if (!call.vesselGrt) throw badRequest('The vessel needs a GRT before an estimate can be made');
       const tariffs = await activeTariffs(c);
-      const est = buildEstimate(call, tariffs, this.env.JURISDICTION);
+      const ops = await this.ops();
+      const est = buildEstimate(call, tariffs, this.env.JURISDICTION, { tax: await this.tax(), tugsOver250: Number(ops.defaultTugsOver250m) || 3, tugsUnder250: Number(ops.defaultTugsUnder250m) || 2 });
       if (!est.lines.length) throw badRequest('No tariff heads matched — check the tariff master');
       const pda = { number: `PDA/${call.vcn}`, lines: est.lines, subtotal: est.subtotal, taxRate: est.taxRate, taxAmount: est.taxAmount, total: est.total, currency: est.currency, basis: est.basis, generatedAt: new Date().toISOString(), generatedBy: user?.name ?? 'system' };
       const row = await updateCall(c, before.id, { pda });

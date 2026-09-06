@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Box, Typography, Stack, Skeleton, Chip, Button, Divider, Table, TableHead, TableRow, TableCell, TableBody } from '@mui/material';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import FullscreenRoundedIcon from '@mui/icons-material/FullscreenRounded';
+import FullscreenExitRoundedIcon from '@mui/icons-material/FullscreenExitRounded';
 import SpaceDashboardRoundedIcon from '@mui/icons-material/SpaceDashboardRounded';
 import dayjs from 'dayjs';
 import api from '../../api/client';
@@ -44,6 +46,12 @@ export default function PortTwin() {
   const dark = mode === 'dark';
   const C = CHART_SERIES[mode];
   const [data, setData] = useState<TwinData | null>(null);
+  /* Full screen: the twin alone, edge to edge, for the wall display in the control room. The browser's own
+   * full-screen mode is used so Escape leaves it the way people expect. */
+  const stage = useRef<HTMLDivElement>(null);
+  const [full, setFull] = useState(false);
+  useEffect(() => { const on = () => setFull(document.fullscreenElement === stage.current); document.addEventListener('fullscreenchange', on); return () => document.removeEventListener('fullscreenchange', on); }, []);
+  const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else stage.current?.requestFullscreen?.(); };
 
   const load = useCallback(() => api.get<TwinData>('/ops/twin').then((r) => setData(r.data))
     .catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' }))), [dispatch]);
@@ -103,10 +111,18 @@ export default function PortTwin() {
     <>
       <PageHeader icon={SpaceDashboardRoundedIcon} iconColor="#056A73" title="Quay view — live 2-D twin"
         sub={`${occupied} of ${data.berths.length} berths occupied · ${data.anchorage.length} at anchorage · ${data.inbound.length} inbound — refreshes every minute`}
-        actions={<Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button>} />
+        actions={<Stack direction="row" spacing={1}><Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button><Button size="small" variant="outlined" startIcon={<FullscreenRoundedIcon />} onClick={toggleFull} data-testid="quay-fullscreen">Full screen</Button></Stack>} />
       <Card sx={{ p: 1.5 }}>
-        <Box sx={{ overflowX: 'auto' }}>
-          <svg viewBox={`0 0 ${layout.width} ${H}`} role="group" aria-label="Quay view — berths, anchorage and inbound traffic" style={{ width: '100%', minWidth: 1180, display: 'block', borderRadius: 8 }}>
+        <Box ref={stage} data-testid="quay-stage" sx={{ overflowX: 'auto', bgcolor: 'background.paper', '&:fullscreen': { overflow: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 1 } }}>
+          {full && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 0.5 }}>
+              <Typography sx={{ fontWeight: 800, fontFamily: 'Archivo' }}>Quay view — live 2-D twin</Typography>
+              <Typography variant="body2" color="text.secondary">{occupied} of {data.berths.length} berths occupied · {data.anchorage.length} at anchorage · {data.inbound.length} inbound · {fromNow(new Date().toISOString())}</Typography>
+              <Box sx={{ flex: 1 }} />
+              <Button size="small" variant="outlined" startIcon={<FullscreenExitRoundedIcon />} onClick={toggleFull}>Exit full screen</Button>
+            </Stack>
+          )}
+          <svg viewBox={`0 0 ${layout.width} ${H}`} role="group" aria-label="Quay view — berths, anchorage and inbound traffic" style={{ width: '100%', minWidth: full ? undefined : 1180, display: 'block', borderRadius: 8, flex: full ? 1 : undefined, maxHeight: full ? 'calc(100vh - 96px)' : undefined }}>
             <defs>
               <pattern id="maint" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
                 <rect width="8" height="8" fill={quay} />

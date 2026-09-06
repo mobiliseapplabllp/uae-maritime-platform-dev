@@ -23,7 +23,7 @@ export interface RequestState {
   slaDueAt: string | null; slaBreached: boolean; slaBreachedAt: string | null; submittedAt: string | null; decidedAt: string | null; closedAt: string | null;
   issuedInstrument: Record<string, unknown> | null; timeline: TimelineEntry[]; createdBy: string | null; createdAt: string; updatedAt: string;
 }
-export interface EngineOptions { source: string; jurisdiction?: string; now?: () => Date }
+export interface EngineOptions { source: string; jurisdiction?: string; now?: () => Date; /** Settings → Billing & tax, read when fees are computed; the jurisdiction profile answers when absent. */ billing?: () => Promise<{ taxRatePct: number; currency: string } | null> }
 export interface TransitionResult { request: RequestState; entry: TimelineEntry; events: EventEnvelope[]; effects: string[] }
 export interface AvailableAction { action: string; label: string; labelAr: string | null; to: string; requireNote: boolean; roles: string[] }
 
@@ -59,15 +59,16 @@ export class WorkflowEngine {
   /** Fee lines from the definition's FEE rule set (or its inline lines), tax from the jurisdiction profile, totals in exact minor units. */
   async computeFees(content: DefinitionContent, ctx: Record<string, unknown>, ruleSetKey?: string | null): Promise<Fees> {
     const key = ruleSetKey ?? content.fees.ruleSetKey ?? null; const j = this.jurisdiction();
-    let lines: FeeLine[] = []; let currency = content.fees.currency ?? j.currency.code; let version: number | null = null;
+    const billing = (await this.opts.billing?.()) ?? { taxRatePct: j.tax.ratePct, currency: j.currency.code };
+    let lines: FeeLine[] = []; let currency = content.fees.currency ?? billing.currency; let version: number | null = null;
     if (key) {
       const r = await this.rules.evaluateSet(key, ctx, this.now());
       if (r.kind !== 'FEE') throw unprocessable(`Rule set ${key} is ${r.kind}, not a fee schedule`);
       lines = r.lines.map((l) => ({ code: l.code, description: l.description, descriptionAr: l.descriptionAr, unit: l.unit, qty: l.qty, rate: l.rate, amount: l.amount, taxable: l.taxable })); currency = r.currency ?? currency; version = r.version;
     } else lines = content.fees.lines.filter((l) => l.amount > 0).map((l) => ({ code: l.code, description: l.description, descriptionAr: l.descriptionAr ?? null, unit: 'application', qty: 1, rate: l.amount, amount: l.amount, taxable: l.taxable }));
     const subtotalM = lines.reduce((s, l) => s + minor(l.amount), 0); const taxableM = lines.filter((l) => l.taxable).reduce((s, l) => s + minor(l.amount), 0);
-    const taxM = Math.round((taxableM * j.tax.ratePct) / 100);
-    return { lines, subtotal: subtotalM / 100, taxRatePct: j.tax.ratePct, taxAmount: taxM / 100, total: (subtotalM + taxM) / 100, currency, ruleSetKey: key, ruleSetVersion: version, computedAt: iso(this.now()) };
+    const taxM = Math.round((taxableM * billing.taxRatePct) / 100);
+    return { lines, subtotal: subtotalM / 100, taxRatePct: billing.taxRatePct, taxAmount: taxM / 100, total: (subtotalM + taxM) / 100, currency, ruleSetKey: key, ruleSetVersion: version, computedAt: iso(this.now()) };
   }
   async slaDays(content: DefinitionContent, ctx: Record<string, unknown>): Promise<number> {
     if (!content.sla.ruleSetKey) return content.sla.days;

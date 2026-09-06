@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Grid, Card, Box, Typography, Chip, Stack, Skeleton, IconButton, Tooltip, Divider, Button, Table, TableHead, TableRow, TableCell, TableBody } from '@mui/material';
-import DoneRoundedIcon from '@mui/icons-material/DoneRounded';
-import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import { Box, Button, Chip, Divider, FormControlLabel, IconButton, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import RadarRoundedIcon from '@mui/icons-material/RadarRounded';
+import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
+import FullscreenRoundedIcon from '@mui/icons-material/FullscreenRounded';
+import FullscreenExitRoundedIcon from '@mui/icons-material/FullscreenExitRounded';
+import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
+import DoneRoundedIcon from '@mui/icons-material/DoneRounded';
+import HomeRoundedIcon from '@mui/icons-material/HomeRounded';
+import ChevronRightRoundedIcon from '@mui/icons-material/ChevronRightRounded';
+import ChevronLeftRoundedIcon from '@mui/icons-material/ChevronLeftRounded';
 import api from '../../api/client';
 import { useAppDispatch, useAppSelector, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -11,224 +19,275 @@ import { hasPerm } from '../../utils/perms';
 import { useProfile } from '../../config/runtime';
 import PageHeader from '../../components/common/PageHeader';
 import { fmtDT, fromNow } from '../../utils/format';
-import type { ChipColor } from '../../utils/status';
-import { bboxAround, fmtLat, fmtLon, gridTicks, inBbox, makeProjector } from './geo';
-import type { MdaAlert, NavStatus, OpenIncident, TrackedPosition, TrafficPicture, TrafficZone } from './types';
+import { TargetLayer } from './traffic/TargetLayer';
+import VesselCard from './traffic/VesselCard';
+import { CATEGORIES, CATEGORY_COLOR, CATEGORY_LABEL, ageWords, flagEmoji, navLabel, type Category } from './traffic/legend';
+import type { Layers, MdaAlert, OpenIncident, Target, TargetDetail, TargetTrack, TargetsResponse, WatchItem } from './types';
 
-/* The live traffic picture — a stylised approach chart drawn on SVG around the home port (no map tiles, no external services).
- * Chart features come from the /tracking payload's zones; the centre and scale from the payload's port or the jurisdiction profile.
- * A visually hidden table carries the same targets for screen readers. */
-const W = 980; const H = 640;
+/* The live traffic picture.
+ *
+ * A real map, every ship the feed reports drawn on it — arrows under way, dots stopped, coloured by class, clustered
+ * where the zoom cannot hold them — and a card for any of them: silhouette, flag, voyage, last report, her track on
+ * request. The register's own ships are outlined and carry their case files; everyone else is traffic. Ports, the
+ * published sea areas, the chart's own zones and the open incidents are layers a person switches. */
+const TILES = (import.meta.env.VITE_MAP_TILES as string | undefined) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const ATTRIBUTION = (import.meta.env.VITE_MAP_ATTRIBUTION as string | undefined) || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
 const SR_ONLY = { position: 'absolute', width: 1, height: 1, p: 0, m: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 } as const;
-const STATUS_COLOR: Record<NavStatus, string> = { MOORED: '#2C6E52', AT_ANCHOR: '#9C6412', UNDERWAY: '#0B74B0', RESTRICTED: '#A33229' };
-const STATUS_LABEL: Record<NavStatus, string> = { MOORED: 'Moored', AT_ANCHOR: 'At anchor', UNDERWAY: 'Underway', RESTRICTED: 'Restricted manoeuvrability' };
-const ALERT_COLOR: Record<MdaAlert['severity'], ChipColor> = { info: 'info', warning: 'warning', error: 'error' };
+const ZONE_STYLE: Record<string, L.PathOptions> = {
+  ANCHORAGE: { color: '#9C6412', weight: 1.5, dashArray: '5 4', fillOpacity: 0.05 }, CHANNEL: { color: '#0B74B0', weight: 2.5, dashArray: '8 6', fill: false },
+  RESTRICTED: { color: '#A33229', weight: 1.5, dashArray: '5 4', fillOpacity: 0.08 }, PORT_LIMIT: { color: '#4A6472', weight: 1.2, dashArray: '3 5', fillOpacity: 0.03 },
+  TSS: { color: '#75479C', weight: 1.2, dashArray: '2 6', fillOpacity: 0.03 }, FISHING: { color: '#F2861F', weight: 1.2, dashArray: '3 5', fillOpacity: 0.03 }, CUSTOM: { color: '#4A6472', weight: 1.2, dashArray: '3 5', fillOpacity: 0.03 },
+};
 const words = (s?: string) => String(s || '').replace(/_/g, ' ');
-const activate = (fn: () => void) => (e: React.KeyboardEvent) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } };
-const posOf = (i: OpenIncident) => ({ lat: i.position?.lat ?? i.location?.lat, lon: i.position?.lon ?? i.location?.lon });
+const debounce = <A extends unknown[]>(fn: (...a: A) => void, ms: number) => { let t: ReturnType<typeof setTimeout> | undefined; return (...a: A) => { if (t) clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
 export default function TrafficMap() {
-  const [data, setData] = useState<TrafficPicture | null>(null);
-  const [openCases, setOpenCases] = useState<OpenIncident[]>([]);
-  const [selected, setSelected] = useState<TrackedPosition | null>(null);
-  const [feed, setFeed] = useState<{ lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number } | null>(null);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const user = useUser();
   const profile = useProfile();
   const mode = useAppSelector((s) => s.ui.mode);
-  const canAck = hasPerm(user, 'nmc.manage');
   const dark = mode === 'dark';
+  const canAck = hasPerm(user, 'nmc.manage');
+  const [data, setData] = useState<TargetsResponse | null>(null);
+  const [layers, setLayers] = useState<Layers | null>(null);
+  const [alerts, setAlerts] = useState<MdaAlert[]>([]);
+  const [openCases, setOpenCases] = useState<OpenIncident[]>([]);
+  const [watch, setWatch] = useState<WatchItem[]>([]);
+  const [feed, setFeed] = useState<{ lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number; lastError?: string | null } | null>(null);
+  const [selected, setSelected] = useState<TargetDetail | null>(null);
+  const [track, setTrack] = useState<TargetTrack | null>(null);
+  const [hidden, setHidden] = useState<Set<Category>>(new Set());
+  const [showPorts, setShowPorts] = useState(true);
+  const [showAreas, setShowAreas] = useState(true);
+  const [showIncidents, setShowIncidents] = useState(true);
+  const [panel, setPanel] = useState<'alerts' | 'fleet'>('alerts');
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Target[]>([]);
+  const [full, setFull] = useState(false);
+  const [zoom, setZoom] = useState(9);
+  const stage = useRef<HTMLDivElement>(null);
+  const mapEl = useRef<HTMLDivElement>(null);
+  const map = useRef<L.Map | null>(null);
+  const layer = useRef<TargetLayer | null>(null);
+  const groups = useRef<{ ports: L.LayerGroup; portLabels: L.LayerGroup; areas: L.LayerGroup; incidents: L.LayerGroup; track: L.LayerGroup } | null>(null);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const err = useCallback((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })), [dispatch]);
+  const home = layers?.home ?? profile.portGeo ?? { name: 'Home port', lat: 24.81, lon: 54.64, zoomKm: 25 };
 
-  const load = useCallback(() => Promise.all([
-    api.get<TrafficPicture>('/tracking'),
-    api.get<OpenIncident[]>('/incidents', { params: { open: 'true', limit: 50 } }).catch(() => ({ data: [] as OpenIncident[] })),
-  ]).then(([t, i]) => { setData(t.data); setOpenCases(i.data || []); api.get<typeof feed>('/tracking/feed', { headers: { 'X-Quiet': '1' } }).then((f) => setFeed(f.data)).catch(() => setFeed(null)); })
-    .catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' }))), [dispatch]);
-  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
+  /* ------------------------------------------------------------------------------- data --- */
+  const loadTargets = useCallback(() => {
+    const m = map.current; if (!m) return;
+    const b = m.getBounds();
+    const params: Record<string, string | number> = { minLat: b.getSouth(), maxLat: b.getNorth(), minLon: b.getWest(), maxLon: b.getEast(), zoom: m.getZoom(), limit: 2500 };
+    const shown = CATEGORIES.filter((c) => !hiddenRef.current.has(c));
+    if (shown.length < CATEGORIES.length) params.categories = shown.join(',');
+    api.get<TargetsResponse>('/tracking/targets', { params, headers: { 'X-Quiet': '1' } }).then((r) => { setData(r.data); layer.current?.setState({ targets: r.data.targets, clusters: r.data.clusters }); }).catch(err);
+  }, [err]);
+  const loadSide = useCallback(() => {
+    api.get<{ items: MdaAlert[] } | MdaAlert[]>('/tracking/alerts', { params: { acknowledged: 'false', limit: 20 }, headers: { 'X-Quiet': '1' } }).then((r) => setAlerts(Array.isArray(r.data) ? r.data : r.data.items ?? [])).catch(() => setAlerts([]));
+    api.get<OpenIncident[]>('/incidents', { params: { open: 'true', limit: 50 }, headers: { 'X-Quiet': '1' } }).then((r) => setOpenCases(r.data || [])).catch(() => setOpenCases([]));
+    api.get<typeof feed>('/tracking/feed', { headers: { 'X-Quiet': '1' } }).then((f) => setFeed(f.data)).catch(() => setFeed(null));
+    api.get<WatchItem[]>('/tracking/watch', { headers: { 'X-Quiet': '1' } }).then((r) => { setWatch(r.data); layer.current?.setState({ watched: new Set(r.data.map((w) => w.mmsi)) }); }).catch(() => setWatch([]));
+  }, []);
+  const refresh = useCallback(() => { loadTargets(); loadSide(); }, [loadTargets, loadSide]);
+  const select = useCallback((t: Target | null) => {
+    setTrack(null); groups.current?.track.clearLayers();
+    if (!t) { setSelected(null); layer.current?.setState({ selected: null }); return; }
+    layer.current?.setState({ selected: t.mmsi });
+    api.get<TargetDetail>(`/tracking/targets/${encodeURIComponent(t.mmsi)}`).then((r) => setSelected(r.data)).catch(err);
+  }, [err]);
 
-  const port = data?.port || profile.portGeo || { name: 'Home port', lat: 0, lon: 0, zoomKm: 25 };
-  const bbox = useMemo(() => bboxAround(port.lat, port.lon, port.zoomKm || 25, W / H), [port.lat, port.lon, port.zoomKm]);
-  const { X, Y } = useMemo(() => makeProjector(bbox, W, H), [bbox]);
+  /* -------------------------------------------------------------------------------- map --- */
+  useEffect(() => {
+    if (!mapEl.current || map.current) return;
+    const m = L.map(mapEl.current, { zoomControl: true, attributionControl: true, worldCopyJump: true, minZoom: 2, maxZoom: 18 });
+    m.setView([home.lat, home.lon], 9);
+    L.tileLayer(TILES, { attribution: ATTRIBUTION, maxZoom: 19, crossOrigin: true }).addTo(m);
+    const g = { ports: L.layerGroup().addTo(m), portLabels: L.layerGroup().addTo(m), areas: L.layerGroup().addTo(m), incidents: L.layerGroup().addTo(m), track: L.layerGroup().addTo(m) };
+    groups.current = g;
+    const tl = new TargetLayer((t) => select(t), dark);
+    tl.addTo(m); layer.current = tl;
+    const onMove = debounce(() => loadTargets(), 250);
+    m.on('moveend', onMove);
+    m.on('zoomend', () => { setZoom(m.getZoom()); if (m.getZoom() >= 8) { if (!m.hasLayer(g.portLabels)) g.portLabels.addTo(m); } else if (m.hasLayer(g.portLabels)) m.removeLayer(g.portLabels); });
+    map.current = m;
+    api.get<Layers>('/tracking/layers', { headers: { 'X-Quiet': '1' } }).then((r) => { setLayers(r.data); m.setView([r.data.home.lat, r.data.home.lon], 9); }).catch(() => {});
+    loadTargets(); loadSide();
+    const timer = setInterval(() => { loadTargets(); loadSide(); }, 60_000);
+    return () => { clearInterval(timer); m.remove(); map.current = null; layer.current = null; groups.current = null; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!data) return <Skeleton variant="rounded" height={480} />;
-  const sea = dark ? '#0A2233' : '#D7E7EF';
-  const seaDeep = dark ? '#071A29' : '#C4DBE8';
-  const land = dark ? '#14303F' : '#EFE9DC';
-  const landLine = dark ? '#1F4557' : '#CBBFA5';
-  const ink = dark ? '#AAC1C7' : '#4A6472';
-  const chan = dark ? '#57B0E3' : '#0B74B0';
-  const amber = dark ? '#E8B155' : '#9C6412';
-  const onChart = data.positions.filter((p) => inBbox(bbox, p.lat, p.lon));
-  const readFeed = () => api.post<{ status: string; received: number; matched: number }>('/tracking/feed/poll').then((r) => { dispatch(notify(r.data.status === 'ok' ? `Feed read: ${r.data.received} fixes, ${r.data.matched} matched` : `Feed ${r.data.status}`)); load(); }).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
-  const feedLabel = feed ? (feed.lastStatus === 'never' ? 'AIS/LRIT feed not yet read' : `AIS/LRIT feed · ${feed.lastMode ?? ''} · ${feed.lastStatus}${feed.ageMinutes != null ? ` · read ${feed.ageMinutes} min ago` : ''} · ${feed.matched}/${feed.received} fixes matched · every ${feed.pollMinutes} min`) : null;
-  const ack = (a: MdaAlert) => api.post(`/tracking/alerts/${a.id}/ack`).then(load).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' })));
-  const path = (pts: TrafficZone['points'], close: boolean) => pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.lon)},${Y(p.lat)}`).join(' ') + (close ? ' Z' : '');
-  const anchor = (pts: TrafficZone['points']) => ({ x: Math.min(...pts.map((p) => X(p.lon))), y: Math.min(...pts.map((p) => Y(p.lat))) });
-  const centre = (pts: TrafficZone['points']) => ({ x: pts.reduce((s, p) => s + X(p.lon), 0) / pts.length, y: pts.reduce((s, p) => s + Y(p.lat), 0) / pts.length });
+  // the layers people switch, redrawn when the data or the switch changes
+  useEffect(() => {
+    const g = groups.current; const m = map.current; if (!g || !m) return;
+    g.ports.clearLayers(); g.portLabels.clearLayers();
+    if (showPorts && layers) for (const p of layers.ports) {
+      L.circleMarker([p.lat, p.lon], { radius: 5, color: dark ? '#E6EEF2' : '#1B2A33', weight: 1.5, fillColor: '#F2C94C', fillOpacity: 0.95 }).bindTooltip(`${p.name} (${p.code})`).addTo(g.ports)
+        .on('click', () => m.setView([p.lat, p.lon], Math.max(m.getZoom(), 11)));
+      L.marker([p.lat, p.lon], { icon: L.divIcon({ className: 'maritime-port-label', html: `<span style="font:600 11px 'Public Sans',sans-serif;color:${dark ? '#E6EEF2' : '#1B2A33'};text-shadow:0 0 3px ${dark ? '#0B1B26' : '#fff'},0 0 3px ${dark ? '#0B1B26' : '#fff'};white-space:nowrap;padding-left:9px">${p.name}</span>`, iconSize: [0, 0], iconAnchor: [0, 6] }), interactive: false, keyboard: false }).addTo(g.portLabels);
+    }
+    if (m.getZoom() < 8 && m.hasLayer(g.portLabels)) m.removeLayer(g.portLabels);
+  }, [layers, showPorts, dark]);
+  useEffect(() => {
+    const g = groups.current; if (!g || !layers) return;
+    g.areas.clearLayers();
+    if (!showAreas) return;
+    for (const a of layers.areas) L.geoJSON(a.geojson as never, { style: ZONE_STYLE[a.kind] ?? ZONE_STYLE.CUSTOM }).bindTooltip(`${a.name} — ${a.kind.replace(/_/g, ' ').toLowerCase()}${a.alertOn !== 'NONE' ? ` · alerts on ${a.alertOn.toLowerCase()}` : ''}`, { sticky: true }).addTo(g.areas);
+    for (const z of [...layers.zones, ...layers.restrictions]) {
+      if (z.kind === 'LAND' || !z.points.length) continue;
+      const pts = z.points.map((p) => [p.lat, p.lon] as [number, number]);
+      const style = z.kind === 'RESTRICTED' ? { color: '#A33229', weight: 1.5, dashArray: '5 4', fillOpacity: 0.1 } : ZONE_STYLE[z.kind] ?? ZONE_STYLE.CUSTOM;
+      const shape = z.kind === 'CHANNEL' ? L.polyline(pts, style) : z.kind === 'SPM' ? L.layerGroup(pts.map((p) => L.circleMarker(p, { radius: 7, color: '#9C6412', weight: 2, fill: false }))) : L.polygon(pts, style);
+      (shape as L.Layer).addTo(g.areas);
+      if ('bindTooltip' in shape) (shape as L.Path).bindTooltip(z.label, { sticky: true });
+    }
+  }, [layers, showAreas]);
+  useEffect(() => {
+    const g = groups.current; if (!g) return;
+    g.incidents.clearLayers();
+    if (!showIncidents) return;
+    for (const i of openCases) {
+      const lat = i.position?.lat ?? i.location?.lat; const lon = i.position?.lon ?? i.location?.lon;
+      if (lat == null || lon == null) continue;
+      const hot = ['HIGH', 'CRITICAL'].includes(i.severity); const c = hot ? '#A33229' : i.severity === 'MEDIUM' ? '#9C6412' : '#4A6472';
+      L.marker([lat, lon], { icon: L.divIcon({ className: 'maritime-incident', html: `<svg width="22" height="22" viewBox="-11 -11 22 22" aria-hidden><path d="M0,-8 L8,6 L-8,6 Z" fill="${hot ? c + '33' : 'none'}" stroke="${c}" stroke-width="2.2" stroke-linejoin="round"/><circle cy="2" r="1.4" fill="${c}"/></svg>`, iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: true, alt: `Open incident ${i.number}` })
+        .bindTooltip(`${i.number} — ${i.severity}`).on('click', () => navigate(`/incidents/${i.id}`)).addTo(g.incidents);
+    }
+  }, [openCases, showIncidents, navigate]);
+  useEffect(() => { layer.current?.setState({ hidden }); loadTargets(); }, [hidden]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const on = () => { const f = document.fullscreenElement === stage.current; setFull(f); setTimeout(() => map.current?.invalidateSize(), 50); };
+    document.addEventListener('fullscreenchange', on); return () => document.removeEventListener('fullscreenchange', on);
+  }, []);
 
-  const zone = (z: TrafficZone) => {
-    if (!z.points.length) return null;
-    const mono = 'IBM Plex Mono, monospace';
-    if (z.kind === 'LAND') { const c = centre(z.points); return <g key={z.id}><path d={path(z.points, true)} fill={land} stroke={landLine} strokeWidth="2" /><text aria-hidden x={c.x} y={c.y} textAnchor="middle" fontSize="11" fill={ink} fontFamily="Archivo, sans-serif" opacity="0.8">{z.label.toUpperCase()}</text></g>; }
-    if (z.kind === 'ANCHORAGE') { const a = anchor(z.points); return <g key={z.id}><path d={path(z.points, true)} fill="none" stroke={ink} strokeDasharray="5 4" strokeWidth="1.5" opacity="0.65" /><text aria-hidden x={a.x + 4} y={a.y - 5} fontSize="10" fill={ink} fontFamily={mono}>{z.label.toUpperCase()}</text></g>; }
-    if (z.kind === 'CHANNEL') { const c = centre(z.points); return <g key={z.id}><path d={path(z.points, false)} stroke={chan} strokeWidth="2.5" strokeDasharray="8 6" fill="none" opacity="0.6" /><text aria-hidden x={c.x + 8} y={c.y} fontSize="10" fill={chan} fontFamily={mono} opacity="0.9">{z.label.toUpperCase()}</text></g>; }
-    if (z.kind === 'RESTRICTED') { const a = anchor(z.points); return <g key={z.id}><path d={path(z.points, true)} fill="#A33229" fillOpacity="0.08" stroke="#A33229" strokeDasharray="5 4" strokeWidth="1.5" opacity="0.8" /><text aria-hidden x={a.x + 4} y={a.y - 5} fontSize="10" fill="#A33229" fontFamily={mono}>{z.label.toUpperCase()}</text></g>; }
-    const first = z.points[0];
-    return (
-      <g key={z.id}>
-        {z.points.map((p, i) => <g key={i}><circle cx={X(p.lon)} cy={Y(p.lat)} r="7" fill="none" stroke={amber} strokeWidth="2" /><circle cx={X(p.lon)} cy={Y(p.lat)} r="2.4" fill={amber} /></g>)}
-        <text aria-hidden x={X(first.lon) - 12} y={Y(first.lat) + 22} fontSize="10" fill={amber} fontFamily={mono}>{z.label.toUpperCase()}</text>
-      </g>
-    );
+  /* ---------------------------------------------------------------------------- actions --- */
+  const toggleTrack = () => {
+    const g = groups.current; if (!selected || !g) return;
+    if (track) { setTrack(null); g.track.clearLayers(); return; }
+    api.get<TargetTrack>(`/tracking/targets/${encodeURIComponent(selected.mmsi)}/track`, { params: { hours: 24 } }).then((r) => {
+      setTrack(r.data); g.track.clearLayers();
+      const pts = r.data.track.map((p) => [p.lat, p.lon] as [number, number]);
+      if (pts.length) { pts.push([selected.lat, selected.lon]); L.polyline(pts, { color: CATEGORY_COLOR[selected.category], weight: 2.5, opacity: 0.85 }).addTo(g.track); for (const p of r.data.track) L.circleMarker([p.lat, p.lon], { radius: 2.5, color: CATEGORY_COLOR[selected.category], fillOpacity: 1, weight: 1 }).bindTooltip(`${fmtDT(p.receivedAt)} · ${p.sog} kn`).addTo(g.track); }
+      if (!r.data.track.length) dispatch(notify('No track is held for her yet — points are kept as reports arrive'));
+    }).catch(err);
   };
+  const centreOn = (t: Target) => { map.current?.setView([t.lat, t.lon], Math.max(map.current.getZoom(), 11)); select(t); setResults([]); setQuery(''); };
+  const search = useMemo(() => debounce((q: string) => { if (q.trim().length < 2) { setResults([]); return; } api.get<Target[]>('/tracking/targets/search', { params: { q, limit: 8 }, headers: { 'X-Quiet': '1' } }).then((r) => setResults(r.data)).catch(() => setResults([])); }, 220), []);
+  const ack = (a: MdaAlert) => api.post(`/tracking/alerts/${a.id}/ack`).then(loadSide).catch(err);
+  const readFeed = () => api.post<{ status: string; received: number; matched: number; targets?: number; error?: string }>('/tracking/feed/poll').then((r) => { dispatch(notify(r.data.status === 'ok' ? `Feed read: ${r.data.received} reports, ${r.data.targets ?? 0} on the picture, ${r.data.matched} on the register` : `Feed ${r.data.status}${r.data.error ? ` — ${r.data.error}` : ''}`)); refresh(); }).catch(err);
+  const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else stage.current?.requestFullscreen?.(); };
+  const onFollow = (following: boolean) => { if (selected) setSelected({ ...selected, following }); loadSide(); dispatch(notify(following ? 'Added to your fleet' : 'Removed from your fleet')); };
+  const feedLabel = feed ? (feed.lastStatus === 'never' ? 'AIS feed not yet read' : `AIS feed · ${feed.lastMode ?? ''} · ${feed.lastStatus}${feed.ageMinutes != null ? ` · ${feed.ageMinutes} min ago` : ''} · every ${feed.pollMinutes} min`) : null;
+  const visible = data?.targets.filter((t) => !hidden.has(t.category)) ?? [];
 
   return (
     <>
       <PageHeader icon={RadarRoundedIcon} iconColor="#0B4F8A" title="Live traffic picture"
-        sub={`${data.positions.length} tracked targets · ${openCases.length} open incident${openCases.length === 1 ? '' : 's'} on the picture · ${data.coverage}`}
+        sub={data ? `${data.totals.all.toLocaleString('en-GB')} ships on the picture · ${data.totals.registered} on the register · ${data.total.toLocaleString('en-GB')} in view · ${data.coverage}` : 'Loading the picture…'}
         actions={<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          {feedLabel && <Chip size="small" label={feedLabel} color={feed?.lastStatus === 'ok' ? 'success' : feed?.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid="feed-status" />}
+          {feedLabel && <Tooltip title={feed?.lastError || ''}><Chip size="small" label={feedLabel} color={feed?.lastStatus === 'ok' ? 'success' : feed?.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid="feed-status" /></Tooltip>}
+          {data?.thresholds && <Chip size="small" variant="outlined" data-testid="surveillance-thresholds" onClick={() => navigate('/settings/module/ops')} label={`Alerts at: channel ${data.thresholds.channelSpeedLimitKn} kn · AIS gap ${data.thresholds.aisGapAlertMin} min · drift ${data.thresholds.anchorDriftNm} nm`} />}
           {canAck && <Button size="small" variant="outlined" onClick={readFeed} data-testid="feed-read">Read feed now</Button>}
-          <Button size="small" startIcon={<RefreshRoundedIcon />} onClick={load}>Refresh</Button>
+          <Button size="small" startIcon={<RefreshRoundedIcon />} onClick={refresh}>Refresh</Button>
+          <Button size="small" variant="outlined" startIcon={<FullscreenRoundedIcon />} onClick={toggleFull} data-testid="map-fullscreen">Full screen</Button>
         </Stack>} />
-      <Grid container spacing={2}>
-        <Grid item xs={12} lg={8.5}>
-          <Card sx={{ p: 1.5 }}>
-            <Box sx={{ overflowX: 'auto' }}>
-              <svg viewBox={`0 0 ${W} ${H}`} role="group" aria-label={`Traffic picture around ${port.name}`} style={{ width: '100%', minWidth: 640, display: 'block', borderRadius: 8 }}>
-                <rect width={W} height={H} fill={seaDeep} />
-                <rect width={W} height={H * 0.62} fill={sea} />
-                {gridTicks(bbox.latMin, bbox.latMax).map((lat) => (
-                  <g key={`lat${lat}`}>
-                    <line x1="0" y1={Y(lat)} x2={W} y2={Y(lat)} stroke={ink} strokeOpacity="0.16" strokeDasharray="3 6" />
-                    <text aria-hidden x="6" y={Y(lat) - 4} fontSize="10" fill={ink} fontFamily="IBM Plex Mono, monospace">{fmtLat(lat)}</text>
-                  </g>
+      <Box ref={stage} data-testid="traffic-stage" sx={{ position: 'relative', height: full ? '100vh' : 'calc(100vh - 200px)', minHeight: 560, borderRadius: full ? 0 : 2, overflow: 'hidden', bgcolor: dark ? '#0B1B26' : '#D7E7EF', '& .leaflet-tile-pane': dark ? { filter: 'invert(1) hue-rotate(190deg) brightness(0.86) saturate(0.7)' } : undefined, '& .leaflet-container': { fontFamily: 'inherit' }, '& .leaflet-div-icon': { background: 'none', border: 0 } }}>
+        <div ref={mapEl} style={{ position: 'absolute', inset: 0 }} aria-label="Traffic map" role="application" />
+
+        {/* search, legend and layers — top left */}
+        <Stack spacing={1} sx={{ position: 'absolute', top: 12, left: 56, zIndex: 1000, width: 300, maxWidth: 'calc(100% - 72px)' }}>
+          <Paper sx={{ p: 0.5 }} elevation={4}>
+            <TextField size="small" fullWidth placeholder="Search a ship — name, MMSI, IMO" value={query} onChange={(e) => { setQuery(e.target.value); search(e.target.value); }} inputProps={{ 'aria-label': 'Search a ship' }} data-testid="traffic-search"
+              InputProps={{ startAdornment: <InputAdornment position="start"><SearchRoundedIcon fontSize="small" /></InputAdornment> }} />
+            {results.length > 0 && (
+              <List dense disablePadding data-testid="traffic-search-results" sx={{ maxHeight: 260, overflowY: 'auto' }}>
+                {results.map((t) => (
+                  <ListItemButton key={t.mmsi} onClick={() => centreOn(t)}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: CATEGORY_COLOR[t.category], mr: 1, flexShrink: 0 }} aria-hidden />
+                    <ListItemText primary={`${flagEmoji(t.flag)} ${t.name}`} secondary={`${t.typeLabel} · ${navLabel(t.navStatus)} · ${ageWords(t.receivedAt)}${t.registered ? ' · on the register' : ''}`} primaryTypographyProps={{ noWrap: true, fontWeight: 600, fontSize: 13 }} secondaryTypographyProps={{ noWrap: true, fontSize: 11 }} />
+                  </ListItemButton>
                 ))}
-                {gridTicks(bbox.lonMin, bbox.lonMax).map((lon) => (
-                  <g key={`lon${lon}`}>
-                    <line x1={X(lon)} y1="0" x2={X(lon)} y2={H} stroke={ink} strokeOpacity="0.16" strokeDasharray="3 6" />
-                    <text aria-hidden x={X(lon) + 4} y={H - 8} fontSize="10" fill={ink} fontFamily="IBM Plex Mono, monospace">{fmtLon(lon)}</text>
-                  </g>
-                ))}
-                {(data.zones || []).map(zone)}
-                {/* the home port */}
-                <g transform={`translate(${X(port.lon)},${Y(port.lat)})`}>
-                  <rect x="-7" y="-7" width="14" height="14" fill={landLine} stroke={ink} strokeWidth="1.2" opacity="0.9" />
-                  <text aria-hidden x="12" y="-6" fontSize="12" fontWeight="700" fill={ink} fontFamily="Archivo, sans-serif">{port.name.toUpperCase()}</text>
-                </g>
-                {/* vessels */}
-                {onChart.map((p) => {
-                  const sel = selected?.id === p.id;
-                  const c = STATUS_COLOR[p.navStatus] || '#0B74B0';
-                  const label = `${p.vessel.name} — ${STATUS_LABEL[p.navStatus] || words(p.navStatus)}, ${p.speed} kn, course ${String(p.course).padStart(3, '0')}°`;
-                  return (
-                    <g key={p.id} transform={`translate(${X(p.lon)},${Y(p.lat)})`} role="button" tabIndex={0} aria-pressed={sel} aria-label={label} style={{ cursor: 'pointer' }}
-                      onClick={() => setSelected(sel ? null : p)} onKeyDown={activate(() => setSelected(sel ? null : p))}>
-                      <title>{label}</title>
-                      {sel && <circle r="14" fill={c} opacity="0.18" />}
-                      <g transform={`rotate(${p.course})`}><path d="M0,-8 L5.5,7 L0,3.6 L-5.5,7 Z" fill={c} stroke={dark ? '#071A29' : '#fff'} strokeWidth="1.4" /></g>
-                      {p.speed > 0.5 && <line x1="0" y1="0" x2="0" y2={-10 - p.speed} stroke={c} strokeWidth="1.4" transform={`rotate(${p.course})`} opacity="0.55" />}
-                      {(sel || onChart.length <= 24) && (
-                        <text aria-hidden x="9" y="4" fontSize="10.5" fontWeight={sel ? 700 : 500} fill={dark ? '#DCE7EA' : '#22404F'} fontFamily="Public Sans, sans-serif">{p.vessel.name.replace(/^M[VT] /, '')}</text>
-                      )}
-                    </g>
-                  );
-                })}
-                {/* open incidents — the same picture the rescue coordination centre works from */}
-                {openCases.map((i) => {
-                  const { lat, lon } = posOf(i);
-                  if (lat == null || lon == null || !inBbox(bbox, lat, lon)) return null;
-                  const hot = ['HIGH', 'CRITICAL'].includes(i.severity);
-                  const c = hot ? '#A33229' : i.severity === 'MEDIUM' ? '#9C6412' : '#4A6472';
-                  return (
-                    <g key={i.id} transform={`translate(${X(lon)},${Y(lat)})`} role="link" tabIndex={0} aria-label={`Open incident ${i.number}`} style={{ cursor: 'pointer' }}
-                      onClick={() => navigate(`/incidents/${i.id}`)} onKeyDown={activate(() => navigate(`/incidents/${i.id}`))}>
-                      {hot && <circle r="13" fill={c} opacity="0.14" />}
-                      <path d="M0,-7.5 L7,5.5 L-7,5.5 Z" fill="none" stroke={c} strokeWidth="2.2" strokeLinejoin="round" />
-                      <circle cy="1.6" r="1.3" fill={c} />
-                      <text aria-hidden x="10" y="4" fontSize="10" fontWeight="700" fill={c} fontFamily="IBM Plex Mono, monospace">{i.number}</text>
-                    </g>
-                  );
-                })}
-              </svg>
-            </Box>
-            <Box sx={SR_ONLY}>
-              <Table aria-label="Tracked targets">
-                <TableHead><TableRow><TableCell>Vessel</TableCell><TableCell>IMO</TableCell><TableCell>Status</TableCell><TableCell>Speed</TableCell><TableCell>Course</TableCell><TableCell>Position</TableCell><TableCell>Received</TableCell></TableRow></TableHead>
-                <TableBody>
-                  {data.positions.map((p) => (
-                    <TableRow key={p.id}><TableCell>{p.vessel.name}</TableCell><TableCell>{p.vessel.imo}</TableCell><TableCell>{STATUS_LABEL[p.navStatus] || words(p.navStatus)}</TableCell><TableCell>{p.speed} kn</TableCell><TableCell>{String(p.course).padStart(3, '0')}°</TableCell><TableCell>{fmtLat(p.lat)} {fmtLon(p.lon)}</TableCell><TableCell>{fmtDT(p.receivedAt)}</TableCell></TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-            <Stack direction="row" spacing={1.5} sx={{ mt: 1, px: 0.5, flexWrap: 'wrap' }} useFlexGap>
-              {(Object.keys(STATUS_LABEL) as NavStatus[]).map((k) => (
-                <Stack key={k} direction="row" spacing={0.6} alignItems="center">
-                  <Box aria-hidden sx={{ width: 10, height: 10, borderRadius: '2px', bgcolor: STATUS_COLOR[k] }} />
-                  <Typography variant="caption" color="text.secondary">{STATUS_LABEL[k]}</Typography>
-                </Stack>
-              ))}
-              <Stack direction="row" spacing={0.6} alignItems="center">
-                <Box component="svg" viewBox="0 0 16 16" aria-hidden sx={{ width: 12, height: 12 }}><path d="M8,2 L14.5,13.5 L1.5,13.5 Z" fill="none" stroke="#A33229" strokeWidth="2" strokeLinejoin="round" /></Box>
-                <Typography variant="caption" color="text.secondary">Open incident (click to open the case)</Typography>
-              </Stack>
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>Simulated AIS feed for demonstration — positions refresh every minute</Typography>
-            </Stack>
-          </Card>
-        </Grid>
-        <Grid item xs={12} lg={3.5}>
-          <Stack spacing={2}>
-            {selected && (
-              <Card sx={{ p: 2 }} aria-live="polite">
-                <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{selected.vessel.name}</Typography>
-                <Typography variant="caption" color="text.secondary">IMO {selected.vessel.imo} · {selected.vessel.type} · {selected.vessel.flag}</Typography>
-                <Divider sx={{ my: 1.25 }} />
-                <Stack spacing={0.5}>
-                  <Typography variant="body2">Status: <b>{words(selected.navStatus)}</b> · SOG <b>{selected.speed} kn</b> · COG <b>{String(selected.course).padStart(3, '0')}°</b></Typography>
-                  <Typography variant="body2">Position: <b>{fmtLat(selected.lat)} {fmtLon(selected.lon)}</b></Typography>
-                  <Typography variant="body2">Destination: <b>{selected.destination || '—'}</b> · {fromNow(selected.receivedAt)}</Typography>
-                </Stack>
-                <Button size="small" sx={{ mt: 1.5 }} variant="outlined" onClick={() => navigate(`/vessels/${selected.vessel.id}`)}>Open vessel record</Button>
-              </Card>
+              </List>
             )}
-            <Card>
-              <Box sx={{ px: 2, py: 1.5 }}>
-                <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>MDA alerts ({data.alerts.length})</Typography>
-                <Typography variant="caption" color="text.secondary">Derived signals — advisory, never auto-enforcement</Typography>
-              </Box>
-              <Divider />
-              {/* The rule between alerts is drawn as a border on each item rather than as an element between
-                  them: a <ul> may contain only list items, and a separator dropped in as a sibling is neither
-                  a list item nor allowed to be one. */}
-              <Stack component="ul" sx={{ listStyle: 'none', m: 0, p: 0, '& > li + li': { borderTop: 1, borderColor: 'divider' } }} aria-label="Unacknowledged alerts">
-                {data.alerts.map((a) => {
+          </Paper>
+          <Paper sx={{ p: 1.25 }} elevation={4} data-testid="traffic-legend">
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, letterSpacing: 0.5 }}>VESSEL TYPES</Typography>
+            <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.5} sx={{ mt: 0.5 }}>
+              {CATEGORIES.map((c) => (
+                <Chip key={c} size="small" label={CATEGORY_LABEL[c]} onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(c)) n.delete(c); else n.add(c); return n; })}
+                  variant={hidden.has(c) ? 'outlined' : 'filled'} aria-pressed={!hidden.has(c)}
+                  sx={{ height: 22, fontSize: 11, bgcolor: hidden.has(c) ? 'transparent' : `${CATEGORY_COLOR[c]}33`, borderColor: CATEGORY_COLOR[c], '& .MuiChip-label': { pl: 0.75 }, opacity: hidden.has(c) ? 0.55 : 1 }}
+                  icon={<Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: CATEGORY_COLOR[c], ml: 0.75 }} aria-hidden />} />
+              ))}
+            </Stack>
+            <Divider sx={{ my: 1 }} />
+            <Stack direction="row" flexWrap="wrap" useFlexGap spacing={1}>
+              <FormControlLabel control={<Switch size="small" checked={showPorts} onChange={(e) => setShowPorts(e.target.checked)} />} label={<Typography variant="caption">Ports</Typography>} />
+              <FormControlLabel control={<Switch size="small" checked={showAreas} onChange={(e) => setShowAreas(e.target.checked)} />} label={<Typography variant="caption">Sea areas</Typography>} />
+              <FormControlLabel control={<Switch size="small" checked={showIncidents} onChange={(e) => setShowIncidents(e.target.checked)} />} label={<Typography variant="caption">Incidents</Typography>} />
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>Outlined arrows are ships on the register. {zoom < 11 ? 'Zoom in for names.' : ''}{data?.clustered ? ` ${data.total.toLocaleString('en-GB')} in view — clustered.` : ''}</Typography>
+          </Paper>
+        </Stack>
+
+        {/* the home button — back to the port */}
+        <Tooltip title={`Back to ${home.name}`}><IconButton aria-label={`Back to ${home.name}`} onClick={() => map.current?.setView([home.lat, home.lon], 9)} sx={{ position: 'absolute', left: 12, top: 90, zIndex: 1000, bgcolor: 'background.paper', boxShadow: 2, '&:hover': { bgcolor: 'background.paper' } }} size="small"><HomeRoundedIcon fontSize="small" /></IconButton></Tooltip>
+
+        {/* the card and the side panel — right */}
+        <Stack spacing={1} sx={{ position: 'absolute', top: 12, right: 12, zIndex: 1000, alignItems: 'flex-end', maxHeight: 'calc(100% - 24px)' }}>
+          {selected && <VesselCard target={selected} trackShown={!!track} onClose={() => select(null)} onTrack={toggleTrack} onFollow={onFollow} />}
+          {track && <Chip size="small" label={`Track: ${track.summary.fixes} fixes · ${track.summary.distanceNm} nm · max ${track.summary.maxSpeedKn} kn over ${track.hours} h`} sx={{ bgcolor: 'background.paper' }} data-testid="track-summary" />}
+          <Paper elevation={4} sx={{ width: panelOpen ? 320 : 'auto', maxWidth: 'calc(100vw - 24px)', display: 'flex', flexDirection: 'column', maxHeight: selected ? 'calc(100vh - 560px)' : 'calc(100% - 12px)', minHeight: panelOpen ? 160 : 0 }} data-testid="traffic-side-panel">
+            <Stack direction="row" alignItems="center">
+              <IconButton size="small" onClick={() => setPanelOpen((o) => !o)} aria-label={panelOpen ? 'Collapse the side panel' : 'Open the side panel'} aria-expanded={panelOpen}>{panelOpen ? <ChevronRightRoundedIcon fontSize="small" /> : <ChevronLeftRoundedIcon fontSize="small" />}</IconButton>
+              {panelOpen && <Tabs value={panel} onChange={(_, v) => setPanel(v)} sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0.5, fontSize: 12 } }}><Tab value="alerts" label={`Alerts (${alerts.length})`} /><Tab value="fleet" label={`My fleet (${watch.length})`} /></Tabs>}
+            </Stack>
+            {panelOpen && panel === 'alerts' && (
+              <Stack component="ul" sx={{ listStyle: 'none', m: 0, p: 0, overflowY: 'auto', '& > li + li': { borderTop: 1, borderColor: 'divider' } }} aria-label="Unacknowledged alerts">
+                {alerts.map((a) => {
                   const who = a.vessel?.name || a.vesselName || 'Unknown target';
                   return (
-                    <Box component="li" key={a.id} sx={{ p: 1.75, display: 'flex', gap: 1.25 }}>
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box component="li" key={a.id} sx={{ p: 1.25, display: 'flex', gap: 1 }}>
+                      <Box sx={{ flex: 1, minWidth: 0, cursor: a.vesselId ? 'pointer' : 'default' }} onClick={() => { if (a.vesselId) api.get<TargetDetail>(`/tracking/targets/vessel:${a.vesselId}`).then((r) => centreOn(r.data)).catch(() => {}); }}>
                         <Stack direction="row" spacing={0.75} alignItems="center">
-                          <Chip size="small" label={words(a.type)} color={ALERT_COLOR[a.severity]} variant="outlined" sx={{ height: 20, fontSize: 10 }} />
+                          <Chip size="small" label={words(a.type)} color={a.severity === 'error' ? 'error' : a.severity === 'warning' ? 'warning' : 'info'} variant="outlined" sx={{ height: 20, fontSize: 10 }} />
                           <Typography noWrap sx={{ fontSize: 12.5, fontWeight: 700 }}>{who}</Typography>
                         </Stack>
-                        <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 0.5 }}>{a.note}</Typography>
+                        <Typography sx={{ fontSize: 12, color: 'text.secondary', mt: 0.25 }}>{a.note}</Typography>
                         <Typography variant="caption" color="text.secondary">{fromNow(a.at)}</Typography>
                       </Box>
-                      {canAck && (
-                        <Tooltip title="Acknowledge">
-                          <IconButton size="small" aria-label={`Acknowledge ${words(a.type).toLowerCase()} — ${who}`} onClick={() => ack(a)}><DoneRoundedIcon fontSize="inherit" /></IconButton>
-                        </Tooltip>
-                      )}
+                      {canAck && <Tooltip title="Acknowledge"><IconButton size="small" aria-label={`Acknowledge ${words(a.type).toLowerCase()} — ${who}`} onClick={() => ack(a)}><DoneRoundedIcon fontSize="inherit" /></IconButton></Tooltip>}
                     </Box>
                   );
                 })}
-                {data.alerts.length === 0 && <Typography component="li" color="text.secondary" variant="body2" sx={{ p: 2, textAlign: 'center' }}>No unacknowledged alerts ✅</Typography>}
+                {alerts.length === 0 && <Typography component="li" color="text.secondary" variant="body2" sx={{ p: 2, textAlign: 'center' }}>No unacknowledged alerts</Typography>}
               </Stack>
-            </Card>
-          </Stack>
-        </Grid>
-      </Grid>
+            )}
+            {panelOpen && panel === 'fleet' && (
+              <List dense sx={{ overflowY: 'auto', py: 0 }} aria-label="My fleet" data-testid="my-fleet">
+                {watch.map((w) => (
+                  <ListItemButton key={w.mmsi} onClick={() => { if (w.target) centreOn(w.target); }}>
+                    <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: w.target ? CATEGORY_COLOR[w.target.category] : '#8A96A3', mr: 1, flexShrink: 0 }} aria-hidden />
+                    <ListItemText primary={`${flagEmoji(w.target?.flag)} ${w.name}`} secondary={w.target ? `${navLabel(w.target.navStatus)} · ${w.target.sog.toFixed(1)} kn · ${ageWords(w.target.receivedAt)}` : 'No position held'} primaryTypographyProps={{ noWrap: true, fontWeight: 600, fontSize: 13 }} secondaryTypographyProps={{ noWrap: true, fontSize: 11 }} />
+                  </ListItemButton>
+                ))}
+                {watch.length === 0 && <Typography color="text.secondary" variant="body2" sx={{ p: 2, textAlign: 'center' }}>Add a ship to your fleet from her card</Typography>}
+              </List>
+            )}
+          </Paper>
+        </Stack>
+        {full && <Button size="small" variant="contained" startIcon={<FullscreenExitRoundedIcon />} onClick={toggleFull} sx={{ position: 'absolute', bottom: 24, right: 12, zIndex: 1000 }}>Exit full screen</Button>}
+        <Typography variant="caption" sx={{ position: 'absolute', bottom: 2, left: 12, zIndex: 1000, color: 'text.secondary', bgcolor: 'background.paper', px: 0.75, borderRadius: 1, opacity: 0.9 }}>{data ? `Updated ${fromNow(data.generatedAt)} · refreshes every minute` : ''}</Typography>
+      </Box>
+      <Box sx={SR_ONLY}>
+        <Table aria-label="Targets in view">
+          <TableHead><TableRow><TableCell>Vessel</TableCell><TableCell>Type</TableCell><TableCell>Status</TableCell><TableCell>Speed</TableCell><TableCell>Course</TableCell><TableCell>Received</TableCell></TableRow></TableHead>
+          <TableBody>{visible.slice(0, 200).map((t) => <TableRow key={t.mmsi}><TableCell>{t.name}</TableCell><TableCell>{t.typeLabel}</TableCell><TableCell>{navLabel(t.navStatus)}</TableCell><TableCell>{t.sog} kn</TableCell><TableCell>{String(t.cog).padStart(3, '0')}°</TableCell><TableCell>{fmtDT(t.receivedAt)}</TableCell></TableRow>)}</TableBody>
+        </Table>
+      </Box>
     </>
   );
 }

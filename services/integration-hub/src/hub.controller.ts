@@ -5,7 +5,7 @@ import type { Request } from 'express';
 import { EVENTS } from '@maritime/contracts';
 import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, Public, RequirePerm, ServiceOnly, badRequest, conflict, enqueue, eventFromContext, forbidden, notFound, paged, parsePage, randomSecret, unauthorized, withTx, zod, type Principal } from '@maritime/service-kit';
 import type { Env } from './env';
-import { HubClient } from './client';
+import { HubClient, STREAM_ADAPTER } from './client';
 import { ADAPTERS, TOTAL_OPERATIONS, adapterByKey } from './adapters/registry';
 import { loadFixture } from './stubs';
 import { endpointProblem } from './endpoint';
@@ -39,7 +39,9 @@ const configSchema = z.object({
   description: z.string().max(500).optional(), mode: z.enum(['stub', 'live']).optional(), baseUrl: z.string().max(300).nullable().optional(),
   auth: authSchema.optional(), secrets: secretsSchema.optional(), headers: headersSchema.optional(),
   timeoutMs: z.number().int().min(1000).max(60_000).optional(), maxAttempts: z.number().int().min(1).max(10).optional(), enabled: z.boolean().optional(),
-  healthPath: z.string().regex(/^(\/[^\s?#]{0,200})?$/).optional(), schedule: z.object({ pollMinutes: z.number().int().min(1).max(1440).nullable().optional() }).optional(),
+  healthPath: z.string().regex(/^(\/[^\s?#]{0,200})?$/).optional(),
+  // pollMinutes for any polled counterpart; the boxes of sea and the class B switch for the AIS stream
+  schedule: z.object({ pollMinutes: z.number().int().min(1).max(1440).nullable().optional(), boundingBoxes: z.array(z.tuple([z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)]), z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])])).max(10).optional(), classB: z.boolean().optional() }).optional(),
   operations: z.array(operationSchema).max(40).optional(), inboundEnabled: z.boolean().optional(),
 });
 const createSchema = configSchema.extend({
@@ -171,6 +173,7 @@ export class HubController {
     const inbound = await this.pool.query<{ id: string; delivery_id: string; event_type: string; payload: unknown; received_at: Date }>('SELECT id::text, delivery_id, event_type, payload, received_at FROM inbound_events WHERE adapter = $1 ORDER BY received_at DESC LIMIT 20', [key]);
     return {
       ...adapterApi(a),
+      stream: key === STREAM_ADAPTER ? this.hub.streamStatus() : undefined,
       inboundUrl: this.inboundUrl(key), openDeadLetters: Number(dead.rows[0].n),
       recentCalls: calls.rows.map((r: Record<string, unknown>) => ({ id: r.id, operation: r.operation, status: r.status, mode: r.mode, httpStatus: r.http_status, attempts: r.attempts, durationMs: r.duration_ms, error: r.error, correlationId: r.correlation_id, startedAt: (r.started_at as Date).toISOString() })),
       certifications: certs.rows.map((r) => ({ contractVersion: r.contract_ver, operations: r.operations, passed: r.passed, certifiedAt: r.certified_at.toISOString() })),
@@ -221,7 +224,7 @@ export class HubController {
       await this.audit.record(c, { action: 'CONFIGURE', entity: 'Adapter', entityId: key, entityLabel: after.row.name, before: adapterApi(before), after: adapterApi(after) });
       await enqueue(c, eventFromContext(this.env.SERVICE_NAME, EVENTS.integration.adapterChanged, { key, name: after.row.name, kind: after.row.kind, change: mode !== row.mode ? `mode:${mode}` : 'configured', mode: after.row.mode, enabled: after.row.enabled, by: this.actor(me) }));
       return adapterApi(after);
-    });
+    }).then(async (out) => { if (key === STREAM_ADAPTER) await this.hub.syncStream().catch(() => null); return out; });
   }
 
   @RequirePerm('settings.manage') @Delete('integrations/:key')

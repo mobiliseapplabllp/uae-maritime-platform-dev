@@ -33,6 +33,9 @@ export interface IncidentMonth { month: string; LOW: number; MEDIUM: number; HIG
 export interface IncidentDashboardData {
   sla?: { mttaTargetMin: number; mttrTargetHrs: number };
   kpis: { open: number; highOpen: number; loggedYtd: number; closedYtd: number; mttrHrs: number; mttaMin: number; injuriesYtd: number };
+  /** The desk's rules from Incident Desk → module settings, and how many injury reports are past the deadline they set. */
+  rules?: { mttaTargetMin: number; mttrTargetHrs: number; autoNotifySeverity: string; reopenWindowDays: number; injuryReportHrs: number };
+  injuryReportsOverdue?: number;
   byMonth: IncidentMonth[]; byType: { type: string; count: number }[]; byCategory: { category: string; count: number }[]; byStatus: { status: string; count: number }[];
   aging: { bucket: string; count: number }[];
   openList: { id: string; number: string; title: string; severity: IncidentSeverity; status: IncidentStatus; reportedAt: string; priority?: IncidentPriority; assignedTo?: string }[];

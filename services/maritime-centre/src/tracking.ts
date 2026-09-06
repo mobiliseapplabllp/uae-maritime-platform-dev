@@ -3,6 +3,7 @@ import { geoFor } from '@maritime/world';
 import { badRequest, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { iso, num, type Row } from './incidents';
+import { watchFix, type PreviousFix, type Thresholds } from './surveillance';
 
 /* The surveillance picture.
  *
@@ -168,14 +169,16 @@ export interface FixInput {
   vesselId: string; vesselName?: string; mmsi?: string; lat: number; lon: number; speed?: number; sog?: number; course?: number; cog?: number; heading?: number;
   navStatus: (typeof NAV_STATUS)[number]; destination?: string; source?: string; receivedAt?: string | null;
 }
-/** Records a fix: the current position row is replaced, the history keeps every fix, and the picture is told. */
-export async function recordFix(c: Queryable, env: Env, body: FixInput) {
+/** Records a fix: the current position row is replaced, the history keeps every fix, the picture is told, and — when the
+ *  thresholds are given — the fix is judged for the derived signals against the previous one. */
+export async function recordFix(c: Queryable, env: Env, body: FixInput, opts: { thresholds?: Thresholds } = {}) {
   const receivedAt = body.receivedAt ? new Date(body.receivedAt) : new Date();
   if (Number.isNaN(receivedAt.getTime())) throw badRequest('Received-at is not a valid date');
   const speed = body.speed ?? body.sog ?? 0;
   const course = Math.round(body.course ?? body.cog ?? 0);
   const v = await c.query<VesselFacts & { mmsi: string }>('SELECT id, name, imo, mmsi, type, flag, status FROM vessels WHERE id = $1', [body.vesselId]);
   const vessel = v.rows[0];
+  const prev = opts.thresholds ? (await c.query<PreviousFix>('SELECT lat::float8 AS lat, lon::float8 AS lon, nav_status, received_at FROM positions WHERE vessel_id = $1', [body.vesselId])).rows[0] ?? null : null;
   const r = await c.query<PositionRow>(
     `INSERT INTO positions(vessel_id, vessel_name, mmsi, lat, lon, sog, cog, heading, nav_status, destination, source, received_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
@@ -187,6 +190,7 @@ export async function recordFix(c: Queryable, env: Env, body: FixInput) {
   const p = r.rows[0];
   await c.query('INSERT INTO position_history(vessel_id, lat, lon, sog, cog, nav_status, received_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
     [p.vessel_id, body.lat, body.lon, speed, course, body.navStatus, receivedAt]);
+  if (opts.thresholds) await watchFix(c, env, opts.thresholds, p, prev);
   return publishPosition(c, env, p, vessel ? { id: vessel.id, name: vessel.name, imo: vessel.imo, type: vessel.type, flag: vessel.flag, status: vessel.status } : undefined);
 }
 
