@@ -15,6 +15,7 @@ import { useAppDispatch, useAppSelector } from '../store';
 import { notify } from '../store/uiSlice';
 import { CHART_SERIES, SERIES_ORDER, SERIES_LABELS, chartChrome, MONO } from '../theme';
 import PageHeader from '../components/common/PageHeader';
+import AiInsights from '../components/ai/AiInsights';
 import StatCard from '../components/common/StatCard';
 import ModuleStrip from '../components/dashboard/ModuleStrip';
 import StatusChip from '../components/common/StatusChip';
@@ -51,6 +52,7 @@ export default function Dashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
+        <Grid item xs={12} lg={4}><AiInsights module="mis" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={92} /></Grid>)}
         <Grid item xs={12} md={8}><Skeleton variant="rounded" height={300} /></Grid><Grid item xs={12} md={4}><Skeleton variant="rounded" height={300} /></Grid>
       </Grid>

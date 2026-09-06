@@ -35,9 +35,9 @@ export const SECTIONS: SectionDef[] = [
     readBy: ['Notifications — every email, including escalations'],
     facts: (v) => [{ label: 'Relay', value: v.host ? `${v.host}:${v.port || (v.secure === false ? 587 : 465)}` : 'Not set — messaging adapter' }, { label: 'TLS', value: v.host ? on(v.secure) : '—' }, { label: 'From', value: text(v.from) }] },
   { key: 'ai', label: 'AI assistant', icon: AutoAwesomeRoundedIcon, color: '#75479C',
-    blurb: 'The switch, the provider and profile that compose, grounded-only mode, the temperature, the daily token budget and the provider key.',
-    readBy: ['AI assistant — every question and every draft', 'The assistant dock in the shell'],
-    facts: (v) => [{ label: 'Assistant', value: on(v.enabled) }, { label: 'Profile', value: text(v.model) }, { label: 'Daily budget', value: Number(v.dailyTokenBudget) > 0 ? `${Number(v.dailyTokenBudget).toLocaleString('en-GB')} tokens` : 'unlimited' }] },
+    blurb: 'The switch, the provider and profile that compose, grounded-only mode, the temperature, the daily token budget, the provider key, and the in-country slot with its residency rules.',
+    readBy: ['AI assistant — every question and every draft', 'The tool gateway — every hosted completion for the assistant and the agents', 'The assistant dock in the shell'],
+    facts: (v) => [{ label: 'Assistant', value: on(v.enabled) }, { label: 'Provider', value: v.provider === 'uae' || v.provider === 'uae-hosted' ? 'in-country endpoint' : v.provider === 'anthropic' || v.provider === 'gateway' ? 'hosted, via tool gateway' : 'platform composer' }, { label: 'Residency', value: String(v.residencyRequired) === 'true' ? 'required' : String(v.preferResident) === 'true' ? 'preferred' : 'not enforced' }, { label: 'Daily budget', value: Number(v.dailyTokenBudget) > 0 ? `${Number(v.dailyTokenBudget).toLocaleString('en-GB')} tokens` : 'unlimited' }] },
 ];
 export const INTEGRATIONS_CARD = {
   key: 'integrations', label: 'Integrations', icon: HubRoundedIcon, color: '#1E7A6F',

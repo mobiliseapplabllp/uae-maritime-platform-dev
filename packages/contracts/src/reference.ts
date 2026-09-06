@@ -113,7 +113,7 @@ export const SETTING_FIELDS: Record<SettingSection, readonly string[]> = {
   billing: ['taxName', 'taxRate', 'taxRegistrationLabel', 'placeOfSupply', 'serviceCode', 'currency'],
   notifications: ['emailEnabled', 'smsEnabled', 'digestHour', 'escalationHours'],
   smtp: ['host', 'port', 'secure', 'user', 'password', 'from'],
-  ai: ['enabled', 'provider', 'model', 'temperature', 'groundedOnly', 'dailyTokenBudget', 'apiKey'],
+  ai: ['enabled', 'provider', 'model', 'temperature', 'groundedOnly', 'dailyTokenBudget', 'apiKey', 'uaeEndpoint', 'uaeModel', 'uaeKey', 'residencyRequired', 'preferResident'],
 };
 /** The tax and currency a billing document is raised under: the platform's Billing & tax settings, falling back to the jurisdiction profile. */
 export interface BillingProfile { taxName: string; taxRate: number; taxRegistrationLabel: string; placeOfSupply: string; serviceCode: string; currency: string }

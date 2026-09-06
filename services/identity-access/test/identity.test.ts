@@ -56,6 +56,24 @@ describe('identity-access', () => {
     const again = await request(server as never).post('/auth/refresh').send({ refreshToken: tokens.adminRefresh }); expect(again.status).toBe(401);
     tokens.admin = ref.body.data.token; tokens.adminRefresh = ref.body.data.refreshToken;
   });
+  it('names every agent as a principal that can act but never sign in', async () => {
+    const svc = (path: string) => request(server as never).get(path).set('x-service-token', 'development-service-token');
+    const p = await svc('/internal/principals/agent:a4_customer_guidance');
+    expect(p.status).toBe(200);
+    expect(p.body.data).toMatchObject({ sub: 'agent:a4_customer_guidance', name: 'Customer Guidance Agent', kind: 'agent', active: true, roleName: 'AI Agent' });
+    expect(p.body.data.perms).toEqual(expect.arrayContaining(['services.view', 'services.assess', 'portcalls.view']));
+    expect(p.body.data.perms).not.toContain('services.approve'); expect(p.body.data.perms).not.toContain('*');
+    expect((await svc('/internal/principals/agent:insights')).body.data).toMatchObject({ kind: 'agent', roleName: 'AI Agent' });
+    // no password exists for it, so the answer is the same as for any wrong password — no oracle that the account exists
+    const denied = await login('a4-customer-guidance@agents.maritime.internal');
+    expect(denied.status).toBe(401); expect(denied.body.message).toBe('Invalid email or password');
+    const people = await request(server as never).get('/users?limit=100&department=AI%20Agents').set('authorization', `Bearer ${tokens.admin}`);
+    expect(people.body.data).toHaveLength(0);
+    const agents = await request(server as never).get('/users?kind=agent&limit=100').set('authorization', `Bearer ${tokens.admin}`);
+    expect(agents.body.data.length).toBeGreaterThanOrEqual(8); expect(agents.body.data.every((u: { kind: string }) => u.kind === 'agent')).toBe(true);
+    const dash = await request(server as never).get('/users/dashboard').set('authorization', `Bearer ${tokens.admin}`);
+    expect(dash.body.data.byDepartment.find((d: { department: string }) => d.department === 'AI Agents')).toBeUndefined();
+  });
   it('enforces permissions deny-by-default and exposes /meta', async () => {
     // most of the staff have enrolled a second factor; the deny-by-default check wants a pilot who has not, so the token is a plain session
     const pilots = (await request(server as never).get('/users').query({ role: 'Port Pilot', active: 'true', mfa: 'missing' }).set('authorization', `Bearer ${tokens.admin}`)).body.data as { email: string }[];
@@ -71,7 +89,7 @@ describe('identity-access', () => {
     const list = await request(server as never).get('/users?limit=5&q=harbour').set('authorization', `Bearer ${tokens.admin}`);
     expect(list.body.meta.total).toBeGreaterThan(0); expect(list.body.data.length).toBeLessThanOrEqual(5);
     const roles = await request(server as never).get('/roles').set('authorization', `Bearer ${tokens.admin}`);
-    expect(roles.body.data).toHaveLength(18);
+    expect(roles.body.data).toHaveLength(19);
     const pilotRole = roles.body.data.find((r: { name: string }) => r.name === 'Port Pilot');
     // the policy applies wherever a password is set, not only where a person types one
     const weak = await request(server as never).post('/users').set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Test Pilot', email: 'test.pilot@maritime.example', password: 'Pilot@2026', roleId: pilotRole.id });

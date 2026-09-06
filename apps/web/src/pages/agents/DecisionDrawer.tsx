@@ -9,7 +9,7 @@ import { hasPerm } from '../../utils/perms';
 import { fmtDT } from '../../utils/format';
 import { MONO } from '../../theme';
 import DecisionCard from './DecisionCard';
-import { dispositionMeta, escalationMeta, escalationText, reviewStatusMeta } from './constants';
+import { dispositionMeta, escalationMeta, escalationText, outcomeColor, reviewStatusMeta } from './constants';
 import type { AiDecisionDetail } from './types';
 
 /* One decision, opened.
@@ -88,6 +88,36 @@ export default function DecisionDrawer({ id, onClose, onReviewed }: { id: string
               </Typography>
             )}
           </Card>
+
+          {/* What the decision did once applied: every action went through the tool gateway as the agent itself or as the
+            * reviewer who approved it, and each one is on the record with its outcome — including the ones refused. */}
+          {(d.execution?.length > 0 || d.applied || d.disposition === 'APPROVED_BY_HUMAN') && (
+            <Card variant="outlined" sx={{ p: 1.75, mt: 1.5 }} data-testid="decision-execution">
+              <Typography sx={{ fontWeight: 700, fontSize: 13, mb: 1 }}>{t('agents.gateway.carried', 'Carried to the record')}</Typography>
+              {d.execution?.length ? (
+                <Stack spacing={1} component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
+                  {d.execution.map((e, i) => (
+                    <Box component="li" key={`${e.tool}-${i}`}>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                        <Chip size="small" color={outcomeColor(e.outcome)} variant={e.outcome === 'OK' ? 'filled' : 'outlined'} label={t(`agents.gateway.outcomes.${e.outcome}`, e.outcome)} sx={{ height: 20, fontSize: 10.5 }} />
+                        <Typography sx={{ fontWeight: 600, fontSize: 12.5 }}>{e.label || e.tool}</Typography>
+                        <Typography sx={{ fontSize: 10.5, color: 'text.secondary', fontFamily: MONO }}>{e.tool}</Typography>
+                        <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>
+                          {e.as === 'person' ? t('agents.gateway.asPerson', 'as the reviewer') : t('agents.gateway.asAgent', 'as the agent itself')} · {fmtDT(e.at)}
+                        </Typography>
+                      </Stack>
+                      {e.outcome !== 'OK' && (e.code || e.reason) && (
+                        <Typography sx={{ fontSize: 11.5, color: 'text.secondary', mt: 0.25 }}>
+                          {e.code && <b>{t(`agents.gateway.refusal.${e.code}`, e.code)}</b>}{e.code && e.reason ? ' — ' : ''}{e.reason}
+                        </Typography>
+                      )}
+                    </Box>
+                  ))}
+                </Stack>
+              ) : <Typography variant="body2" color="text.secondary">{t('agents.gateway.nothingToCarry', 'Nothing to carry: this conclusion is a recommendation.')}</Typography>}
+              {d.executedAt && <Typography sx={{ mt: 1, fontSize: 10.5, fontFamily: MONO, color: 'text.secondary' }}>{t('agents.gateway.executedAt', { defaultValue: 'carried {{at}}', at: fmtDT(d.executedAt) })}</Typography>}
+            </Card>
+          )}
 
           {d.review && (
             <Card variant="outlined" sx={{ p: 1.75, mt: 1.5, borderColor: 'info.main' }}>

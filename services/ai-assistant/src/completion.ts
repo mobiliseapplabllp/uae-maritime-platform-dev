@@ -1,3 +1,4 @@
+import type { AiGatewayClient } from '@maritime/service-kit';
 /* The completion client.
  *
  * One interface, two implementations, and the service never knows which it has. The default is a deterministic
@@ -35,7 +36,7 @@ export interface CompletionRequest {
   history: { role: 'user' | 'assistant'; text: string }[];
   language: Language;
 }
-export interface CompletionResult { text: string; profile: string; grounded: boolean }
+export interface CompletionResult { text: string; profile: string; grounded: boolean; /** set when a hosted model answered through the tool gateway */ provider?: string; residency?: string; redactions?: number; /** the gateway refused the question before any model saw it */ refused?: boolean; reason?: string }
 /** What Settings → AI assistant may vary per request: the profile key reported, the temperature a gateway composes at, and the key it presents. */
 export interface CompletionOptions { profile?: string; temperature?: number; apiKey?: string }
 export interface CompletionClient { readonly profile: string; complete(request: CompletionRequest, options?: CompletionOptions): Promise<CompletionResult> }
@@ -104,56 +105,32 @@ const trim = (s: string, n: number) => { const t = String(s).replace(/\s+/g, ' '
  * configuration; nothing in this repository exercises it, and no vendor or model is named here — the profile is
  * a key the operator sets.
  */
-export class GatewayCompletionClient implements CompletionClient {
+/**
+ * Composes through the tool gateway, which chooses the provider Settings → AI names, masks personal data, fences
+ * every record and classifies the prompt before anything leaves the platform. The local composer's answer is
+ * prepared first, so a gateway that is unreachable, has no provider configured or fails costs the reader nothing
+ * but the hosted phrasing; a refusal at the gateway is reported as one, never papered over.
+ */
+export class ToolGatewayCompletionClient implements CompletionClient {
   private readonly fallback = new LocalCompletionClient();
-  constructor(
-    private readonly url: string,
-    readonly profile: string,
-    private readonly apiKey?: string,
-    private readonly timeoutMs = 20_000,
-  ) {}
-
+  constructor(private readonly gateway: AiGatewayClient, readonly profile: string, private readonly userToken?: string, private readonly caller = 'assistant') {}
   async complete(request: CompletionRequest, options: CompletionOptions = {}): Promise<CompletionResult> {
-    /* Composed first, so a gateway that is slow, down or misconfigured costs the reader nothing. The profile on
-     * the way out is always the configured one: the reader is told which profile answered, not which code path. */
     const profile = options.profile || this.profile;
-    const apiKey = options.apiKey || this.apiKey;
-    const local = await this.fallback.complete(request);
-    const grounded: CompletionResult = { ...local, profile };
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const local: CompletionResult = { ...(await this.fallback.complete(request)), profile };
     try {
-      const res = await fetch(this.url, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-        body: JSON.stringify({
-          profile,
-          ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-          contract: request.contract,
-          question: request.question,
-          language: request.language,
-          history: request.history,
-          // the record content travels as labelled data, never merged into the instruction
-          grounding: request.grounding.map((b, i) => ({ marker: CITATION(i), label: b.label, kind: b.kind, untrusted: !!b.untrusted, text: b.text })),
-          findings: request.findings,
-          refusals: request.refusals,
-        }),
-      });
-      if (!res.ok) return grounded;
-      const body = (await res.json()) as { text?: string };
-      const text = typeof body.text === 'string' ? body.text.trim() : '';
-      return text ? { text, profile, grounded: grounded.grounded } : grounded;
+      const r = await this.gateway.complete(this.caller, {
+        purpose: 'answer', contract: request.contract, question: request.question, language: request.language, history: request.history,
+        grounding: request.grounding.map((b, i) => ({ marker: CITATION(i), label: b.label, kind: b.kind, untrusted: !!b.untrusted, text: b.text })),
+        findings: request.findings, refusals: request.refusals, ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+      }, { userToken: this.userToken });
+      if (r.outcome === 'OK' && r.text) return { text: r.text.trim(), profile: r.profile || profile, grounded: local.grounded, provider: r.provider, residency: r.residency, redactions: r.redactions };
+      if (r.outcome === 'REFUSED') {
+        const text = request.language === 'ar' ? `رُفض هذا السؤال عند بوابة الأدوات قبل أن يصل إلى أي نموذج: ${r.reason ?? ''}` : `This question was refused at the tool gateway before any model saw it: ${r.reason ?? ''}`;
+        return { text, profile, grounded: false, refused: true, reason: r.reason };
+      }
+      return local;
     } catch {
-      return grounded;
-    } finally {
-      clearTimeout(timer);
+      return local;
     }
   }
-}
-
-/** Builds the client the configuration asks for. The local one is the default and the only one used offline. */
-export function createCompletionClient(cfg: { mode: 'local' | 'gateway'; profile: string; gatewayUrl?: string; gatewayKey?: string; timeoutMs?: number }): CompletionClient {
-  if (cfg.mode === 'gateway' && cfg.gatewayUrl) return new GatewayCompletionClient(cfg.gatewayUrl, cfg.profile, cfg.gatewayKey, cfg.timeoutMs);
-  return new LocalCompletionClient(cfg.profile);
 }

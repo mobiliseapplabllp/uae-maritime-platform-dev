@@ -1,3 +1,4 @@
+import type { AiGatewayClient } from '@maritime/service-kit';
 import type { PoolClient } from 'pg';
 import type { Actor, EventEnvelope } from '@maritime/contracts';
 import type { AuditClient } from '@maritime/service-kit';
@@ -18,7 +19,7 @@ import { type AgentRecord, type Row } from './registry';
  * to the recorder — which applies the autonomy ladder. Nothing here decides whether a conclusion takes effect;
  * that is deliberately somewhere else, because an agent that could choose its own latitude would not have one. */
 
-export interface RunDeps { env: Env; audit?: AuditClient }
+export interface RunDeps { env: Env; audit?: AuditClient; /** the tool gateway applied conclusions act through */ gateway?: AiGatewayClient }
 export interface RunOptions { limit?: number; subjectId?: string; cause?: EventEnvelope; actor?: Actor; now?: Date }
 
 const started = () => process.hrtime.bigint();
@@ -81,7 +82,25 @@ async function openRequests(c: PoolClient, opts: RunOptions): Promise<WorldServi
   if (opts.subjectId) { args.length = 0; args.push(opts.subjectId); where = `WHERE id = $1 OR request_no = $1`; }
   args.push(opts.limit ?? 12);
   const r = await c.query<Row>(`SELECT payload FROM service_requests ${where} ORDER BY submitted_at DESC NULLS LAST, request_no LIMIT $${args.length}`, args);
-  return r.rows.map((x) => x.payload as WorldServiceRequest).filter((x) => x && x.id);
+  return r.rows.map((x) => normaliseRequest(x.payload as Row)).filter((x) => x && x.id);
+}
+/**
+ * The application as the judgements read it. The seed mirrors the fictional world's shape; the live read model carries
+ * the Service Desk's own API shape (number, definition, documents by code, fees and payment). Both are read here, so an
+ * agent judges the live application exactly as it judges the seeded one.
+ */
+export function normaliseRequest(p: Row): WorldServiceRequest {
+  if (!p) return p as WorldServiceRequest;
+  const fees = (p.fees ?? {}) as Row; const payment = (p.payment ?? {}) as Row;
+  const paid = p.fee?.paid ?? (payment.status === 'PAID' || payment.status === 'SETTLED' || !!payment.paidAt || fees.status === 'PAID' || fees.paid === true || Number(fees.total ?? 0) === 0);
+  return {
+    ...p,
+    requestNo: p.requestNo ?? p.number ?? '', serviceId: p.serviceId ?? p.definitionId ?? '', serviceCode: p.serviceCode ?? p.definitionKey ?? '', serviceName: p.serviceName ?? p.definitionName ?? '',
+    currentStage: p.currentStage ?? p.currentState ?? p.stage ?? '', subjectLabel: p.subjectLabel ?? p.subjectName ?? '', submittedAt: p.submittedAt ?? p.createdAt ?? null,
+    documents: (Array.isArray(p.documents) ? p.documents : []).map((d: Row) => ({ ...d, key: d.key ?? d.code, verified: !!d.verified })),
+    fee: p.fee ?? { paid, amount: Number(fees.total ?? 0) },
+    applicant: p.applicant ?? { name: p.applicantName ?? '' },
+  } as WorldServiceRequest;
 }
 async function definitionsById(c: PoolClient): Promise<Map<string, WorldServiceDefinition>> {
   const r = await c.query<Row>('SELECT id, payload FROM service_definitions');
@@ -234,7 +253,7 @@ export async function runAgent(c: PoolClient, deps: RunDeps, agent: AgentRecord,
   for (const r of results) {
     const { decision } = await recordDecision(c, deps.env, {
       agent, judgement: r.judgement, effect: effectOf(agent.agent_id, r.judgement), cohort: r.cohort, latencyMs: r.latencyMs, at: opts.now,
-    }, { cause: opts.cause, actor: opts.actor, audit: deps.audit });
+    }, { cause: opts.cause, actor: opts.actor, audit: deps.audit, gateway: deps.gateway });
     out.push(decision);
   }
   return out;

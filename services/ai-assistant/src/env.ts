@@ -7,15 +7,16 @@ export const envSchema = baseEnvSchema.extend({
   DATABASE_URL: z.string().default('postgres://maritime:maritime@127.0.0.1:5432/maritime_ai_assistant'),
   JURISDICTION: z.string().default('AE'),
   /**
-   * Which completion client answers. `local` is the deterministic composer that ships with the platform and is
-   * what every test and every offline deployment runs on; `gateway` posts to a configured model gateway instead.
-   * The profile is a configuration key the operator sets — this service never names a vendor or a model.
+   * How the assistant reads a record. `gateway` — the platform's mode — runs every tool through the tool gateway as
+   * the person asking, with their own token, so the gateway's allow-lists, quotas and log apply and the service
+   * checks the permission itself. `snapshot` reads this service's own read-model tables instead, for a deployment
+   * that runs the assistant with no gateway reachable; it answers from what it has mirrored and nothing more.
    */
-  COMPLETION_MODE: z.enum(['local', 'gateway']).default('local'),
+  TOOL_MODE: z.enum(['gateway', 'snapshot']).default('gateway'),
+  AI_TOOL_GATEWAY_URL: z.string().optional(),
+  AI_TOOL_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+  /** The profile the platform composer reports when Settings → AI names none. A configuration key, never a vendor's identifier. */
   COMPLETION_PROFILE: z.string().default('platform-local'),
-  MODEL_GATEWAY_URL: z.string().optional(),
-  MODEL_GATEWAY_KEY: z.string().optional(),
-  MODEL_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
   /** How many passages an answer may be grounded in, and how far down the ranking is worth reading. */
   RETRIEVAL_TOP_K: z.coerce.number().int().positive().default(5),
   RETRIEVAL_MIN_SCORE: z.coerce.number().default(0.04),

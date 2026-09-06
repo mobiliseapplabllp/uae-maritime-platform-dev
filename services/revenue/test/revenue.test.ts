@@ -294,6 +294,19 @@ describe('revenue — the invoice book', () => {
     expect((await post(`/invoices/${one.id}/pay`, { paymentRef: 'x' }, biller)).status).toBe(403);
     expect((await del(`/invoices/${one.id}`, biller)).status).toBe(403);
   });
+  it('sends a reminder by hand on an issued account, records it, and refuses one on a draft or a settled account', async () => {
+    const issued = (await g('/invoices?status=ISSUED&limit=1')).body.data[0];
+    expect((await post(`/invoices/${issued.id}/remind`, { note: 'Called the agent as well' }, cashier)).status).toBe(403);
+    const r = await post(`/invoices/${issued.id}/remind`, { note: 'Called the agent as well' }, biller);
+    expect(r.status).toBe(201); expect(r.body.data.remindedAt).toBeTruthy();
+    expect(r.body.data.history.at(-1)).toMatchObject({ from: 'ISSUED', to: 'ISSUED', note: 'Called the agent as well' });
+    const draft = (await g('/invoices?status=DRAFT&limit=1')).body.data[0];
+    expect((await post(`/invoices/${draft.id}/remind`, {}, biller)).status).toBe(409);
+    const paid = (await g('/invoices?status=PAID&limit=1')).body.data[0];
+    expect((await post(`/invoices/${paid.id}/remind`, {}, biller)).status).toBe(409);
+    const types = (await pool.query<{ payload: { type: string } }>('SELECT payload FROM outbox ORDER BY id')).rows.map((x) => x.payload.type);
+    expect(types).toContain(EVENTS.revenue.reminderSent);
+  });
 });
 
 describe('revenue — the event-driven billing path', () => {

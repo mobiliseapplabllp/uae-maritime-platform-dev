@@ -19,6 +19,7 @@ export * from './cache';
 export * from './search';
 export * from './settings-client';
 export * from './integration-client';
+export * from './ai-gateway-client';
 export * from './smtp';
 export * from './crypto/secret-box';
 export * from './lookups';

@@ -85,6 +85,13 @@ export const ROLE_CATALOGUE: RoleDefinition[] = [
   { code: 'MV', name: 'Management Viewer', description: 'Read-only management view across modules', system: false,
     permissions: P('dashboard.view','portcalls.view','vessels.view','incidents.view','inspections.view','invoices.view','legislation.view','facilities.view','reports.view','nmc.view','risk.view','seafarers.view','ai.use',
       'registry.view','services.view','agents.view','models.view') },
+  /* The identity every agent acts under when it reaches a record through the tool gateway. It reads what the
+   * modules show and may do only the reversible: verify a lodged document, ask an applicant for what is missing,
+   * add a note. Nothing here issues, approves, deletes or pays — those stay a person's acts, however sure an
+   * agent is — and an account under this role cannot sign in. */
+  { code: 'AIA', name: 'AI Agent', description: 'The identity an agent acts under through the tool gateway: reads every module, acts only on the reversible', system: true, mfaRequired: false,
+    permissions: P('dashboard.view','vessels.view','certificates.view','portcalls.view','inspections.view','invoices.view','tariffs.view','masters.view',
+      'seafarers.view','legislation.view','facilities.view','nmc.view','incidents.view','risk.view','reports.view','services.view','services.assess','agents.view','registry.view','platform.view') },
 ];
 
 export const roleByName = (name: string): RoleDefinition | undefined => ROLE_CATALOGUE.find((r) => r.name === name);

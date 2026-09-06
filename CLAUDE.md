@@ -5,7 +5,7 @@
 This repository is the from-scratch rebuild of the maritime digital-services platform on its
 target architecture: PostgreSQL per service, independently deployable NestJS microservices behind
 an API gateway, NATS JetStream events, a built-in low-code/no-code service engine, a supervised
-agentic-AI layer (Python/FastAPI), a React/MUI web application whose UI/UX is identical to the
+agentic-AI layer (TypeScript/NestJS, behind a standalone tool gateway), a React/MUI web application whose UI/UX is identical to the
 reference product, an insights app, and Flutter mobile apps. The reference product lives in the
 separate repository `maritime-project-presentation` (branch
 `claude/maritime-project-presentation-g9sphj`) and is consulted read-only; nothing is copied.
@@ -27,8 +27,12 @@ separate repository `maritime-project-presentation` (branch
 4. **No model identifiers** in commits, code comments or pushed artefacts.
 5. **Branches.** Foundation work lands on `main`; every later phase goes through a feature branch
    and a draft pull request. Never push elsewhere.
-6. **Agents hold no privileged data path.** Every AI action goes through `ai-tool-gateway` to the
-   same governed APIs, with the same authorisation and the same audit ledger as a human user.
+6. **Agents hold no privileged data path.** Every AI action goes through `ai-tool-gateway` (:5504) to the
+   same governed APIs, with the same authorisation and the same audit ledger as a human user: the
+   assistant reads as the person asking (their token is forwarded), an agent acts as its own identity
+   (`kind='agent'` rows in identity, role `AI Agent`, never able to sign in), and a hosted completion is
+   redacted, fenced and classified at the gateway before it leaves. `TOOL_MODE=snapshot` on the assistant
+   and `ACTIONS_MODE=off` on the agents exist only for a deployment without the gateway.
 7. **Do not apply the MALL SDLC skill** here; the user asked for direct execution.
 
 ## Architecture in one paragraph

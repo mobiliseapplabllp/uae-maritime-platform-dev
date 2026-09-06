@@ -6,7 +6,7 @@ set -euo pipefail
 DATABASES="maritime_identity maritime_mdm maritime_audit maritime_notifications maritime_scheduler maritime_reporting
 maritime_workflow maritime_rules maritime_instruments maritime_documents maritime_integration maritime_ships
 maritime_seafarers maritime_legislation maritime_centre maritime_inspection maritime_ports maritime_facilities
-maritime_revenue maritime_ai keycloak"
+maritime_revenue maritime_observability maritime_ai_assistant maritime_ai_agents maritime_ai_platform maritime_ai_tool_gateway keycloak"
 for db in $DATABASES; do
   echo "init: creating database $db"
   psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$db'" | grep -q 1 \

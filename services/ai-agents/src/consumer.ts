@@ -1,8 +1,9 @@
 import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS, subjectFor, type EventEnvelope } from '@maritime/contracts';
-import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, KIT_SETTINGS, SettingsClient, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
+import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, KIT_SETTINGS, SettingsClient, withInbox, type EventBus, type Subscription, type AiGatewayClient } from '@maritime/service-kit';
 import type { Env } from './env';
+import { GATEWAY_CLIENT, actingGateway } from './providers';
 import { EMPTY_STATS, agentsForSubject, publishAgent, statsByAgent, TRIGGER_SUBJECTS, type AgentRecord, type Row } from './registry';
 import { publishDecision, type DecisionRecord } from './decisions';
 import { projectSnapshot } from './subjects';
@@ -19,7 +20,7 @@ import { isRunnableAgent, runAgent } from './runtime';
  * An agent that is disabled or suspended is not skipped: it runs, and every conclusion it reaches is escalated
  * rather than applied, which is what leaves an audit trail of what a suspended agent would have done. */
 
-export interface Deps { env: Env; audit: AuditClient; settings?: SettingsClient }
+export interface Deps { env: Env; audit: AuditClient; settings?: SettingsClient; gateway?: AiGatewayClient }
 
 const SWEEPER = { id: 'scheduler', name: 'Scheduler', kind: 'system' as const };
 /** The windows AI Agents → module settings sets: how long a decision may wait for review, how long an agent may sit suspended before the desk is reminded. */
@@ -87,7 +88,7 @@ export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope
   for (const agent of agents) {
     /* A trigger points the agent at the record the event was about when it names one; without a subject the
      * agent falls back to its ordinary batch, which is what a schedule-driven wake wants. */
-    await runAgent(c, deps, agent, { subjectId, limit: subjectId ? 1 : deps.env.RUN_BATCH, cause: event, actor: { id: agent.agent_id, name: agent.name, kind: 'agent' } });
+    await runAgent(c, { env: deps.env, audit: deps.audit, gateway: deps.gateway }, agent, { subjectId, limit: subjectId ? 1 : deps.env.RUN_BATCH, cause: event, actor: { id: agent.agent_id, name: agent.name, kind: 'agent' } });
   }
 }
 
@@ -105,12 +106,13 @@ export class AgentsConsumer implements OnModuleInit, OnModuleDestroy {
     @Inject(KIT_POOL) private readonly pool: Pool,
     @Inject(KIT_ENV) private readonly env: Env,
     @Inject(KIT_SETTINGS) private readonly settings: SettingsClient,
+    @Inject(GATEWAY_CLIENT) private readonly gateway: AiGatewayClient,
     private readonly audit: AuditClient,
   ) {}
   async onModuleInit() { this.sub = await this.bus.subscribe('ai-agents-consumer', [...new Set(SUBJECTS)], (e) => this.handle(e)); }
   async onModuleDestroy() { await this.sub?.stop(); }
   async handle(event: EventEnvelope) {
     if (event.type === EVENTS.scheduler.sweepDecisions) { await withInbox(this.pool, event, async (c) => { await sweepDecisions(c, { env: this.env, audit: this.audit, settings: this.settings }, event); }); return; }
-    await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit }, event));
+    await withInbox(this.pool, event, (c) => applyEvent(c, { env: this.env, audit: this.audit, gateway: actingGateway(this.env, this.gateway) }, event));
   }
 }

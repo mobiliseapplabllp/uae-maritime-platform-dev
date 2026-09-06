@@ -13,6 +13,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD } from '../../utils/format';
@@ -60,6 +61,7 @@ export default function NoticesDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<EventRoundedIcon />} label={t('dash.notices.issued12m', 'Issued, 12 months')} value={data.issued12m} sub={`${k.comingIntoForce} ${t('dash.notices.comingIntoForce', 'coming into force')} · ${k.lapsingSoon} ${t('dash.notices.lapsing', 'lapsing soon')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<DraftsRoundedIcon />} label={t('dash.notices.drafts', 'Drafts')} value={k.drafts} sub={`${k.awaitingReview} ${t('dash.notices.awaitingReview', 'awaiting review')} · ${k.awaitingApproval} ${t('dash.notices.awaitingApproval', 'ready to approve')}`} tone={k.awaitingApproval ? 'warning.main' : 'primary.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<HowToRegRoundedIcon />} label={t('dash.notices.ackOutstanding', 'Acknowledgements owed')} value={k.ackOutstanding} sub={`${k.ackRequired} ${t('dash.notices.ackRequired', 'instruments require one')} · ${data.roll} ${t('dash.notices.onRoll', 'on the roll')}`} tone={k.ackOutstanding ? 'warning.main' : 'success.main'} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="legis" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<TravelExploreRoundedIcon />} label={t('dash.notices.imoItems', 'IMO watch items')} value={imo ? imo.kpis.items : '—'} sub={imo ? `${imo.kpis.new} ${t('dash.notices.imoNewLower', 'new')} · ${imo.kpis.last30Days} ${t('dash.notices.seen30d', 'seen in 30 days')}` : ''} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PublicRoundedIcon />} label={t('dash.notices.imoOverdue', 'Assessments overdue')} value={imo ? imo.kpis.overdue : '—'} sub={imo ? `${imo.kpis.dueSoon} ${t('dash.notices.dueSoon', 'due within a fortnight')}` : ''} tone={imo?.kpis.overdue ? 'error.main' : 'success.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<RssFeedRoundedIcon />} label={t('dash.notices.sources', 'Sources watched')} value={imo ? `${imo.kpis.polledOk}/${imo.kpis.sources}` : '—'} sub={imo ? (imo.kpis.failed ? `${imo.kpis.failed} ${t('dash.notices.failing', 'failing')}` : t('dash.notices.allPolling', 'all answering')) : ''} tone={imo?.kpis.failed ? 'error.main' : 'success.main'} /></Grid>

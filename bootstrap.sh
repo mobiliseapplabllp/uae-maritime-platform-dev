@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One command. Installs whatever is missing, sets up the databases, builds, seeds,
-# starts all 21 services and the web app, and opens it.
+# starts every service and the web app, and opens it.
 #
 #     ./bootstrap.sh
 #
@@ -119,7 +119,7 @@ for s in $(ls services); do
   psql -h 127.0.0.1 -U maritime -d postgres -Atc "select 1 from pg_database where datname='$db'" | grep -q 1 \
     || createdb -h 127.0.0.1 -U maritime "$db"
 done
-ok "21 databases ready"
+ok "$(ls services | grep -vc "^gateway$") databases ready"
 work "seeding from the shared world — every register, one consistent story"
 SEEDED=$(bash infra/local/services.sh seed 2>&1 | grep -c "SEED COMPLETE")
 ok "seeded $SEEDED services"

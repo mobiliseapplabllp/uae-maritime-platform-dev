@@ -74,7 +74,7 @@ export async function upsertServiceRequest(c: Queryable, e: Row) {
       service_name = EXCLUDED.service_name, applicant = EXCLUDED.applicant, subject_kind = EXCLUDED.subject_kind, subject_id = EXCLUDED.subject_id,
       subject_label = EXCLUDED.subject_label, status = EXCLUDED.status, current_stage = EXCLUDED.current_stage, payload = EXCLUDED.payload,
       submitted_at = EXCLUDED.submitted_at, updated_at = now()`,
-    [String(e.id), e.requestNo ?? '', String(e.serviceId ?? ''), e.serviceCode ?? '', e.serviceName ?? '', e.applicant?.name ?? e.applicantName ?? '',
+    [String(e.id), e.requestNo ?? e.number ?? '', String(e.serviceId ?? e.definitionId ?? ''), e.serviceCode ?? e.definitionKey ?? '', e.serviceName ?? e.definitionName ?? '', e.applicant?.name ?? e.applicantName ?? '',
       e.subjectKind ?? '', e.subjectId ? String(e.subjectId) : null, e.subjectLabel ?? '', e.status ?? '', e.currentStage ?? '', json(e), d(e.submittedAt)]);
 }
 export async function upsertServiceDefinition(c: Queryable, e: Row) {

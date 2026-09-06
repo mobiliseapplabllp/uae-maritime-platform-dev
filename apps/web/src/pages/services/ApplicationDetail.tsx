@@ -7,6 +7,10 @@ import TaskAltRoundedIcon from '@mui/icons-material/TaskAltRounded';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import PaymentsRoundedIcon from '@mui/icons-material/PaymentsRounded';
 import WorkspacePremiumRoundedIcon from '@mui/icons-material/WorkspacePremiumRounded';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import DocumentScannerRoundedIcon from '@mui/icons-material/DocumentScannerRounded';
+import DraftDialog from '../../components/ai/DraftDialog';
+import ExtractDialog from '../../components/ai/ExtractDialog';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -28,6 +32,7 @@ export default function ApplicationDetail() {
   const [req, setReq] = useState<RequestDetail | null>(null); const [notes, setNotes] = useState<Note[]>([]);
   const [action, setAction] = useState<{ key: string; label: string } | null>(null); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
   const [newNote, setNewNote] = useState(''); const [internal, setInternal] = useState(true); const [payRef, setPayRef] = useState('');
+  const [draftOpen, setDraftOpen] = useState(false); const [reading, setReading] = useState<{ ref: string; label: string } | null>(null);
   const load = useCallback(() => api.get<RequestDetail>(`/services/requests/${id}`).then((r) => setReq(r.data)).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' }))), [id, dispatch]);
   useEffect(() => { setReq(null); load(); api.get<Note[]>(`/services/requests/${id}/notes`, { headers: { 'X-Quiet': '1' } }).then((r) => setNotes(r.data)).catch(() => setNotes([])); }, [id, load]);
   const assessor = hasPerm(user, 'services.assess') || hasPerm(user, 'services.manage'); const approver = hasPerm(user, 'services.approve') || hasPerm(user, 'services.manage');
@@ -47,6 +52,7 @@ export default function ApplicationDetail() {
       {req.availableActions.map((a) => <Button key={a.key} size="small" variant={/approve|issue|submit/.test(a.key) ? 'contained' : 'outlined'} color={/reject|withdraw/.test(a.key) ? 'error' : 'primary'} disabled={busy} onClick={() => setAction({ key: a.key, label: ar && a.labelAr ? a.labelAr : a.label })} data-testid={`action-${a.key}`}>{ar && a.labelAr ? a.labelAr : a.label}</Button>)}
       {approver && req.status === 'APPROVED' && req.definition.outputs?.instrumentType && !req.issuedInstrument && <Button size="small" variant="contained" startIcon={<WorkspacePremiumRoundedIcon />} disabled={busy} onClick={issue} data-testid="action-issue">{t('services.issueInstrument', 'Issue instrument')}</Button>}
       {assessor && req.assignee?.userId !== user?.id && <Button size="small" variant="text" startIcon={<PersonRoundedIcon />} disabled={busy} onClick={assignMe}>{t('services.assignMe', 'Assign to me')}</Button>}
+      {(assessor || approver) && <Button size="small" variant="text" startIcon={<AutoAwesomeRoundedIcon />} onClick={() => setDraftOpen(true)} data-testid="draft-decision">{t('services.draftDecision', 'Draft the decision letter')}</Button>}
     </Stack> : undefined} />;
   if (!req) return <>{header}<Skeleton variant="rounded" height={360} /></>;
   const fields = req.definition.form.fields; const docDefs = new Map(req.definition.documents.map((d) => [d.code, d]));
@@ -71,6 +77,7 @@ export default function ApplicationDetail() {
                 <Box><Typography variant="body2" sx={{ fontWeight: 600 }}>{def?.label ?? d.code}{def?.required ? ' *' : ''}</Typography><Typography variant="caption" color="text.secondary">{d.name || d.documentId || t('services.notAttached', 'not attached')}{d.notes ? ` · ${d.notes}` : ''}</Typography></Box>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Chip size="small" label={d.verified ? t('services.verified', 'verified') : t('services.unverified', 'unverified')} color={d.verified ? 'success' : 'default'} sx={{ height: 20, fontSize: 10.5 }} />
+                  {(d.name || d.documentId) && <Button size="small" startIcon={<DocumentScannerRoundedIcon sx={{ fontSize: 15 }} />} onClick={() => setReading({ ref: d.documentId || d.code, label: def?.label ?? d.code })} data-testid={`read-doc-${d.code}`}>{t('services.readDocument', 'Read')}</Button>}
                   {assessor && <Button size="small" disabled={busy} onClick={() => verify(d.code, !d.verified)}>{d.verified ? t('services.withdraw', 'Withdraw') : t('services.verify', 'Verify')}</Button>}
                 </Stack>
               </Box>); }) : <Typography variant="body2" color="text.secondary">{t('services.noDocumentsAttached', 'No documents attached')}</Typography>}
@@ -117,6 +124,8 @@ export default function ApplicationDetail() {
           </Card>
         </Grid>
       </Grid>
+      <DraftDialog open={draftOpen} onClose={() => setDraftOpen(false)} kind="DECISION_LETTER" subjectId={id} subjectLabel={`${req.number} · ${req.definitionName}`} />
+      <ExtractDialog open={!!reading} onClose={() => setReading(null)} documentRef={reading?.ref ?? ''} subject={`${req.number} · ${reading?.label ?? ''}`} defaultFields={['documentNumber', 'holderName', 'issueDate', 'expiryDate', 'issuer']} />
       <Dialog open={!!action} onClose={() => !busy && setAction(null)} fullWidth maxWidth="xs">
         <DialogTitle>{action?.label}</DialogTitle>
         <DialogContent><TextField autoFocus fullWidth multiline minRows={3} sx={{ mt: 1 }} label={t('services.note', 'Note')} value={note} onChange={(e) => setNote(e.target.value)} inputProps={{ 'data-testid': 'action-note' }} /></DialogContent>

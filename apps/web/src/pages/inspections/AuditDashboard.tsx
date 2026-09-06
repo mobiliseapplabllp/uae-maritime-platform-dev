@@ -12,6 +12,7 @@ import { notify } from '../../store/uiSlice';
 import { useLookups } from '../../hooks/useLookups';
 import { chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import { fmtD } from '../../utils/format';
 import { KPI_STATUS_COLOR, REGIME_LOOKUP } from './constants';
 import type { InspectionDashboardData, InspectionKpis, KpiResult } from './types';
@@ -69,6 +70,7 @@ export default function AuditDashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
+        <Grid item xs={12} lg={4}><AiInsights module="inspect" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={86} /></Grid>)}
         <Grid item xs={12}><Skeleton variant="rounded" height={300} /></Grid>
       </Grid>

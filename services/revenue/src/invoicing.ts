@@ -110,7 +110,7 @@ export function toApi(r: Row) {
     subtotal: num(r.subtotal), taxName: r.tax_name, taxRatePct: num(r.tax_rate_pct), taxAmount: num(r.tax_amount), total, currency: r.currency,
     status: r.status as InvoiceStatus, proforma: r.proforma, issuedAt: iso(r.issued_at), dueAt: iso(r.due_at), paidAt: iso(r.paid_at),
     paidAmount: paid, balance: round2(total - paid), paymentRef: r.payment_ref, payments: r.payments ?? [], cancelReason: r.cancel_reason, notes: r.notes,
-    history: r.history ?? [], overdue: r.status === 'ISSUED' && !!r.due_at && r.due_at.getTime() < Date.now(), paymentIntent: r.payment_intent ?? null,
+    history: r.history ?? [], overdue: r.status === 'ISSUED' && !!r.due_at && r.due_at.getTime() < Date.now(), remindedAt: r.reminded_at ? new Date(r.reminded_at).toISOString() : null, paymentIntent: r.payment_intent ?? null,
     createdAt: iso(r.created_at)!, updatedAt: iso(r.updated_at)!,
   };
 }

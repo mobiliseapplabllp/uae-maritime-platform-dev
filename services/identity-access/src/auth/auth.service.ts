@@ -67,6 +67,8 @@ export class AuthService {
     const ok = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
     if (!user || !ok) { await this.throttleFail(identity); throw new UnauthorizedException('Invalid email or password'); }
     if (!user.active) { await this.throttleFail(identity); throw new ForbiddenException('Account is inactive'); }
+    // an agent's account exists so the platform can name it; it never holds a session of its own
+    if (user.kind !== 'user') { await this.throttleFail(identity); throw new ForbiddenException('This identity cannot sign in'); }
     await this.throttleClear(identity);
     return this.secondStep(user, ctx);
   }
@@ -130,6 +132,7 @@ export class AuthService {
     const tok = (await res.json()) as { access_token: string; refresh_token: string };
     const user = await this.users.byEmail(email);
     if (!user || !user.active) throw new ForbiddenException('No active platform account for this identity');
+    if (user.kind !== 'user') throw new ForbiddenException('This identity cannot sign in');
     await this.throttleClear(email);
     await this.pool.query('UPDATE users SET last_login_at = now(), dormant_since = NULL WHERE id = $1', [user.id]);
     const policy = await this.policy.get();

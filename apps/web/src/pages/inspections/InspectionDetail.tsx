@@ -10,6 +10,8 @@ import TaskAltRoundedIcon from '@mui/icons-material/TaskAltRounded';
 import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import DraftDialog, { type DraftKind } from '../../components/ai/DraftDialog';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
@@ -58,6 +60,7 @@ export default function InspectionDetail() {
   const [vals, setVals] = useState<Record<string, any>>({});
   const [decideRec, setDecideRec] = useState<RestrictionRecommendation | null>(null);
   const [openBody, setOpenBody] = useState<string | null>(null);
+  const [draftKind, setDraftKind] = useState<DraftKind | null>(null);
 
   const err = (e: Error) => dispatch(notify({ message: e.message, severity: 'error' }));
   const load = useCallback(() => api.get<Inspection>(`/inspections/${id}`).then((r) => {
@@ -118,9 +121,12 @@ export default function InspectionDetail() {
         title={<>{doc.number} <Typography component="span" sx={{ color: 'text.secondary', fontSize: 16, ml: 1 }}>{subjectName}</Typography></>}
         sub={`${regimes.label(doc.type)} · ${t(`inspections.subjectKind.${subjectKind}`)} · ${doc.inspector} · ${t('inspections.plannedOn', { date: fmtDT(doc.plannedAt) })}`}
         actions={<>
+          <Button variant="text" startIcon={<AutoAwesomeRoundedIcon />} onClick={() => setDraftKind('INSPECTION_SUMMARY')} data-testid="draft-summary">{t('inspections.draftSummary', 'Draft the summary')}</Button>
+          {hasPerm(user, 'inspections.edit') && <Button variant="text" startIcon={<AutoAwesomeRoundedIcon />} onClick={() => setDraftKind('DEFICIENCY_NOTICE')} data-testid="draft-deficiency">{t('inspections.draftDeficiency', 'Draft a deficiency notice')}</Button>}
           {canEdit && doc.status === 'PLANNED' && <Button variant="outlined" startIcon={<PlayArrowRoundedIcon />} onClick={start}>{t('inspections.startInspection')}</Button>}
           {canClose && <Button variant="contained" startIcon={<TaskAltRoundedIcon />} onClick={() => { setCloseVals({ remarks: doc.remarks || '', result: live.suggested }); setCloseDlg(true); }}>{t('inspections.closeInspection')}</Button>}
         </>} />
+      <DraftDialog open={!!draftKind} onClose={() => setDraftKind(null)} kind={draftKind ?? 'INSPECTION_SUMMARY'} subjectId={id} subjectLabel={`${doc.number} · ${subjectName}`} />
       <Card sx={{ p: 2, mb: 2 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <StatusChip value={doc.status} map={INSPECTION_STATUS_META} size="medium" />

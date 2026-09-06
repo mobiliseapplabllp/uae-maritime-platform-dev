@@ -6,6 +6,14 @@ export const envSchema = baseEnvSchema.extend({
   PORT: z.coerce.number().default(5502),
   DATABASE_URL: z.string().default('postgres://maritime:maritime@127.0.0.1:5432/maritime_ai_agents'),
   JURISDICTION: z.string().default('AE'),
+  /**
+   * Whether an applied or accepted conclusion is carried through to the record. `gateway` — the platform's mode —
+   * runs the agents' actions through the tool gateway, as the agent or as the person who accepted; `off` records
+   * conclusions and acts on none of them, for a deployment that wants the register without the hands.
+   */
+  ACTIONS_MODE: z.enum(['gateway', 'off']).default('gateway'),
+  AI_TOOL_GATEWAY_URL: z.string().optional(),
+  AI_TOOL_GATEWAY_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
   /** The runtime profile the agents are configured with. A configuration key, never a vendor's own identifier. */
   REASONING_PROFILE: z.string().default('platform-local'),
   REASONING_PROFILE_VERSION: z.string().default('2026-09'),

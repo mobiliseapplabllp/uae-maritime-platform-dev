@@ -7,6 +7,9 @@ import CampaignRoundedIcon from '@mui/icons-material/CampaignRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import DraftDialog from '../../components/ai/DraftDialog';
+import { hasPerm } from '../../utils/perms';
 import api from '../../api/client';
 import { useAppDispatch, useAppSelector, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
@@ -32,6 +35,7 @@ export default function LegislationPage() {
   const { t } = useTranslation();
   const types = useLookups(TYPE_LOOKUP);
   const [reading, setReading] = useState<LegalInstrument | null>(null);
+  const [draftFor, setDraftFor] = useState<LegalInstrument | null>(null);
   const [pending, setPending] = useState<PendingNotice[]>([]);
   const [busy, setBusy] = useState(false);
   const [refresh, setRefresh] = useState(0);
@@ -106,6 +110,7 @@ export default function LegislationPage() {
         toForm={(row) => ({ ...row, issuedDate: toInputD(row.issuedDate), effectiveDate: toInputD(row.effectiveDate), expiryDate: toInputD(row.expiryDate) })}
         deleteMessage={(r) => t('legislation.deleteMessage', { ref: r?.refNo })}
       />
+      <DraftDialog open={!!draftFor} onClose={() => setDraftFor(null)} kind="NOTICE" subjectId={draftFor?.id ?? ''} subjectLabel={draftFor ? `${draftFor.refNo} · ${draftFor.title}` : undefined} />
       <FormDrawer open={!!reading} title={reading?.refNo || ''} subtitle={reading?.title} onClose={() => setReading(null)} width="75vw">
         {reading && (
           <Box>
@@ -114,6 +119,7 @@ export default function LegislationPage() {
               <StatusChip value={reading.status} map={INSTRUMENT_STATUS_META} />
               <Chip size="small" label={types.label(reading.type)} variant="outlined" />
               <Chip size="small" label={reading.category} variant="outlined" />
+              {hasPerm(user, 'legislation.manage') && <Button size="small" variant="text" startIcon={<AutoAwesomeRoundedIcon />} onClick={() => setDraftFor(reading)} data-testid="draft-notice">{t('legislation.draftNotice', 'Draft a notice with the assistant')}</Button>}
               <Chip size="small" label={t('legislation.issuedByOn', { date: fmtD(reading.issuedDate), by: reading.issuedBy })} variant="outlined" />
               {reading.effectiveDate && <Chip size="small" label={t('legislation.effectiveFrom', { date: fmtD(reading.effectiveDate) })} variant="outlined" />}
               {reading.expiryDate && <Chip size="small" color={reading.expired ? 'warning' : 'default'} label={t('legislation.expiresOn', { date: fmtD(reading.expiryDate) })} variant="outlined" />}

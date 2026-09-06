@@ -14,7 +14,8 @@ import { DENSE_ONLY_MIN, EMBED_DIM, denseContribution, denseCosine, embedTokens,
 import { detectVectorMode, recall, writeDense } from '../src/vectors';
 import { CorpusBackfill } from '../src/backfill';
 import { loadIndex, retrieve } from '../src/assistant';
-import { ASSISTANT_CONTRACT, GatewayCompletionClient, LocalCompletionClient, createCompletionClient } from '../src/completion';
+import { ASSISTANT_CONTRACT, LocalCompletionClient, ToolGatewayCompletionClient } from '../src/completion';
+import { AiGatewayClient } from '@maritime/service-kit';
 import { plan } from '../src/tools';
 
 const DB = 'maritime_ai_assistant_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
@@ -41,7 +42,7 @@ beforeAll(async () => {
     json(404, { success: false, message: 'unset' });
   });
   await new Promise<void>((r) => fakeMdm.listen(0, '127.0.0.1', () => { mdmPort = (fakeMdm.address() as { port: number }).port; r(); }));
-  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: `http://127.0.0.1:${mdmPort}` } as never);
+  env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: `http://127.0.0.1:${mdmPort}`, TOOL_MODE: 'snapshot' } as never);
   const base = { scope: { level: 'NATIONAL' }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const resolver = new StaticPrincipalResolver({
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Admin', perms: ['*'] },
@@ -138,15 +139,12 @@ describe('ai-assistant — the completion client', () => {
     expect(out.grounded).toBe(false);
     expect(out.text).toMatch(/could not find a record/i);
   });
-  it('is chosen by configuration, and the configured one falls back rather than going silent', async () => {
-    expect(createCompletionClient({ mode: 'local', profile: 'platform-local' })).toBeInstanceOf(LocalCompletionClient);
-    const gateway = createCompletionClient({ mode: 'gateway', profile: 'operator-configured', gatewayUrl: 'http://127.0.0.1:1/complete', timeoutMs: 500 });
-    expect(gateway).toBeInstanceOf(GatewayCompletionClient);
-    const out = await gateway.complete({ contract: ASSISTANT_CONTRACT, question: 'q', findings: ['A finding from the record.'], grounding: [], refusals: [], history: [], language: 'en' });
+  it('composes through the tool gateway when there is one, and falls back to the platform composer rather than going silent', async () => {
+    const dead = new ToolGatewayCompletionClient(new AiGatewayClient('http://127.0.0.1:1', 'development-service-token', 500), 'operator-configured');
+    const out = await dead.complete({ contract: ASSISTANT_CONTRACT, question: 'q', findings: ['A finding from the record.'], grounding: [], refusals: [], history: [], language: 'en' });
     expect(out.text).toContain('A finding from the record.');
     expect(out.profile).toBe('operator-configured');
-    // with no gateway url configured the local composer stands in, which is what every offline deployment runs
-    expect(createCompletionClient({ mode: 'gateway', profile: 'p' })).toBeInstanceOf(LocalCompletionClient);
+    expect(out.provider).toBeUndefined();
   });
 });
 

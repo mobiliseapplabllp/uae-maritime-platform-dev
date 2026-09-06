@@ -54,6 +54,7 @@ export const PLATFORM_SERVICES: PlatformService[] = [
   svc('ai-assistant', 'AI_ASSISTANT_URL', 5501, 'ai'),
   svc('ai-agents', 'AI_AGENTS_URL', 5502, 'ai'),
   svc('ai-platform', 'AI_PLATFORM_URL', 5503, 'ai'),
+  svc('ai-tool-gateway', 'AI_TOOL_GATEWAY_URL', 5504, 'ai'),
 ];
 
 /** Everything the gateway fronts: every service but itself. */

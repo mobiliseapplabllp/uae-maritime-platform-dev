@@ -1,13 +1,14 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { PageQuery } from '@maritime/contracts';
 import {
-  ApiError, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, SettingsClient, escapeLike, forbidden, notFound, paged, parsePage, withTx, zod, type Principal,
+  ApiError, AuditClient, CurrentUser, KIT_ENV, KIT_POOL, KIT_SETTINGS, RequirePerm, SettingsClient, escapeLike, forbidden, notFound, paged, parsePage, withTx, zod, type AiGatewayClient, type Principal,
 } from '@maritime/service-kit';
 import type { Env } from './env';
 import { COMPLETION_CLIENT, type CompletionClient } from './completion';
 import { aiSettingsOf } from './ai-settings';
+import { GATEWAY_CLIENT } from './providers';
 import { DRAFT_KINDS, DRAFT_PERMISSION, draftApi, mayPrepare, prepareDraft, publishDraft, type DraftKind, type DraftRecord } from './drafts';
 
 /* Drafting a notice, a decision letter or an inspection summary from the platform's own record.
@@ -31,6 +32,7 @@ export class DraftsController {
     @Inject(KIT_ENV) private readonly env: Env,
     @Inject(COMPLETION_CLIENT) private readonly completion: CompletionClient,
     @Inject(KIT_SETTINGS) private readonly settings: SettingsClient,
+    @Inject(GATEWAY_CLIENT) private readonly gateway: AiGatewayClient,
     private readonly audit: AuditClient,
   ) {}
 
@@ -66,13 +68,16 @@ export class DraftsController {
     return draftApi(r.rows[0]);
   }
 
-  /** Prepares the draft from records the caller is entitled to have drafted from, and publishes it as prepared. */
+  /** Prepares the draft from records the caller is entitled to have drafted from, and publishes it as prepared. A record the
+   *  assistant does not hold itself (an application file) is read through the tool gateway as the caller, with their token. */
   @RequirePerm('ai.use') @Post()
-  async prepare(@Body(zod(prepareBody)) body: z.infer<typeof prepareBody>, @CurrentUser() user: Principal) {
+  async prepare(@Body(zod(prepareBody)) body: z.infer<typeof prepareBody>, @CurrentUser() user: Principal, @Headers('authorization') authorization?: string) {
     const ai = await aiSettingsOf(this.settings, this.env);
     if (!ai.enabled) throw new ApiError(503, 'The assistant is switched off in Settings → AI assistant');
     if (!mayPrepare(body.kind, user.perms)) throw forbidden(`Preparing a ${body.kind.toLowerCase().replace(/_/g, ' ')} needs the ${DRAFT_PERMISSION[body.kind]} permission`);
-    const prepared = await prepareDraft(this.pool, body, user.name);
+    const viaGateway = this.env.TOOL_MODE === 'gateway';
+    const userToken = viaGateway ? (authorization ?? '').replace(/^Bearer\s+/i, '').trim() || undefined : undefined;
+    const prepared = await prepareDraft(this.pool, body, user.name, { gateway: viaGateway ? this.gateway : undefined, userToken });
     if (!prepared) throw notFound('No record on the platform matches that subject, so there is nothing to draft from');
     return withTx(this.pool, async (c) => {
       const r = await c.query<DraftRecord>(

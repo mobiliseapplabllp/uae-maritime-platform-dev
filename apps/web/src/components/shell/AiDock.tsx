@@ -1,6 +1,6 @@
 /* In-portal assistant drawer — answers from this portal's live records and returns links that navigate straight to the citing screen. */
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Alert, Drawer, Box, Typography, IconButton, TextField, Chip, Stack, Divider, keyframes, Button } from '@mui/material';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
@@ -10,6 +10,21 @@ import api from '../../api/client';
 import { BRAND_GRADIENT, MONO } from '../../theme';
 import { AI_PORTAL } from '../../aiPortal';
 import { internalPath } from '../../utils/navigation';
+import { MODULES } from '../../modules';
+
+/** The module whose screens the reader is on, so the dock offers that module's questions first. */
+export function moduleOfPath(pathname: string): { key: string; short: string } | null {
+  let best: { key: string; short: string; len: number } | null = null;
+  for (const m of MODULES) {
+    const paths = [m.home, ...m.nav.flatMap((n) => n.items.map((i) => i.to))];
+    for (const p of paths) { if (p && p !== '/' && (pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}?`)) && p.length > (best?.len ?? 0)) best = { key: m.key, short: m.short, len: p.length }; }
+  }
+  if (best) return { key: best.key, short: best.short };
+  // a screen the navigation does not list still belongs to the module whose paths share its first segment
+  const seg = pathname.split('/')[1];
+  const m = seg ? MODULES.find((x) => x.home !== '/' && x.home.split('/')[1] === seg) : undefined;
+  return m ? { key: m.key, short: m.short } : null;
+}
 
 const blink = keyframes`0%,80%,100%{opacity:.25}40%{opacity:1}`;
 interface Source { label: string; link: string }
@@ -29,6 +44,8 @@ function Rich({ text }: { text: string }) {
 
 export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean; onClose: () => void; onOpenPortal?: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const here = moduleOfPath(location.pathname);
   const [messages, setMessages] = useState<Msg[]>(() => { try { return JSON.parse(sessionStorage.getItem('ai-chat') || 'null') || []; } catch { return []; } });
   const [input, setInput] = useState('');
   const [thinking, setThinking] = useState(false);
@@ -39,7 +56,8 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
   useEffect(() => { if (open) api.get<typeof status>('/ai/status', { headers: { 'X-Quiet': '1' } }).then((r) => setStatus(r.data)).catch(() => setStatus(null)); }, [open, messages.length]);
   const blocked = status ? (!status.enabled ? 'The assistant is switched off in Settings → AI assistant.' : status.budget.exhausted ? 'The assistant has spent today\'s token budget; it resumes tomorrow or when the budget is raised in Settings → AI assistant.' : null) : null;
 
-  useEffect(() => { if (open && !suggestions.length) api.get<string[]>('/ai/suggestions', { headers: { 'X-Quiet': '1' } }).then((r) => setSuggestions(r.data)).catch(() => {}); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the suggestions follow the screen: on a module's pages the dock offers that module's questions first
+  useEffect(() => { if (open) api.get<string[]>('/ai/suggestions', { params: here ? { module: here.key } : {}, headers: { 'X-Quiet': '1' } }).then((r) => setSuggestions(r.data)).catch(() => {}); }, [open, here?.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { try { sessionStorage.setItem('ai-chat', JSON.stringify(messages.slice(-30))); } catch { /* ignore */ } bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
 
   const send = (text?: string) => {
@@ -67,7 +85,7 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {messages.length === 0 && (
           <Box sx={{ mt: 2 }}>
-            <Typography sx={{ fontSize: 13.5, color: 'text.secondary', mb: 1.5 }}>Ask about vessels, port calls, berths, certificates, risk, incidents or billing. Try:</Typography>
+            <Typography sx={{ fontSize: 13.5, color: 'text.secondary', mb: 1.5 }} data-testid="ai-dock-intro">{here ? `Ask about ${here.short}, or anything else on the platform. Try:` : 'Ask about vessels, port calls, berths, certificates, risk, incidents or billing. Try:'}</Typography>
             <Stack spacing={0.75}>{suggestions.map((s) => <Chip key={s} label={s} variant="outlined" onClick={() => send(s)} sx={{ justifyContent: 'flex-start', height: 'auto', py: 0.75, '& .MuiChip-label': { whiteSpace: 'normal', fontSize: 12.5 } }} />)}</Stack>
             {onOpenPortal && <Button size="small" sx={{ mt: 2 }} endIcon={<OpenInNewRoundedIcon sx={{ fontSize: 14 }} />} onClick={onOpenPortal}>Open {AI_PORTAL.name} for analytics</Button>}
           </Box>

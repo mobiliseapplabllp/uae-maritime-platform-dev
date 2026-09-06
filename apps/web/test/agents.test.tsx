@@ -68,6 +68,7 @@ const decisionBase = {
   entityType: 'Vessel', entityId: 'v1', entityLabel: 'MV Coral Reach', inputs: { imo: '9000001' }, output: { band: 'HIGH' },
   reviewedById: null, reviewedBy: '', reviewedAt: null, overrideReason: '', supersedesId: null, superseded: false,
   modelKey: 'platform-local', modelVersion: '2026-09', latencyMs: 42, cohort: { flag: 'Panama', vesselType: 'CONT' }, createdAt: null,
+  execution: [], executedAt: null,
 };
 const decisions: AiDecision[] = [
   {

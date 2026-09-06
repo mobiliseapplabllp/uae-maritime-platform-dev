@@ -1,5 +1,6 @@
-/* AI Agent Operations routes — the console, the append-only decision register, the human queue and the assurance
- * reports. `agents.view` reads; configuring and reviewing are checked inside the pages that offer those actions. */
+/* AI Agent Operations routes — the console, the append-only decision register, the human queue, the assurance
+ * reports and the tool gateway. `agents.view` reads; configuring and reviewing are checked inside the pages that
+ * offer those actions. */
 import { lazy } from 'react';
 import type { RouteDef } from '../../routes';
 
@@ -10,4 +11,5 @@ export const routes: RouteDef[] = [
   { path: '/agents/decisions', perm: 'agents.view', element: L(() => import('./DecisionRegister')) },
   { path: '/agents/escalations', perm: 'agents.view', element: L(() => import('./EscalationQueue')) },
   { path: '/agents/assurance', perm: 'agents.view', element: L(() => import('./Assurance')) },
+  { path: '/agents/gateway', perm: 'agents.view', element: L(() => import('./ToolGateway')) },
 ];

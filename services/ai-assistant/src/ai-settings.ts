@@ -18,7 +18,7 @@ export async function aiSettingsOf(settings: SettingsClient, env: Env): Promise<
   const budget = Number(v.dailyTokenBudget);
   return {
     enabled: !off(v.enabled),
-    provider: String(v.provider ?? '').trim() || env.COMPLETION_MODE,
+    provider: String(v.provider ?? '').trim() || 'local',
     profile: String(v.model ?? '').trim() || env.COMPLETION_PROFILE,
     groundedOnly: !off(v.groundedOnly ?? true),
     temperature: Number.isFinite(temperature) ? Math.min(1, Math.max(0, temperature)) : 0.2,

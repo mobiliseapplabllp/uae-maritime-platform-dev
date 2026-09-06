@@ -1,14 +1,13 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query } from '@nestjs/common';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import type { PageQuery } from '@maritime/contracts';
-import {
-  AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal,
-} from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, escapeLike, notFound, paged, parsePage, withTx, zod, type Principal, AiGatewayClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { DISPOSITIONS, PENDING_DISPOSITIONS, REVIEW_STATUSES } from './autonomy';
 import { decisionApi, isOpenForReview, reviewDecision, type DecisionRecord } from './decisions';
 import type { Row } from './registry';
+import { GATEWAY_CLIENT, actingGateway } from './providers';
 
 /* The decision register and the human queue that hangs off it.
  *
@@ -32,6 +31,7 @@ export class DecisionsController {
   constructor(
     @Inject(KIT_POOL) private readonly pool: Pool,
     @Inject(KIT_ENV) private readonly env: Env,
+    @Inject(GATEWAY_CLIENT) private readonly gateway: AiGatewayClient,
     private readonly audit: AuditClient,
   ) {}
 
@@ -128,7 +128,8 @@ export class DecisionsController {
    * exactly as the agent wrote it and the verdict is recorded as a superseding row.
    */
   @RequirePerm('agents.review') @Post(':id/review')
-  async review(@Param('id') id: string, @Body(zod(reviewBody)) body: z.infer<typeof reviewBody>, @CurrentUser() user: Principal) {
+  async review(@Param('id') id: string, @Body(zod(reviewBody)) body: z.infer<typeof reviewBody>, @CurrentUser() user: Principal, @Headers('authorization') authorization?: string) {
+    const userToken = (authorization ?? '').replace(/^Bearer\s+/i, '').trim() || undefined;
     const reason = body.reason.trim();
     if (!body.accept && !reason) throw badRequest('Overturning a decision requires a reason');
     return withTx(this.pool, async (c) => {
@@ -137,8 +138,8 @@ export class DecisionsController {
       if (!original) throw notFound('Decision not found');
       if (original.supersedes_id) throw conflict('This row records a review outcome and cannot itself be reviewed');
       if (!isOpenForReview(original)) throw conflict('This decision has already been reviewed');
-      const entity = await reviewDecision(c, this.env, original, { accept: body.accept, reason, reviewer: { id: user.id, name: user.name } }, {
-        actor: { id: user.id, name: user.name, kind: 'user' },
+      const entity = await reviewDecision(c, this.env, original, { accept: body.accept, reason, reviewer: { id: user.id, name: user.name }, userToken }, {
+        actor: { id: user.id, name: user.name, kind: 'user' }, gateway: actingGateway(this.env, this.gateway), audit: this.audit,
       });
       await this.audit.record(c, {
         action: body.accept ? 'AI_DECISION_ACCEPTED' : 'AI_DECISION_OVERRIDDEN', entity: 'AiDecision', entityId: original.id,

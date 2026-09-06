@@ -1,9 +1,9 @@
-import type { Queryable } from '@maritime/service-kit';
+import type { AiGatewayClient, Queryable } from '@maritime/service-kit';
 import type { Env } from './env';
 import { ASSISTANT_CONTRACT, type CompletionClient, type CompletionOptions, type GroundingBlock, type Language } from './completion';
 import { DEFAULT_DENSE_WEIGHT, embedQueryDense, search, type CorpusIndex, type Hit, type IndexedDoc } from './retrieval';
 import { detectVectorMode, recall } from './vectors';
-import { plan, runTools, type Citation, type Row, type ToolRefusal, type ToolRun } from './tools';
+import { TOOLS, plan, runTools, type Citation, type Row, type ToolDef, type ToolRefusal, type ToolRun } from './tools';
 
 /* The answer pipeline.
  *
@@ -22,6 +22,8 @@ export interface AnswerRequest {
   language?: Language;
   /** What Settings → AI assistant asks of the completion client for this turn. */
   completionOptions?: CompletionOptions;
+  /** the asking person's own token, carried to the gateway so every read runs as them */
+  userToken?: string;
 }
 export interface Source { label: string; link: string }
 export interface AnswerResult {
@@ -38,7 +40,7 @@ export interface AnswerResult {
   latencyMs: number;
 }
 
-export interface AssistantDeps { env: Env; db: Queryable; completion: CompletionClient; index: CorpusIndex; now?: Date }
+export interface AssistantDeps { env: Env; db: Queryable; completion: CompletionClient; index: CorpusIndex; now?: Date; /** the tool surface in force — the gateway-backed tools, or the snapshot tools where no gateway is reachable */ tools?: ToolDef[]; gateway?: AiGatewayClient }
 
 /** The prompts the dock offers when a conversation is empty. */
 export const SUGGESTIONS = [
@@ -49,6 +51,26 @@ export const SUGGESTIONS = [
   'What incidents are open on the desk?',
   'What does the register say about port state control inspections?',
 ];
+
+/** What the dock offers on each module's screens: the questions that module's records answer. */
+export const SUGGESTIONS_BY_MODULE: Record<string, string[]> = {
+  ops: ['How busy is the harbour today?', 'Which vessels are expected in the next 72 hours?', 'Which calls waited longest at anchorage?', 'What is berth occupancy right now?'],
+  ships: ['Which certificates expire in the next 90 days?', 'Which vessels carry the highest risk?', 'How many vessels are on the register?', 'Which vessels are due for dry dock?'],
+  crew: ['How many seafarers are on board?', 'Which seafarers have a medical certificate issue?', 'Which crew lists were lodged this month?'],
+  legis: ['Which notices still need my acknowledgement?', 'How many instruments are in force?', 'Which drafts await approval?'],
+  incidents: ['Which incidents are open?', 'Which incidents are high or critical?', 'What is the mean time to resolve an incident?'],
+  inspect: ['How many inspections are open?', 'What is the detention rate?', 'Which deficiencies are outstanding?'],
+  facil: ['Which licences are due for renewal?', 'Which companies are suspended?', 'Which obligations are overdue?'],
+  services: ['Which applications are past their service level?', 'How many applications are open?', 'What is the median time to a decision?'],
+  finance: ['Which invoices are overdue?', 'What is outstanding on the receivables ledger?', 'What was billed this month?', 'What is days sales outstanding?'],
+  mis: ['Give me an overview of everything', 'How many vessels are alongside?', 'What was collected this month?'],
+  masters: ['How is master data quality?', 'Are there duplicate master entries?', 'How complete are the golden company records?'],
+  agents: ['Which agents ran today?', 'Give me an overview of everything'],
+  admin: ['Which privileged accounts lack a second factor?', 'Which accounts are dormant?', 'Which changes await a second approver?'],
+  platform: ['Is the platform healthy?', 'Which services are down?', 'Are any platform incidents open?'],
+  nmc: ['Which alerts are open on the traffic picture?', 'Which restrictions are in force?'],
+};
+export const suggestionsFor = (module?: string) => (module && SUGGESTIONS_BY_MODULE[module]) || SUGGESTIONS;
 
 /** Follow-ups worth offering after an answer, chosen from what the answer actually touched. */
 export function followUps(tools: ToolRun[], hits: { doc: IndexedDoc }[]): string[] {
@@ -130,9 +152,9 @@ export async function answer(deps: AssistantDeps, request: AnswerRequest): Promi
   const question = String(request.question ?? '').trim();
 
   // 1. what the question asks for, and what this user is allowed to ask for
-  const { allowed, refused } = plan(question, request.permissions);
+  const { allowed, refused } = plan(question, request.permissions, deps.tools ?? TOOLS);
   // 2. the records, read through the tool surface and never around it
-  const tools = await runTools({ db: deps.db, permissions: request.permissions, now }, question, allowed);
+  const tools = await runTools({ db: deps.db, permissions: request.permissions, now, gateway: deps.gateway, userToken: request.userToken }, question, allowed);
   // 3. the passages this user may see, ranked
   const hits = await retrieve(deps.db, deps.index, question, {
     permissions: request.permissions, topK: deps.env.RETRIEVAL_TOP_K, minScore: deps.env.RETRIEVAL_MIN_SCORE,
@@ -172,8 +194,8 @@ export async function answer(deps: AssistantDeps, request: AnswerRequest): Promi
     refusals: refused,
     flagged: hits.filter((h) => h.doc.untrusted).map((h) => ({ id: h.doc.id, label: h.doc.title, markers: h.doc.injectionMarkers })),
     suggestions: followUps(tools, hits),
-    /* The profile the operator configured, never a vendor's model name. */
-    engine: `${composed.profile} (grounded)`,
+    /* The profile the operator configured, never a vendor's model name; where a hosted model answered, the gateway says which residency it sat in. */
+    engine: composed.refused ? 'refused at the tool gateway' : composed.provider && composed.provider !== 'local' ? `${composed.profile} via tool gateway, ${composed.residency === 'AE' ? 'in-country' : 'hosted abroad'} (grounded)` : `${composed.profile} (grounded)`,
     grounded: composed.grounded,
     latencyMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6),
   };

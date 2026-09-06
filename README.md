@@ -15,7 +15,7 @@ pnpm dev                           # gateway :5200, services :54xx, web :5300
 On a Mac with Docker Desktop: `docker compose -f infra/compose/docker-compose.yml up --build`.
 
 ## Layout
-`apps/` web, insights, mobile · `services/` platform and domain services · `ai/` AI services ·
+`apps/` web, insights, mobile · `services/` platform, domain and AI services ·
 `packages/` contracts, service-kit, design-system, world · `definitions/` versioned service
 definitions per drop · `infra/` local runtime, compose, Helm, OpenTofu, gateway, stubs, evidence ·
 `security/` threat models and control mapping · `tools/` migration, export, exit, escrow ·

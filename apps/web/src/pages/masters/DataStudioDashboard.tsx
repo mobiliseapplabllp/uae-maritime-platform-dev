@@ -12,6 +12,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD, fmtNum, fromNow } from '../../utils/format';
@@ -48,6 +49,7 @@ export default function DataStudioDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<VerifiedRoundedIcon />} label={t('dash.studio.quality', 'Data quality')} value={`${k.qualityScore} · ${k.grade}`} sub={t('dash.studio.qualitySub', 'mean of the five dimensions')} tone={k.qualityScore >= 85 ? 'success.main' : k.qualityScore >= 70 ? 'warning.main' : 'error.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<TranslateRoundedIcon />} label={t('dash.studio.arabic', 'Arabic labels')} value={`${k.arabicPct}%`} sub={t('dash.studio.arabicSub', 'of master values carry one')} tone={k.arabicPct >= 95 ? 'success.main' : 'warning.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<ContentCopyRoundedIcon />} label={t('dash.studio.duplicates', 'Duplicate labels')} value={k.duplicates} sub={t('dash.studio.duplicatesSub', 'same label twice within a master')} tone={k.duplicates ? 'warning.main' : 'success.main'} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="masters" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<RuleRoundedIcon />} label={t('dash.studio.invalid', 'Malformed values')} value={k.invalid} sub={t('dash.studio.invalidSub', 'bad code or empty label')} tone={k.invalid ? 'error.main' : 'success.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<UpdateRoundedIcon />} label={t('dash.studio.stale', 'Masters untouched')} value={k.staleMasters} sub={t('dash.studio.staleSub', { defaultValue: 'for more than {{days}} days · {{n}} values changed in 30 d', days: k.staleDays, n: k.updated30d })} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<DirectionsBoatFilledRoundedIcon />} label={t('dash.studio.golden', 'Golden records')} value={k.goldenVessels + k.goldenCompanies} sub={`${k.goldenVessels} ${t('dash.studio.vessels', 'vessels')} · ${k.goldenCompanies} ${t('dash.studio.companies', 'companies')} · ${k.pendingRecords} ${t('dash.studio.pending', 'unpublished')}`} /></Grid>

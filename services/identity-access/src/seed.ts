@@ -4,6 +4,10 @@ import { buildWorld, DEMO_PASSWORD } from '@maritime/world';
 import { createDb, generateTotpSecret, runMigrations, withTx } from '@maritime/service-kit';
 import { env } from './env';
 import { SecretBox } from './mfa/secrets';
+import { createHash } from 'node:crypto';
+
+/** A stable identifier for an agent's account, so a re-seed on any environment finds the same row. */
+const agentUuid = (agentId: string) => { const h = createHash('sha256').update(`agent:${agentId}`).digest('hex'); return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`; };
 
 /** Seeds the roles and the fictional staff directory. Idempotent: rows are upserted by name/email. */
 export async function seedIdentity(databaseUrl: string, profile?: string) {
@@ -28,6 +32,17 @@ export async function seedIdentity(databaseUrl: string, profile?: string) {
          ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role_id = EXCLUDED.role_id, designation = EXCLUDED.designation, department = EXCLUDED.department, phone = EXCLUDED.phone, active = EXCLUDED.active, scope = EXCLUDED.scope, updated_at = now()`,
         [u.id, u.name, u.email, hash, roleIds.get(u.roleName), u.designation, u.department, u.phone, u.active,
          JSON.stringify(u.scope ?? { level: 'NATIONAL' }), u.lastLoginAt]);
+    }
+    /* The agents as principals: one account per agent under the AI Agent role, carrying the subject the tool gateway
+     * mints tokens for. No password, ever — an agent cannot sign in — and a re-seed keeps it that way. */
+    const agentRole = roleIds.get('AI Agent');
+    const agents = [...world.agentConfigs.map((a) => ({ agentId: a.agentId, name: a.name, role: a.role, enabled: a.enabled })), { agentId: 'insights', name: 'Module Insights', role: 'Module insights and next actions', enabled: true }];
+    for (const a of agents) {
+      await c.query(
+        `INSERT INTO users(id, name, email, password_hash, role_id, designation, department, phone, active, scope, subject, kind)
+         VALUES ($1, $2, $3, NULL, $4, $5, 'AI Agents', '', $6, '{"level":"NATIONAL"}', $7, 'agent')
+         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, role_id = EXCLUDED.role_id, designation = EXCLUDED.designation, active = EXCLUDED.active, subject = EXCLUDED.subject, kind = 'agent', password_hash = NULL, updated_at = now()`,
+        [agentUuid(a.agentId), a.name, `${a.agentId.replace(/_/g, '-')}@agents.maritime.internal`, agentRole, a.role, a.enabled, `agent:${a.agentId}`]);
     }
     /* The fictional staff directory as an administration's really is: accounts opened over the years rather than all on
      * seed day; most of the staff in a role that requires a second factor already enrolled, with a working secret nobody
@@ -56,7 +71,7 @@ export async function seedIdentity(databaseUrl: string, profile?: string) {
     // whatever earlier seeds left behind, no account was used or enrolled before it existed
     await c.query(`UPDATE users SET mfa_enrolled_at = GREATEST(mfa_enrolled_at, created_at + interval '1 day') WHERE mfa_enrolled_at < created_at`);
     await c.query(`UPDATE users SET created_at = last_login_at - interval '1 day' WHERE last_login_at < created_at`);
-    return { roles: roleIds.size, users: world.users.length, profile: world.profile };
+    return { roles: roleIds.size, users: world.users.length, agents: agents.length, profile: world.profile };
   });
   await pool.end();
   return counts;

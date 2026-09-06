@@ -2,7 +2,7 @@
  * autonomy ladder raises, and the wording of a run summary. Every code the service can return is given a
  * sentence here: an officer reading the queue should never be shown a raw enum. */
 import type { ChipColor } from '../../utils/status';
-import type { AutonomyLevel, Disposition, Effect, EscalationCode, ReviewStatus, RunResult } from './types';
+import type { AutonomyLevel, CallOutcome, CallerUpdate, Disposition, Effect, EscalationCode, GatewayCaller, GatewayRefusalCode, GatewayTier, InferenceOutcome, ReviewStatus, RunResult } from './types';
 
 export const LEVELS: AutonomyLevel[] = ['SUPERVISED', 'ASSISTED', 'AUTONOMOUS'];
 /** Label, chip colour and what the level actually permits — shown wherever a level is offered. */
@@ -107,3 +107,40 @@ export const triggerLabel = (kind?: string | null, cadence?: string | null) => {
   const base = TRIGGER_LABEL[String(kind)] ?? String(kind || '—');
   return cadence && kind === 'SCHEDULE' ? `${base} · ${cadence.toLowerCase()}` : base;
 };
+
+/* ------------------------------------------------------------------------------ tool gateway --- */
+
+/** The tiers in the order of their reach; a caller's ceiling is one of them. */
+export const GATEWAY_TIERS: GatewayTier[] = ['READ', 'PROPOSE', 'ACT', 'INFER'];
+export const TIER_COLOR: Record<GatewayTier, ChipColor> = { READ: 'default', PROPOSE: 'info', ACT: 'warning', INFER: 'secondary' };
+export const CALL_OUTCOMES: CallOutcome[] = ['OK', 'REFUSED', 'FAILED', 'DRY_RUN'];
+export const INFERENCE_OUTCOMES: InferenceOutcome[] = ['OK', 'REFUSED', 'FAILED', 'LOCAL'];
+/** The fifteen rules the gateway can refuse by, in the order the policy applies them. */
+export const GATEWAY_REFUSAL_CODES: GatewayRefusalCode[] = [
+  'CALLER_UNKNOWN', 'CALLER_DISABLED', 'TOOL_UNKNOWN', 'TOOL_DISABLED', 'NOT_EXPOSED', 'TOOL_NOT_ALLOWED', 'TIER_CEILING',
+  'HOURLY_QUOTA', 'DAILY_QUOTA', 'PERMISSION', 'NO_PRINCIPAL', 'PRINCIPAL_UNKNOWN', 'BAD_ARGS', 'INJECTION', 'NO_PROVIDER',
+];
+/** One chip colour per outcome, shared by the call log, the inference log and a decision's execution trail. */
+const OUTCOME_COLOR: Record<string, ChipColor> = { OK: 'success', REFUSED: 'error', FAILED: 'error', DRY_RUN: 'info', LOCAL: 'default', SKIPPED: 'default' };
+export const outcomeColor = (outcome: string): ChipColor => OUTCOME_COLOR[outcome] ?? 'default';
+/** A fingerprint is a hash; twelve characters tell one apart from another without filling a column. */
+export const shortFingerprint = (fp?: string | null) => (fp ? fp.slice(0, 12) : '—');
+/** Usage read against its quota: "12 / 300". */
+export const quotaText = (used: number, quota: number) => `${used} / ${quota}`;
+/** The allow-list as typed — commas or new lines between names, blanks dropped, a name listed twice kept once. */
+export const parseToolList = (text: string): string[] => Array.from(new Set(text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)));
+
+/** The caller dialog's fields; quotas stay strings while typed so a half-typed number is not coerced under the cursor. */
+export interface CallerForm { maxTier: string; hourlyQuota: number | string; dailyQuota: number | string; note: string; allowedTools: string }
+export const callerFormOf = (c: GatewayCaller): CallerForm => ({ maxTier: c.maxTier, hourlyQuota: c.hourlyQuota, dailyQuota: c.dailyQuota, note: c.note || '', allowedTools: c.allowedTools.join(', ') });
+/** What moved between the caller as loaded and the form as saved — only that is sent, so "nothing to change" means what it says. */
+export function callerChanges(before: GatewayCaller, form: CallerForm): CallerUpdate {
+  const body: CallerUpdate = {};
+  if (form.maxTier !== before.maxTier) body.maxTier = form.maxTier as GatewayTier;
+  if (Number(form.hourlyQuota) !== Number(before.hourlyQuota)) body.hourlyQuota = Number(form.hourlyQuota);
+  if (Number(form.dailyQuota) !== Number(before.dailyQuota)) body.dailyQuota = Number(form.dailyQuota);
+  if (form.note.trim() !== (before.note || '').trim()) body.note = form.note.trim();
+  const tools = parseToolList(form.allowedTools);
+  if (tools.join(',') !== before.allowedTools.join(',')) body.allowedTools = tools;
+  return body;
+}

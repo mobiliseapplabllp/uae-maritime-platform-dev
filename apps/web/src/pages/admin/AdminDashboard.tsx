@@ -13,6 +13,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD, fmtNum, fromNow } from '../../utils/format';
@@ -51,6 +52,7 @@ export default function AdminDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<LoginRoundedIcon />} label={t('dash.admin.signedIn', 'Signed in, 24 h')} value={k.loggedIn24h} sub={`${k.loggedIn7d} ${t('dash.admin.in7d', 'in the last 7 days')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<DevicesRoundedIcon />} label={t('dash.admin.sessions', 'Live sessions')} value={k.activeSessions} sub={`${k.sessionUsers} ${t('dash.admin.sessionUsers', 'people')} · ${k.sessionsUsed24h} ${t('dash.admin.usedToday', 'used today')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<LockRoundedIcon />} label={t('dash.admin.locked', 'Locked out')} value={k.lockedAccounts} sub={`${k.failedLogins24h} ${t('dash.admin.failed', 'failed attempts, 24 h')}`} tone={k.lockedAccounts ? 'error.main' : 'success.main'} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="admin" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<HowToVoteRoundedIcon />} label={t('dash.admin.pendingChanges', 'Awaiting second approver')} value={k.changesPending} sub={`${k.changesApproved30d} ${t('dash.admin.approved', 'approved')} · ${k.changesRejected30d} ${t('dash.admin.rejected', 'rejected, 30 d')}`} tone={k.changesPending ? 'warning.main' : 'primary.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<FactCheckRoundedIcon />} label={t('dash.admin.review', 'Access review')} value={review ? `${review.progressPct ?? 0}%` : '—'} sub={review ? (review.overdue ? t('dash.admin.reviewOverdue', 'past its due date') : `${review.decided}/${review.total} ${t('dash.admin.reviewDecided', 'decided')} · ${review.daysLeft} ${t('dash.admin.daysLeft', 'days left')}`) : t('dash.admin.noReview', 'no cycle open')} tone={review?.overdue ? 'error.main' : 'primary.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<HistoryRoundedIcon />} label={t('dash.admin.auditEvents', 'Audit events, 24 h')} value={audit ? fmtNum(audit.last24h) : '—'} sub={audit ? `${fmtNum(audit.last7d)} ${t('dash.admin.in7d', 'in the last 7 days')} · ${audit.activeActors7d} ${t('dash.admin.actors', 'people acting')}` : ''} /></Grid>

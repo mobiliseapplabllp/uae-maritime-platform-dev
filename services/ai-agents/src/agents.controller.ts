@@ -2,15 +2,14 @@ import { Body, Controller, Get, Inject, Param, Post, Put, Query } from '@nestjs/
 import { z } from 'zod';
 import type { Pool, PoolClient } from 'pg';
 import { EVENTS } from '@maritime/contracts';
-import {
-  AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, withTx, zod, type Principal,
-} from '@maritime/service-kit';
+import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, badRequest, conflict, notFound, withTx, zod, type Principal, AiGatewayClient } from '@maritime/service-kit';
 import type { Env } from './env';
 import { AUTONOMY_LEVELS, raisesAutonomy, type AutonomyLevel } from './autonomy';
 import { agentApi, changesOf, isRunnable, policyOf, publishAgent, statsByAgent, EMPTY_STATS, type AgentRecord, type AgentStats, type Row } from './registry';
 import { decisionApi, type DecisionRecord } from './decisions';
 import { performance, type MetricAgent, type MetricDecision } from './metrics';
 import { isRunnableAgent, runAgent } from './runtime';
+import { GATEWAY_CLIENT, actingGateway } from './providers';
 
 /* The agent console.
  *
@@ -37,6 +36,7 @@ export class AgentsController {
   constructor(
     @Inject(KIT_POOL) private readonly pool: Pool,
     @Inject(KIT_ENV) private readonly env: Env,
+    @Inject(GATEWAY_CLIENT) private readonly gateway: AiGatewayClient,
     private readonly audit: AuditClient,
   ) {}
 
@@ -197,7 +197,7 @@ export class AgentsController {
   async run(@Param('agentId') agentId: string, @Body(zod(runBody)) body: z.infer<typeof runBody>, @CurrentUser() user: Principal) {
     const agent = await this.load(this.pool, agentId);
     if (!isRunnableAgent(agent.agent_id)) throw badRequest('This agent runs on its own schedule and cannot be triggered here');
-    const decisions = await withTx(this.pool, async (c) => runAgent(c, { env: this.env, audit: this.audit }, agent, {
+    const decisions = await withTx(this.pool, async (c) => runAgent(c, { env: this.env, audit: this.audit, gateway: actingGateway(this.env, this.gateway) }, agent, {
       limit: body.limit, subjectId: body.subjectId, actor: { id: user.id, name: user.name, kind: 'user' },
     }));
     const byDisposition: Record<string, number> = {};

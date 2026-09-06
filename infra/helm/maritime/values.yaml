@@ -125,9 +125,11 @@ services:
       PORTS_URL: http://ports:5426
       FACILITIES_URL: http://facilities:5427
       REVENUE_URL: http://revenue:5428
+      OBSERVABILITY_URL: http://observability:5411
       AI_PLATFORM_URL: http://ai-platform:5503
       AI_ASSISTANT_URL: http://ai-assistant:5501
       AI_AGENTS_URL: http://ai-agents:5502
+      AI_TOOL_GATEWAY_URL: http://ai-tool-gateway:5504
   - { name: identity-access, tier: platform, port: 5401, image: maritime/identity-access, env: { KEYCLOAK_CLIENT_ID: web } }
   - { name: mdm, tier: platform, port: 5402, image: maritime/mdm }
   - { name: audit-ledger, tier: platform, port: 5403, image: maritime/audit-ledger }
@@ -138,6 +140,7 @@ services:
   - { name: rules, tier: platform, port: 5408, image: maritime/rules }
   - { name: instruments, tier: platform, port: 5409, image: maritime/instruments }
   - { name: documents, tier: platform, port: 5410, image: maritime/documents }
+  - { name: observability, tier: platform, port: 5411, image: maritime/observability, env: { GATEWAY_URL: http://gateway:5200 } }
   - { name: integration-hub, tier: platform, port: 5412, image: maritime/integration-hub }
   - { name: ships, tier: domain, port: 5421, image: maritime/ships }
   - { name: seafarers, tier: domain, port: 5422, image: maritime/seafarers }
@@ -147,6 +150,8 @@ services:
   - { name: ports, tier: domain, port: 5426, image: maritime/ports }
   - { name: facilities, tier: domain, port: 5427, image: maritime/facilities }
   - { name: revenue, tier: domain, port: 5428, image: maritime/revenue }
-  - { name: ai-assistant, tier: ai, port: 5501, image: maritime/ai-assistant, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
-  - { name: ai-agents, tier: ai, port: 5502, image: maritime/ai-agents, env: { AI_TOOL_GATEWAY_URL: http://gateway:5200 } }
+  - { name: ai-assistant, tier: ai, port: 5501, image: maritime/ai-assistant, env: { AI_TOOL_GATEWAY_URL: http://ai-tool-gateway:5504, AI_PLATFORM_URL: http://ai-platform:5503 } }
+  - { name: ai-agents, tier: ai, port: 5502, image: maritime/ai-agents, env: { AI_TOOL_GATEWAY_URL: http://ai-tool-gateway:5504, AI_PLATFORM_URL: http://ai-platform:5503 } }
   - { name: ai-platform, tier: ai, port: 5503, image: maritime/ai-platform, env: { SERVING_MODE: stub, ALLOWED_PROD_RESIDENCY: AE } }
+  # the tool gateway reaches every service by the same in-cluster names the edge gateway uses
+  - { name: ai-tool-gateway, tier: ai, port: 5504, image: maritime/ai-tool-gateway, env: { AUDIT_URL: http://audit-ledger:5403, NOTIFICATIONS_URL: http://notifications:5404, SCHEDULER_URL: http://scheduler:5405, REPORTING_URL: http://reporting:5406, WORKFLOW_URL: http://workflow:5407, RULES_URL: http://rules:5408, INSTRUMENTS_URL: http://instruments:5409, DOCUMENTS_URL: http://documents:5410, OBSERVABILITY_URL: http://observability:5411, SHIPS_URL: http://ships:5421, SEAFARERS_URL: http://seafarers:5422, LEGISLATION_URL: http://legislation:5423, MARITIME_CENTRE_URL: http://maritime-centre:5424, INSPECTION_URL: http://inspection:5425, PORTS_URL: http://ports:5426, FACILITIES_URL: http://facilities:5427, REVENUE_URL: http://revenue:5428, AI_AGENTS_URL: http://ai-agents:5502, AI_PLATFORM_URL: http://ai-platform:5503 } }

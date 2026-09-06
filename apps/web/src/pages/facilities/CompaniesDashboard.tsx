@@ -12,6 +12,7 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Toolti
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD } from '../../utils/format';
@@ -58,6 +59,7 @@ export default function CompaniesDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<WorkspacePremiumRoundedIcon />} label={t('dash.companies.held', 'Instruments in force')} value={k.instrumentsHeld} sub={`${data.issued12m} ${t('dash.companies.issued12m', 'issued in 12 months')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<EventRepeatRoundedIcon />} label={t('dash.companies.expiring', 'Lapsing within 90 days')} value={expiries.d90} sub={`${expiries.d30} ${t('dash.companies.in30', 'within 30')} · ${expiries.d60} ${t('dash.companies.in60', 'within 60')} · ${expiries.expired} ${t('dash.companies.expired', 'expired')}`} tone={expiries.d30 || expiries.expired ? 'warning.main' : 'primary.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PendingActionsRoundedIcon />} label={t('dash.companies.applications', 'Applications waiting')} value={ap.pending} sub={`${ap.underReview} ${t('dash.companies.underReview', 'under review')} · ${t('dash.companies.oldest', 'oldest')} ${ap.oldestDays} d`} tone={ap.oldestDays > 60 ? 'error.main' : 'primary.main'} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="facil" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<AssignmentLateRoundedIcon />} label={t('dash.companies.obligations', 'Obligations overdue')} value={ob.overdue} sub={`${ob.open} ${t('dash.companies.obligationsOpen', 'open in all')}`} tone={ob.overdue ? 'error.main' : 'success.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<FactCheckRoundedIcon />} label={t('dash.companies.audits', 'Audits, 12 months')} value={k.auditsLastYear} sub={`${k.nonConformities} ${t('dash.companies.nonConformities', 'non-conformities')}`} tone={k.nonConformities ? 'warning.main' : 'success.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<SecurityRoundedIcon />} label={t('dash.companies.security', 'Security reviews with the authority')} value={sr.submitted} sub={`${sr.cleared12m} ${t('dash.companies.cleared', 'cleared')} · ${sr.rejected12m} ${t('dash.companies.sentBack', 'sent back, 12 months')}`} /></Grid>

@@ -553,6 +553,27 @@ async function main() {
     return urls.every((u) => /^https?:\/\/.+\/[a-z0-9-]+$/.test(u.url)) ? null : 'a sitemap entry is not a stable address';
   });
 
+  await probe('the tool gateway\'s service face is closed to a person\'s session, even an administrator\'s', 'A01', 'high', async () => {
+    const cat = await http('/ai-gateway/tools/catalogue?caller=assistant', { token: A });
+    const run = await http('/ai-gateway/tools/ops.dashboard/run', { method: 'POST', token: A, body: JSON.stringify({ caller: 'assistant' }) });
+    const done = await http('/ai-gateway/complete', { method: 'POST', token: A, body: JSON.stringify({ caller: 'assistant', question: 'x' }) });
+    return cat.status === 401 && run.status === 401 && done.status === 401 ? null : `the service face answered ${cat.status}/${run.status}/${done.status} to a user token`;
+  });
+  await probe('the tool gateway\'s log and its callers are the AI governor\'s to read, not every officer\'s', 'A01', 'medium', async () => {
+    const calls = await http('/ai-gateway/calls', { token: G }); const callers = await http('/ai-gateway/callers', { token: G });
+    const edit = await http('/ai-gateway/callers/assistant', { method: 'PUT', token: G, body: JSON.stringify({ enabled: false }) });
+    if (calls.status !== 403 || callers.status !== 403 || edit.status !== 403) return `a shipping agent reached the gateway's governance face: ${calls.status}/${callers.status}/${edit.status}`;
+    const mine = await http('/ai-gateway/calls?limit=5', { token: A });
+    return mine.status === 200 && Array.isArray(mine.body?.data) ? null : `an administrator reading the call log answered ${mine.status}`;
+  });
+  await probe('what the assistant reads for a person is what that person may read, and no more', 'A01', 'high', async () => {
+    const r = await http('/ai/chat', { method: 'POST', token: G, body: JSON.stringify({ message: 'Which user accounts are dormant?' }) });
+    if (r.status !== 201) return `the assistant answered ${r.status} to a shipping agent`;
+    const refused = (r.body?.data?.refusals ?? []).map((x: { tool: string }) => x.tool);
+    const text = String(r.body?.data?.reply ?? '');
+    return refused.includes('admin.overview') && !/dormant against the/.test(text) ? null : `a shipping agent asking about dormant accounts got tools ${JSON.stringify(r.body?.data?.tools)} refusals ${JSON.stringify(refused)}`;
+  });
+
   // ---------------------------------------------------------------- Result
   const bySeverity = (s: Severity) => findings.filter((f) => f.severity === s).length;
   console.log(`\n${'-'.repeat(80)}`);

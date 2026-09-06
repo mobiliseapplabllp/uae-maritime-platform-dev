@@ -20,6 +20,8 @@ import { INTEGRATIONS_CARD, SECTIONS } from './settings/catalogue';
  * the SMTP relay's answer, the escalation sweep's standing, the assistant's budget for the day. */
 type Values = Record<string, any>;
 interface Meta { updatedAt: string | null; updatedBy: string | null }
+/** Values an earlier catalogue stored for the same choices. */
+const PROVIDER_ALIAS: Record<string, string> = { gateway: 'anthropic', 'uae-hosted': 'uae' };
 const AI_PROFILES = [{ value: 'assistant-default', label: 'Platform assistant (in-country hosting, recommended)' }, { value: 'assistant-fast', label: 'Fast tier' }, { value: 'assistant-reasoning', label: 'Reasoning tier' }];
 const F = ({ children }: { children: React.ReactNode }) => <Grid item xs={12} sm={6} md={4}>{children}</Grid>;
 
@@ -170,11 +172,17 @@ export default function SettingsSection() {
             {section === 'ai' && (
               <Grid container spacing={2}>
                 <Grid item xs={12}>{sw('enabled', 'AI assistant enabled for permitted roles')}</Grid>
-                <F><TextField select fullWidth size="small" label="Profile" value={vals.model ?? 'assistant-default'} onChange={set('model')} disabled={!canManage} helperText="The profile key the answer reports">{AI_PROFILES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}</TextField></F>
-                <F><TextField select fullWidth size="small" label="Provider" value={vals.provider ?? 'local'} onChange={set('provider')} disabled={!canManage} helperText="Which client composes when grounded-only is off"><MenuItem value="local">Platform composer</MenuItem><MenuItem value="gateway">Model gateway (needs MODEL_GATEWAY_URL)</MenuItem><MenuItem value="uae-hosted">In-country hosted (as the environment is configured)</MenuItem></TextField></F>
-                <F>{t('apiKey', 'Provider API key', { type: 'password', helperText: 'Stored masked — retype to change. Falls back to the server environment key.' })}</F>
-                <F>{t('temperature', 'Temperature', { type: 'number', inputProps: { step: 0.1, min: 0, max: 1 }, helperText: 'Passed to a gateway; the platform composer has none' })}</F><F>{t('dailyTokenBudget', 'Daily token budget', { type: 'number', helperText: '0 means no ceiling' })}</F>
+                <F><TextField select fullWidth size="small" label="Profile" value={vals.model ?? 'assistant-default'} onChange={set('model')} disabled={!canManage} helperText="The profile key the answer reports; the hosted provider sees it as the model name">{AI_PROFILES.map((m) => <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>)}</TextField></F>
+                <F><TextField select fullWidth size="small" label="Provider" value={PROVIDER_ALIAS[String(vals.provider ?? 'local')] ?? String(vals.provider ?? 'local')} onChange={set('provider')} disabled={!canManage} helperText="Every hosted completion goes through the tool gateway: masked, fenced, classified and logged" inputProps={{ 'data-testid': 'ai-provider' }}><MenuItem value="local">Platform composer — no hosted model</MenuItem><MenuItem value="anthropic">Hosted provider, through the tool gateway</MenuItem><MenuItem value="uae">In-country hosted endpoint, through the tool gateway</MenuItem></TextField></F>
+                <F>{t('apiKey', 'Hosted provider API key', { type: 'password', helperText: 'Stored masked — retype to change. Read only by the tool gateway.', inputProps: { 'data-testid': 'ai-api-key' } })}</F>
+                <F>{t('temperature', 'Temperature', { type: 'number', inputProps: { step: 0.1, min: 0, max: 1 }, helperText: 'Passed to the provider; the platform composer has none' })}</F><F>{t('dailyTokenBudget', 'Daily token budget', { type: 'number', helperText: '0 means no ceiling' })}</F>
                 <Grid item xs={12}>{sw('groundedOnly', 'Grounded-only mode — the platform composer answers from the record alone, whatever the provider')}</Grid>
+                <Grid item xs={12}><Typography sx={{ fontWeight: 700, fontSize: 13, mt: 1 }}>In-country slot</Typography><Typography sx={{ fontSize: 12, color: 'text.secondary' }}>A UAE-hosted endpoint that speaks the OpenAI-compatible chat API. Leave it empty until one exists; once entered, the residency rules below decide when it answers instead of the hosted provider.</Typography></Grid>
+                <F>{t('uaeEndpoint', 'UAE endpoint base URL', { helperText: 'For example https://models.example.ae/v1', inputProps: { 'data-testid': 'ai-uae-endpoint' } })}</F>
+                <F>{t('uaeModel', 'UAE profile', { helperText: 'The profile key the resident endpoint serves', inputProps: { 'data-testid': 'ai-uae-model' } })}</F>
+                <F>{t('uaeKey', 'UAE endpoint key', { type: 'password', helperText: 'Stored masked — retype to change' })}</F>
+                <Grid item xs={12}>{sw('preferResident', 'Prefer the in-country endpoint whenever it is configured')}</Grid>
+                <Grid item xs={12}>{sw('residencyRequired', 'Residency required — with no in-country endpoint configured, nothing leaves the platform and the platform composer answers')}</Grid>
               </Grid>
             )}
           </Card>

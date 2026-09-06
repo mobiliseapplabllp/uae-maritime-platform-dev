@@ -5,7 +5,7 @@ import { EVENTS, MODULE_SETTING_DEFAULTS, SETTING_FIELDS, SETTING_SECTIONS, getJ
 import { KIT_ENV, KIT_POOL, AuditClient, Public, RequirePerm, ServiceOnly, zod, badRequest, withTx, enqueue, eventFromContext, getContext, smtpVerify } from '@maritime/service-kit';
 import type { Env } from './env';
 
-const SECRET_FIELDS: Record<string, string[]> = { smtp: ['password'], ai: ['apiKey'] };
+const SECRET_FIELDS: Record<string, string[]> = { smtp: ['password'], ai: ['apiKey', 'uaeKey'] };
 const MASK = '••••••••';
 const mask = (section: string, value: Record<string, unknown>) => {
   const out = { ...value };

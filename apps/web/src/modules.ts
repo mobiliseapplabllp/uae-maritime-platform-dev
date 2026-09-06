@@ -132,12 +132,13 @@ export const MODULES: ModuleDef[] = [
       { to: '/masters/berths', label: 'Berths & Terminals', icon: AnchorRoundedIcon, perm: 'masters.view' },
       { to: '/masters/lookups', label: 'Raw Lookups', icon: ListAltRoundedIcon, perm: 'masters.view' },
     ] }] },
-  { key: 'agents', name: 'AI Agent Operations', short: 'AI Agents', color: '#75479C', desc: 'Agent registry, autonomy, the decision register, the escalation queue and assurance', icon: SmartToyRoundedIcon, perm: 'agents.view', home: '/agents',
+  { key: 'agents', name: 'AI Agent Operations', short: 'AI Agents', color: '#75479C', desc: 'Agent registry, autonomy, the decision register, the escalation queue, assurance and the tool gateway', icon: SmartToyRoundedIcon, perm: 'agents.view', home: '/agents',
     nav: [{ header: 'AI Agents', items: [
       { to: '/agents', label: 'Agent Operations', icon: SmartToyRoundedIcon, perm: 'agents.view' },
       { to: '/agents/decisions', label: 'Decision Register', icon: FactCheckRoundedIcon, perm: 'agents.view' },
       { to: '/agents/escalations', label: 'Escalation Queue', icon: PendingActionsRoundedIcon, perm: 'agents.view' },
       { to: '/agents/assurance', label: 'Assurance', icon: VerifiedUserRoundedIcon, perm: 'agents.view' },
+      { to: '/agents/gateway', label: 'Tool Gateway', icon: HubRoundedIcon, perm: 'agents.view' },
     ] }] },
   { key: 'platform', name: 'Platform Operations', short: 'Platform', color: '#1E7A6F', desc: 'Service health, infrastructure, event backlog, service levels and outage history', icon: MonitorHeartRoundedIcon, perm: 'platform.view', home: '/platform',
     nav: [{ header: 'Platform', items: [

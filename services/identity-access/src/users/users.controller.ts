@@ -62,7 +62,7 @@ export class UsersController {
     const now = new Date(); const policy = await this.policy.get();
     type URow = { id: string; name: string; email: string; role_name: string | null; permissions: string[] | null; mfa_required: boolean | null; system: boolean | null; active: boolean; department: string; created_at: Date; last_login_at: Date | null; mfa_enrolled_at: Date | null; mfa_due_at: Date | null; dormant_since: Date | null };
     const [users, sessions, locks, changes, cycle] = await Promise.all([
-      this.pool.query<URow>('SELECT u.id, u.name, u.email, u.active, u.department, u.created_at, u.last_login_at, u.mfa_enrolled_at, u.mfa_due_at, u.dormant_since, r.name AS role_name, r.permissions, r.mfa_required, r.system FROM users u LEFT JOIN roles r ON r.id = u.role_id'),
+      this.pool.query<URow>('SELECT u.id, u.name, u.email, u.active, u.department, u.created_at, u.last_login_at, u.mfa_enrolled_at, u.mfa_due_at, u.dormant_since, r.name AS role_name, r.permissions, r.mfa_required, r.system FROM users u LEFT JOIN roles r ON r.id = u.role_id WHERE u.kind = \'user\''),
       this.pool.query<{ user_id: string; expires_at: Date; revoked_at: Date | null; last_used_at: Date | null }>('SELECT user_id, expires_at, revoked_at, last_used_at FROM refresh_tokens WHERE expires_at > now()'),
       this.pool.query<{ identity: string; failures: number; first_failure_at: Date; locked_until: Date | null }>('SELECT identity, failures, first_failure_at, locked_until FROM login_attempts'),
       this.pool.query<{ kind: string; status: string; requested_at: Date; decided_at: Date | null }>('SELECT kind, status, requested_at, decided_at FROM change_requests'),
@@ -101,9 +101,11 @@ export class UsersController {
 
   /* -------------------------------------------------------------------------------- accounts --- */
   @RequirePerm('users.view') @Get()
-  async list(@Query() query: PageQuery & { role?: string; active?: string; department?: string; level?: string; pending?: string; dormant?: string; mfa?: string }) {
+  async list(@Query() query: PageQuery & { role?: string; active?: string; department?: string; level?: string; pending?: string; dormant?: string; mfa?: string; kind?: string }) {
     const p = parsePage(query, { defaultSort: 'name', sortable: Object.keys(SORT) });
     const where: string[] = []; const args: unknown[] = [];
+    // people by default; the agents' accounts are listed only when asked for by kind
+    if (query.kind === 'agent' || query.kind === 'service') { args.push(query.kind); where.push(`u.kind = $${args.length}`); } else where.push(`u.kind = 'user'`);
     if (p.q) { args.push(`%${escapeLike(p.q)}%`); where.push(`(u.name ILIKE $${args.length} OR u.email ILIKE $${args.length} OR u.designation ILIKE $${args.length} OR u.department ILIKE $${args.length})`); }
     if (query.role) { args.push(query.role); where.push(`(r.id::text = $${args.length} OR r.name = $${args.length})`); }
     if (query.department) { args.push(query.department); where.push(`u.department = $${args.length}`); }

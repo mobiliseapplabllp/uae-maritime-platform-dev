@@ -12,6 +12,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD, fmtMoneyShort, fmtNum } from '../../utils/format';
@@ -49,6 +50,7 @@ export default function ServiceDeskDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<TimerOffRoundedIcon />} label={t('dash.desk.breached', 'Past service level')} value={d.breachedOpen} sub={`${d.atRisk48h} ${t('dash.desk.atRisk', 'due within 48 h')}`} tone={d.breachedOpen ? 'error.main' : 'success.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PendingActionsRoundedIcon />} label={t('dash.desk.receivedMtd', 'Received this month')} value={d.receivedMtd} sub={delta(d.receivedMtd, d.receivedPrevMonth, t('dash.vsSameDays', 'vs the same days last month'), t('dash.noComparison', 'no comparison yet'))} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<TaskAltRoundedIcon />} label={t('dash.desk.decidedMtd', 'Decided this month')} value={d.decidedMtd} sub={`${d.decided12m} ${t('dash.desk.in12m', 'in 12 months')} · ${data.issued} ${t('dash.desk.issuedAllTime', 'instruments issued in all')}`} tone="success.main" /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="services" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<HourglassTopRoundedIcon />} label={t('dash.desk.decisionDays', 'Median decision time')} value={d.medianDecisionDays90d === null ? '—' : `${d.medianDecisionDays90d} d`} sub={`${t('dash.desk.avg', 'average')} ${d.avgDecisionDays90d ?? '—'} d · ${d.decided90d} ${t('dash.desk.decided90', 'decided in 90 days')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PaymentsRoundedIcon />} label={t('dash.desk.fees', 'Fees collected this month')} value={fmtMoneyShort(d.feesCollectedMtd)} sub={`${fmtMoneyShort(d.feesCollectedYtd)} ${t('dash.desk.ytd', 'year to date')}`} tone="success.main" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PaymentsRoundedIcon />} label={t('dash.desk.feesDue', 'Fees awaiting payment')} value={fmtMoneyShort(d.feesOutstanding)} sub={`${d.feesDueCount} ${t('dash.desk.feesDueSub', 'applications with a fee due')}`} tone={d.feesOutstanding ? 'warning.main' : 'primary.main'} /></Grid>

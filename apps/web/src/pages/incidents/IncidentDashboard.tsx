@@ -10,6 +10,7 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { notify } from '../../store/uiSlice';
 import { chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatusChip from '../../components/common/StatusChip';
 import { INCIDENT_STATUS_META, SEVERITY_META } from '../../utils/status';
 import { fromNow, titleCase } from '../../utils/format';
@@ -46,6 +47,7 @@ export default function IncidentDashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
+        <Grid item xs={12} lg={4}><AiInsights module="incidents" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={86} /></Grid>)}
         <Grid item xs={12}><Skeleton variant="rounded" height={320} /></Grid>
       </Grid>

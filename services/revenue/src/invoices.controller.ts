@@ -17,6 +17,7 @@ const generateSchema = z.object({ portCallId: text(80).min(1), notes: text(2000)
 const updateSchema = z.object({ lines: z.array(lineSchema).optional(), notes: text(2000).optional(), billTo: z.object({ companyId: text(80).optional().nullable(), name: text(200).optional(), address: text(400).optional(), taxId: text(40).optional(), taxIdLabel: text(40).optional() }).optional(), dueAt: z.string().optional() });
 const paySchema = z.object({ amount: z.coerce.number().positive().max(1e12).optional(), paymentRef: text(80).optional(), method: z.enum(PAYMENT_METHODS).optional(), at: z.string().optional(), note: text(500).optional() });
 const cancelSchema = z.object({ reason: text(500).optional() });
+const remindSchema = z.object({ note: z.string().max(500).optional() });
 const SORT: Record<string, string> = { createdAt: 'created_at', number: 'number', total: 'total', status: 'status', issuedAt: 'issued_at', dueAt: 'due_at', paidAt: 'paid_at', vesselName: 'vessel_name', vcn: 'vcn' };
 type ListQuery = PageQuery & { status?: string; vessel?: string; vesselId?: string; portCall?: string; portCallId?: string; vcn?: string; from?: string; to?: string; overdue?: string; proforma?: string };
 
@@ -207,6 +208,22 @@ export class InvoicesController {
       const out = await this.hub.tryCall<{ status?: string; settledAt?: string; method?: string }>('payment', 'settlement', { reference: before.payment_intent.reference }, { correlationId: `invoice:${before.id}` });
       if (out.status !== 'ok') throw badGateway(`payment gateway: ${out.error ?? out.status}`);
       const row = await applySettlement(c, this.env, this.audit, before, { status: String(out.data?.status ?? before.payment_intent.status), settledAt: out.data?.settledAt ?? null, method: out.data?.method ?? null, mode: out.mode, by: user?.name ?? 'system' });
+      return this.detail(c, row);
+    });
+  }
+
+  /** A reminder sent by hand, ahead of the overdue sweep: recorded on the account and announced the way the sweep announces it. */
+  @RequirePerm('invoices.issue') @Post(':id/remind')
+  async remind(@Param('id') id: string, @Body(zod(remindSchema)) b: z.infer<typeof remindSchema>, @CurrentUser() user: Principal) {
+    return withTx(this.pool, async (c) => {
+      const before = await lockInvoice(c, id, user.scope); if (!before) throw notFound('Invoice not found');
+      if (before.status !== 'ISSUED') throw conflict(`Only an issued invoice can be reminded — this one is ${before.status.toLowerCase()}`);
+      const outstanding = round2(num(before.total) - num(before.paid_amount)); if (outstanding <= 0) throw conflict('Nothing is outstanding on this invoice');
+      const now = new Date();
+      const note = b.note?.trim() || `Payment reminder sent to ${before.bill_to?.name ?? 'the account holder'} for ${before.currency} ${outstanding.toLocaleString('en-AE')}`;
+      const row = await updateInvoice(c, before.id, { remindedAt: now, history: [...(before.history ?? []), { from: before.status, to: before.status, at: now.toISOString(), by: user?.name ?? 'system', note }] });
+      await this.audit.record(c, { action: 'REMIND', entity: 'Invoice', entityId: row.id, entityLabel: row.number, after: { remindedAt: now.toISOString(), outstanding }, note });
+      await publishState(c, this.env, row, { event: EVENTS.revenue.reminderSent, data: { outstanding, currency: row.currency, dueAt: iso(row.due_at), billToName: row.bill_to?.name ?? '', by: user?.name ?? 'system', note } });
       return this.detail(c, row);
     });
   }

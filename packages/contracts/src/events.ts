@@ -121,6 +121,8 @@ export const EVENTS = {
     invoiceIssued: 'revenue.invoice.issued', paymentReceived: 'revenue.payment.received',
     // added by the revenue service: the rest of the invoice lifecycle, the overdue sweep and rate-card changes
     invoiceDrafted: 'revenue.invoice.drafted', invoiceUpdated: 'revenue.invoice.updated', invoicePaid: 'revenue.invoice.paid', invoiceCancelled: 'revenue.invoice.cancelled', invoiceDeleted: 'revenue.invoice.deleted', invoiceOverdue: 'revenue.invoice.overdue', tariffChanged: 'revenue.tariff.changed',
+    // a reminder sent by hand, ahead of the sweep
+    reminderSent: 'revenue.reminder.sent',
   },
   integration: {
     externalSyncCompleted: 'integration.external-sync.completed',
@@ -139,6 +141,8 @@ export const EVENTS = {
     // answer slower than the platform committed to, and start being asked about a different world than it was fitted to
     modelRegistered: 'ai.model.registered', modelApproved: 'ai.model.approved', modelDeployed: 'ai.model.deployed',
     modelRetired: 'ai.model.retired', modelDrifted: 'ai.model.drifted', inferenceBreached: 'ai.inference.breached',
+    // added by the tool gateway: an action carried through to a record, a call refused at the choke point, and a change to what a caller may do
+    toolActed: 'ai.tool.acted', toolRefused: 'ai.tool.refused', callerConfigured: 'ai.gateway.caller-configured',
   },
   /** Read-model snapshots: every domain service publishes the API-shaped record after each change so reporting and search stay current. data = { kind, entity } / { kind, id }. */
   readModel: { upserted: 'readmodel.upserted', deleted: 'readmodel.deleted' },

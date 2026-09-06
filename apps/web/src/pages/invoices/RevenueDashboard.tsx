@@ -13,6 +13,7 @@ import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import { useProfile } from '../../config/runtime';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD, fmtMoney, fmtMoneyShort, fmtNum } from '../../utils/format';
@@ -52,6 +53,7 @@ export default function RevenueDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<AccountBalanceWalletRoundedIcon />} label={t('dash.revenue.collectedMtd', 'Collected this month')} value={fmtMoneyShort(k.collectedMtd)} sub={`${fmtMoneyShort(k.collectedYtd)} ${t('dash.revenue.ytd', 'year to date')}`} tone="success.main" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<ReceiptLongRoundedIcon />} label={t('dash.revenue.outstanding', 'Outstanding')} value={fmtMoneyShort(k.outstanding)} sub={`${k.openInvoices} ${t('dash.revenue.openInvoicesSub', 'open invoices')}`} tone="warning.main" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<ReportProblemRoundedIcon />} label={t('dash.revenue.overdue', 'Overdue')} value={fmtMoneyShort(k.overdueAmount)} sub={`${k.overdueCount} ${t('dash.revenue.invoicesPastDue', 'invoices past due')} · ${k.remindersDue} ${t('dash.revenue.remindersDue', 'not yet reminded')}`} tone={k.overdueCount ? 'error.main' : 'success.main'} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="finance" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<ScheduleRoundedIcon />} label={t('dash.revenue.billedYtd', 'Billed year to date')} value={fmtMoneyShort(k.billedYtd)} sub={`${fmtMoneyShort(k.billed12m)} ${t('dash.revenue.last12m', 'trailing 12 months')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<PercentRoundedIcon />} label={t('dash.revenue.vat', 'Tax billed this month')} value={fmtMoneyShort(k.vatMtd)} sub={t('dash.revenue.vatSub', 'on issued invoices')} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<DescriptionRoundedIcon />} label={t('dash.revenue.drafts', 'Draft pipeline')} value={fmtMoneyShort(k.drafts.total)} sub={`${k.drafts.count} ${t('dash.revenue.draftsSub', 'drafts')} · ${k.drafts.proforma} ${t('dash.revenue.proforma', 'pro-forma')}`} /></Grid>

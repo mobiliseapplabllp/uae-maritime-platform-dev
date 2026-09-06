@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { EVENTS, type Actor, type EventEnvelope, makeEvent } from '@maritime/contracts';
-import { AuditClient, enqueue, eventFromContext, type Queryable } from '@maritime/service-kit';
+import { AuditClient, enqueue, eventFromContext, type AiGatewayClient, type Queryable } from '@maritime/service-kit';
+import { actionsFor, executeActions, type ExecutionRecord } from './actions';
 import type { Env } from './env';
 import { adjudicate, isReviewed, type Adjudication, type AgentPolicy, type Disposition, type Effect, type ReviewStatus } from './autonomy';
 import { policyOf, statsByAgent, publishAgent, type AgentRecord, type Row } from './registry';
@@ -22,6 +23,7 @@ export interface DecisionRecord {
   reviewed_by_id: string | null; reviewed_by: string; reviewed_at: Date | null; override_reason: string;
   supersedes_id: string | null; superseded: boolean;
   model_key: string; model_version: string; latency_ms: number; cohort: Row; at: Date; created_at: Date;
+  execution?: ExecutionRecord[]; executed_at?: Date | null;
 }
 
 const iso = (v: Date | string | null | undefined) => (v ? new Date(v).toISOString() : null);
@@ -40,6 +42,7 @@ export function decisionApi(d: DecisionRecord) {
     escalationCode: d.escalation_code || null, escalationReason: d.escalation_reason, applied: d.applied,
     reviewedById: d.reviewed_by_id, reviewedBy: d.reviewed_by, reviewedAt: iso(d.reviewed_at), overrideReason: d.override_reason,
     supersedesId: d.supersedes_id, superseded: d.superseded,
+    execution: d.execution ?? [], executedAt: iso(d.executed_at),
     /* A configuration key for the runtime profile in force, never a vendor's own model identifier. */
     modelKey: d.model_key, modelVersion: d.model_version, latencyMs: d.latency_ms, cohort: d.cohort ?? {},
     at: iso(d.at)!, createdAt: iso(d.created_at),
@@ -59,7 +62,7 @@ export interface RecordInput {
   /** The dimensions the subject record actually carries, kept so outcomes can be compared across cohorts. */
   cohort?: Row; latencyMs?: number; at?: Date;
 }
-export interface RecordOptions { cause?: EventEnvelope; actor?: Actor; audit?: AuditClient }
+export interface RecordOptions { cause?: EventEnvelope; actor?: Actor; audit?: AuditClient; /** the tool gateway an applied conclusion acts through; absent, it is recorded and nothing is done */ gateway?: AiGatewayClient }
 
 /** Actions this agent has already applied inside the trailing hour — the ceiling is a fact, not an intention. */
 export async function actionsLastHour(c: Queryable, agentId: string, now: Date): Promise<number> {
@@ -88,6 +91,8 @@ export async function recordDecision(c: PoolClient, env: Env, input: RecordInput
       env.REASONING_PROFILE, env.REASONING_PROFILE_VERSION, Math.round(input.latencyMs ?? 0), JSON.stringify(input.cohort ?? {}), now]);
   const row = r.rows[0];
   if (adjudication.applied) await c.query('INSERT INTO agent_actions(agent_id, decision_id, at) VALUES ($1,$2,$3)', [policy.agentId, row.id, now]);
+  // the ladder let the agent act: the conclusion goes to the record through the gateway, as the agent's own identity
+  if (adjudication.applied && opts.gateway) await carryOut(c, opts.gateway, row, { caller: `agent:${policy.agentId}` }, opts.cause?.type ?? 'run', opts.audit);
   await c.query('UPDATE agents SET last_run_at = GREATEST(COALESCE(last_run_at, $2), $2), updated_at = now() WHERE agent_id = $1', [policy.agentId, now]);
 
   const decision = await publishDecision(c, env, row, { cause: opts.cause, actor: opts.actor, event: EVENTS.ai.decisionRecorded });
@@ -103,6 +108,20 @@ export async function recordDecision(c: PoolClient, env: Env, input: RecordInput
     });
   }
   return { decision, adjudication, policy };
+}
+
+/** Runs the conclusion's actions through the gateway and keeps every outcome on the decision, whether it ran, was refused or failed. */
+export async function carryOut(c: Queryable, gateway: AiGatewayClient, d: DecisionRecord, who: { caller: string; userToken?: string }, cause: string, audit?: AuditClient): Promise<ExecutionRecord[]> {
+  const actions = actionsFor(d.agent_id, { subjectType: d.entity_type, subjectId: d.entity_id, subjectLabel: d.entity_label, output: d.output ?? {}, explanation: d.explanation, agentName: d.agent_name });
+  if (!actions.length) return [];
+  const execution = await executeActions(gateway, actions, who, { decisionId: d.id, cause });
+  await c.query('UPDATE decisions SET execution = $2, executed_at = now() WHERE id = $1', [d.id, JSON.stringify(execution)]);
+  d.execution = execution; d.executed_at = new Date();
+  if (audit) {
+    const ok = execution.filter((e) => e.outcome === 'OK').length;
+    await audit.record(c, { action: ok === execution.length ? 'AI_DECISION_EXECUTED' : 'AI_DECISION_EXECUTION_INCOMPLETE', entity: 'AiDecision', entityId: d.id, entityLabel: `${d.agent_name}: ${d.action}`, after: { execution }, note: `${ok} of ${execution.length} action(s) carried through the tool gateway as ${who.userToken ? 'the reviewer' : 'the agent'}` });
+  }
+  return execution;
 }
 
 async function enqueueFor(c: Queryable, env: Env, d: DecisionRecord, type: string, data: Row, opts: RecordOptions) {
@@ -135,7 +154,7 @@ export async function publishDecision(c: Queryable, env: Env, d: DecisionRecord,
  * service refuses to do without.
  */
 export async function reviewDecision(
-  c: PoolClient, env: Env, original: DecisionRecord, input: { accept: boolean; reason: string; reviewer: { id: string; name: string } }, opts: RecordOptions = {},
+  c: PoolClient, env: Env, original: DecisionRecord, input: { accept: boolean; reason: string; reviewer: { id: string; name: string }; /** the reviewer's own token: an accepted conclusion is carried to the record as them */ userToken?: string }, opts: RecordOptions = {},
 ): Promise<DecisionApi> {
   const outcome: Disposition = input.accept ? 'APPROVED_BY_HUMAN' : 'OVERRIDDEN';
   const reviewStatus: ReviewStatus = input.accept ? 'REVIEWED' : 'OVERRIDDEN';
@@ -154,6 +173,8 @@ export async function reviewDecision(
   await c.query('UPDATE decisions SET superseded = true, review_status = $2, reviewed_by_id = $3, reviewed_by = $4, reviewed_at = $5 WHERE id = $1',
     [original.id, reviewStatus, input.reviewer.id, input.reviewer.name, at]);
   if (input.accept) await c.query('INSERT INTO agent_actions(agent_id, decision_id, at) VALUES ($1,$2,$3)', [original.agent_id, superseding.id, at]);
+  // a person accepted it: what the conclusion does is done as that person, with their token, and stays on the outcome row
+  if (input.accept && opts.gateway && input.userToken) await carryOut(c, opts.gateway, superseding, { caller: 'svc:ai-agents', userToken: input.userToken }, 'review', opts.audit);
 
   // the original row is republished so the read models carry its new review state, and the outcome as its own record
   const originalNow = (await c.query<DecisionRecord>('SELECT * FROM decisions WHERE id = $1', [original.id])).rows[0];

@@ -13,6 +13,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { useAppSelector } from '../../store';
 import { CHART_SERIES, chartChrome } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
+import AiInsights from '../../components/ai/AiInsights';
 import StatCard from '../../components/common/StatCard';
 import { BucketBars, ChartCard, DashboardSkeleton, OpenLink, PanelCard, RankList, Yardstick, useDashboard } from '../../components/dashboard/kit';
 import { fmtD, fmtDT, fmtDec, fmtMT, fmtNum, fromNow } from '../../utils/format';
@@ -55,6 +56,7 @@ export default function HarbourDashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<ScheduleRoundedIcon />} label={t('dash.harbour.expected', 'Expected, 72 h')} value={k.expected72h} sub={`${k.expected7d} ${t('dash.harbour.within7d', 'within 7 days')}`} tone="warning.main" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<AnchorRoundedIcon />} label={t('dash.harbour.callsMtd', 'Calls this month')} value={k.callsMtd} sub={delta(k.callsMtd, k.callsPrevMonth, t('dash.vsSameDays', 'vs the same days last month'), t('dash.noComparison', 'no comparison yet'))} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<Inventory2RoundedIcon />} label={t('dash.harbour.cargoMtd', 'Cargo this month')} value={fmtMT(k.cargoMtd)} sub={`${fmtNum(k.teuMtd)} TEU · ${delta(k.cargoMtd, k.cargoPrevMonth, t('dash.vsSameDays', 'vs the same days last month'), t('dash.noComparison', 'no comparison yet'))}`} /></Grid>
+        <Grid item xs={12} lg={4}><AiInsights module="ops" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<SpeedRoundedIcon />} label={t('dash.harbour.turnaround', 'Avg turnaround, 30 d')} value={hrs(k.avgTurnaroundHrs)} sub={`${t('dash.harbour.median', 'median')} ${hrs(k.medianTurnaroundHrs)} · ${hrs(k.avgAlongsideHrs)} ${t('dash.harbour.alongside', 'alongside')}`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<GridViewRoundedIcon />} label={t('dash.harbour.occupancy', 'Berth occupancy, 30 d')} value={`${k.berthOccupancyPct}%`} sub={`${k.operationalBerths} ${t('dash.harbour.operational', 'operational berths')}${k.berthsUnderMaintenance ? ` · ${k.berthsUnderMaintenance} ${t('dash.harbour.maintenance', 'under maintenance')}` : ''}`} tone={k.berthOccupancyPct > targets.congestionPct ? 'error.main' : 'primary.main'} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<DirectionsBoatRoundedIcon />} label={t('dash.harbour.craftJobs', 'Craft jobs, 30 d')} value={fmtNum(k.craftJobs30d)} sub={`${fmtNum(k.craftHours30d)} ${t('dash.harbour.assistHours', 'assist hours')}`} /></Grid>

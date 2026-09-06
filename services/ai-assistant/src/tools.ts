@@ -1,4 +1,4 @@
-import type { Queryable } from '@maritime/service-kit';
+import type { AiGatewayClient, Queryable } from '@maritime/service-kit';
 import { mayRead } from './retrieval';
 
 /* The tool surface: the only way the assistant reads a record.
@@ -13,7 +13,7 @@ import { mayRead } from './retrieval';
 
 export type Row = Record<string, any>;
 export interface Citation { id: string; label: string; kind: string; ref: string; link: string }
-export interface ToolContext { db: Queryable; permissions: readonly string[]; now: Date }
+export interface ToolContext { db: Queryable; permissions: readonly string[]; now: Date; /** gateway mode: the client and the asking person's own token, so every read runs as them */ gateway?: AiGatewayClient; userToken?: string }
 export interface ToolOutcome { findings: string[]; citations: Citation[]; data: Row }
 export interface ToolDef {
   name: string;
@@ -228,14 +228,14 @@ export const TOOLS: ToolDef[] = [
 ];
 
 export const TOOL_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
-export const toolCatalogue = () => TOOLS.map((t) => ({ name: t.name, label: t.label, permission: t.permission, description: t.description }));
+export const toolCatalogue = (tools: ToolDef[] = TOOLS) => tools.map((t) => ({ name: t.name, label: t.label, permission: t.permission, description: t.description }));
 
 /**
  * Chooses the tools a question asks for and splits them into the ones this reader may use and the ones they may
  * not. The question is the only input: nothing that was retrieved from a record can add a tool to this list.
  */
-export function plan(question: string, permissions: readonly string[]): { allowed: ToolDef[]; refused: ToolRefusal[] } {
-  const wanted = TOOLS.filter((t) => t.wants(question));
+export function plan(question: string, permissions: readonly string[], tools: ToolDef[] = TOOLS): { allowed: ToolDef[]; refused: ToolRefusal[] } {
+  const wanted = tools.filter((t) => t.wants(question));
   const allowed: ToolDef[] = []; const refused: ToolRefusal[] = [];
   for (const t of wanted) {
     if (mayRead(t.permission, permissions)) allowed.push(t);

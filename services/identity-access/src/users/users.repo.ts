@@ -41,7 +41,7 @@ export class UsersRepo {
   async holdersOf(perm: string, limit = 50, c: Queryable = this.pool): Promise<Array<{ id: string; name: string; email: string; phone: string; roleName: string }>> {
     const r = await c.query<{ id: string; name: string; email: string; phone: string; role_name: string }>(
       `SELECT u.id, u.name, u.email, u.phone, r.name AS role_name FROM users u JOIN roles r ON r.id = u.role_id
-        WHERE u.active AND ($1 = ANY(r.permissions) OR '*' = ANY(r.permissions)) ORDER BY u.name LIMIT $2`, [perm, limit]);
+        WHERE u.active AND u.kind = 'user' AND ($1 = ANY(r.permissions) OR '*' = ANY(r.permissions)) ORDER BY u.name LIMIT $2`, [perm, limit]);
     return r.rows.map((x) => ({ id: x.id, name: x.name, email: x.email, phone: x.phone ?? '', roleName: x.role_name }));
   }
   async activeWildcardHolders(c: Queryable = this.pool, exceptUserId?: string): Promise<number> {
