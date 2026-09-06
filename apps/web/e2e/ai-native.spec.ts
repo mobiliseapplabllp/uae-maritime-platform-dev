@@ -71,4 +71,24 @@ test.describe('AI-native modules', () => {
     await expect(page.getByTestId('callers-table')).toContainText('assistant');
     await expectAccessible(page, 'tool gateway');
   });
+  test('the Studio drafts a definition with the assistant and creates it as a DEV draft for review', async ({ page }) => {
+    await login(page);
+    await page.goto('/services/studio');
+    await expect(page.getByTestId('studio-table')).toBeVisible({ timeout: 20_000 });
+    await page.getByTestId('studio-ai-draft').click();
+    const stamp = Date.now().toString(36);
+    await page.getByTestId('dd-description').fill('Approval for a ship chandler to supply provisions alongside at Khalifa Port; needs a trade licence, an insurance certificate and a list of vehicles; fee AED 1,500; decision within 7 working days; valid 1 year.');
+    await page.getByTestId('dd-name').fill(`Ship chandler approval ${stamp}`);
+    await page.getByTestId('dd-compose').click();
+    const preview = page.getByTestId('dd-preview');
+    await expect(preview).toBeVisible({ timeout: 30_000 });
+    await expect(preview).toContainText('TRADE_LICENCE');
+    await expect(preview).toContainText('AED 1,500');
+    await expect(preview).toContainText('7 days');
+    await expect(page.getByTestId('dd-gaps')).toBeVisible();
+    await expectAccessible(page, 'studio draft proposal');
+    await page.getByTestId('dd-create').click();
+    await expect(page.getByTestId(`def-company.ship-chandler-approval-${stamp}`)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId(`ver-company.ship-chandler-approval-${stamp}-DEV-1`)).toBeVisible();
+  });
 });

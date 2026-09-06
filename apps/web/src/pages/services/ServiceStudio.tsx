@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Alert, Box, Button, Card, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Drawer, LinearProgress, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField, Typography } from '@mui/material';
 import DesignServicesRoundedIcon from '@mui/icons-material/DesignServicesRounded';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import api from '../../api/client';
 import { useAppDispatch, useUser } from '../../store';
 import { notify } from '../../store/uiSlice';
 import { hasPerm } from '../../utils/perms';
 import PageHeader from '../../components/common/PageHeader';
 import { OpenLink } from '../../components/dashboard/kit';
+import DefinitionDraftDialog, { type CreatedDefinition } from '../../components/ai/DefinitionDraftDialog';
 import { MONO } from '../../theme';
 import type { Definition } from './types';
 
@@ -28,6 +30,7 @@ export default function ServiceStudio() {
   const [rows, setRows] = useState<Row[] | null>(null); const [q, setQ] = useState(''); const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<{ def: Row; ver: Version } | null>(null); const [section, setSection] = useState<(typeof SECTIONS)[number]>('form'); const [json, setJson] = useState(''); const [jsonError, setJsonError] = useState<string | null>(null);
   const [promote, setPromote] = useState<{ def: Row; version: number; to: 'UAT' | 'PROD' } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
   const load = useCallback(() => api.get<Row[]>('/services/definitions', { params: { limit: 200, sort: 'name', q: q || undefined } }).then((r) => setRows(r.data)).catch((e: Error) => dispatch(notify({ message: e.message, severity: 'error' }))), [q, dispatch]);
   useEffect(() => { load(); }, [load]);
   const fail = (e: unknown) => dispatch(notify({ message: (e as Error).message, severity: 'error' }));
@@ -53,12 +56,23 @@ export default function ServiceStudio() {
         {manage && v.status === 'PUBLISHED' && env !== 'PROD' && <Button size="small" sx={{ minWidth: 0, px: 0.5, fontSize: 10.5 }} disabled={busy} onClick={() => setPromote({ def, version: v.version, to: env === 'DEV' ? 'UAT' : 'PROD' })}>{t('studio.promoteTo', { defaultValue: 'Promote → {{to}}', to: env === 'DEV' ? 'UAT' : 'PROD' })}</Button>}
       </Stack>))}</Stack>;
   };
+  // a definition the assistant drafted and the person created: reload the table and open its DEV draft for review
+  const created = async (def: CreatedDefinition) => {
+    setAiOpen(false);
+    dispatch(notify({ message: t('studio.ai.created', 'Definition created as a DEV draft; review it before submitting'), severity: 'success' }));
+    await load();
+    const v = def.versions?.[0];
+    const row: Row = { ...def, versions: (def.versions ?? []).map((x) => ({ version: x.version, environment: x.environment, status: x.status, changeNote: x.changeNote ?? '', publishedAt: null, updatedAt: x.updatedAt ?? '' })) };
+    if (v) await inspect(row, row.versions[0]);
+  };
   const shown = rows ?? [];
   const problems = open?.ver.validation?.problems ?? [];
   return (
     <>
       <PageHeader icon={DesignServicesRoundedIcon} iconColor="#0E7C86" title={t('studio.title', 'Service Studio')} sub={t('studio.sub', 'Definitions and their versions through DEV, UAT and PROD — drafted, reviewed, approved, published and promoted, every step recorded')}
-        actions={<Stack direction="row" spacing={1}><OpenLink label={t('services.catalogueTitle', 'Service catalogue')} to="/services" /><OpenLink label={t('services.openRequests', 'Applications')} to="/services/requests" /></Stack>} />
+        actions={<Stack direction="row" spacing={1} alignItems="center">
+          {manage && <Button size="small" variant="contained" startIcon={<AutoAwesomeRoundedIcon />} onClick={() => setAiOpen(true)} data-testid="studio-ai-draft">{t('studio.ai.open', 'Draft with the assistant')}</Button>}
+          <OpenLink label={t('services.catalogueTitle', 'Service catalogue')} to="/services" /><OpenLink label={t('services.openRequests', 'Applications')} to="/services/requests" /></Stack>} />
       <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}><TextField size="small" placeholder={t('studio.search', 'Search definitions')} value={q} onChange={(e) => setQ(e.target.value)} inputProps={{ 'aria-label': t('studio.search', 'Search definitions'), 'data-testid': 'studio-search' }} sx={{ minWidth: 260 }} />{rows && <Chip label={t('studio.count', { defaultValue: '{{n}} definitions', n: rows.length })} />}</Stack>
       {busy && <LinearProgress sx={{ mb: 1 }} />}
       <Card>
@@ -99,6 +113,7 @@ export default function ServiceStudio() {
           <TextField select size="small" sx={{ mt: 2 }} label={t('studio.to', 'To')} value={promote?.to ?? 'UAT'} onChange={(e) => promote && setPromote({ ...promote, to: e.target.value as 'UAT' | 'PROD' })}><MenuItem value="UAT">UAT</MenuItem><MenuItem value="PROD">PROD</MenuItem></TextField></DialogContent>
         <DialogActions><Button onClick={() => setPromote(null)}>{t('common.cancel', 'Cancel')}</Button><Button variant="contained" onClick={doPromote} disabled={busy} data-testid="promote-confirm">{t('studio.promote', 'Promote')}</Button></DialogActions>
       </Dialog>
+      {manage && <DefinitionDraftDialog open={aiOpen} onClose={() => setAiOpen(false)} onCreated={created} />}
       <Box sx={{ mt: 1 }}><Typography variant="caption" color="text.secondary">{t('studio.footnote', 'Applicants see PROD; UAT is for acceptance; DEV is where a change is drafted.')}</Typography></Box>
     </>
   );

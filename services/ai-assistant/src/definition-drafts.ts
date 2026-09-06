@@ -60,7 +60,8 @@ const SUBJECT_WORDS: [RegExp, SubjectKind][] = [
   [/\bvessel|\bships?\b|\bcraft\b|\bboat|\byacht|\btanker|\bbarge|\btugs?\b/g, 'VESSEL'],
   [/\bcompan|\bagen(?:t|cy|cies)\b|\bchandler|\bcontractor|\boperator|\bfirm\b|\bsupplier|\bbusiness|\blicensee|\byard\b|\bprovider|\borganis?z?ation/g, 'COMPANY'],
 ];
-const APPLICANT_PHRASE = /\b(?:for|by|from|of)\s+(?:a|an|the|any|each|every)\s+([a-z][a-z\s-]{2,40}?)\s+(?:to|who|which|that|wishing|seeking|operating|applying|holding|providing|supplying|carrying|,|\.|;)/;
+/** "for a ship chandler to …", "by a deck officer;": up to three words after the article, closed by a verb, a comma or the end. */
+const APPLICANT_PHRASE = /\b(?:for|by|from|of)\s+(?:a|an|the|any|each|every)\s+([a-z-]+(?:\s+[a-z-]+){0,2}?)(?:\s+(?:to|who|which|that|wishing|seeking|operating|applying|holding|providing|supplying|carrying|serving)\b|\s*[,.;:]|$)/;
 
 /** The instrument a description names, most specific phrase first; the type carries its subject kind and class. */
 const INSTRUMENT_WORDS: [RegExp, string][] = [
@@ -91,7 +92,7 @@ const DOCUMENT_WORDS: [RegExp, string, string, string][] = [
   [/\binsurance/, 'INSURANCE', 'Insurance certificate', 'شهادة التأمين'],
   [/\bcertificate\s+of\s+registry|\bregistration\s+certificate|\bregistry\s+certificate/, 'CERT_REGISTRY', 'Certificate of registry', 'شهادة التسجيل'],
   [/\bcrew\s+list/, 'CREW_LIST', 'Crew list', 'قائمة الطاقم'],
-  [/\bpassport/, 'PASSPORT', 'Passport copy', 'نسخة جواز السفر'],
+  [/\bpassport(?!\s+(?:photo|size|-size))/, 'PASSPORT', 'Passport copy', 'نسخة جواز السفر'],
   [/\bemirates\s+id|\bnational\s+id|\bidentity\s+card|\bid\s+card/, 'ID_CARD', 'Identity card', 'بطاقة الهوية'],
   [/\bmedical\s+(?:certificate|fitness|report)/, 'MEDICAL', 'Medical fitness certificate', 'شهادة اللياقة الطبية'],
   [/\bcertificate\s+of\s+competency|\bcoc\b/, 'COC', 'Certificate of competency', 'شهادة الكفاءة'],
@@ -187,13 +188,17 @@ export function composeDefinition(input: DefinitionDraftInput, template: Templat
 
   // the applicant: stated, then the phrase "for a …", then the instrument's own subject, then the words counted
   const counts = new Map<SubjectKind, number>(); const evidence = new Map<SubjectKind, string>();
-  for (const [re, kind] of SUBJECT_WORDS) { const ms = lc.match(re) ?? []; if (ms.length) { counts.set(kind, ms.length); evidence.set(kind, ms[0]); } }
+  for (const [re, kind] of SUBJECT_WORDS) { const ms = lc.match(re) ?? []; if (ms.length) { counts.set(kind, ms.length); evidence.set(kind, ms[0] ?? ''); } }
   let subjectKind: string = 'NONE'; let subjectEvidence = '';
   const stated = String(input.subjectKind ?? '').toUpperCase();
   if ((SUBJECT_KINDS as readonly string[]).includes(stated)) subjectKind = stated;
   else {
     const phrase = lc.match(APPLICANT_PHRASE)?.[1];
-    if (phrase) for (const [re, kind] of SUBJECT_WORDS) if (new RegExp(re.source).test(phrase)) { subjectKind = kind; subjectEvidence = phrase; break; }
+    if (phrase && !HEAD_NOUNS.has(phrase.split(/\s+/)[0])) {
+      // the head noun of the applicant phrase decides ("ship chandler" is a company, "deck officer" a seafarer); the whole phrase only when the head says nothing
+      const head = phrase.trim().split(/\s+/).pop() ?? '';
+      for (const probe of [head, phrase]) { for (const [re, kind] of SUBJECT_WORDS) if (new RegExp(re.source).test(probe)) { subjectKind = kind; subjectEvidence = phrase; break; } if (subjectKind !== 'NONE') break; }
+    }
     if (subjectKind === 'NONE' && instrumentType && instrumentType !== 'ISPS') {
       const owner = (Object.keys(LICENSE_TYPES_BY_SUBJECT) as SubjectKind[]).find((k) => LICENSE_TYPES_BY_SUBJECT[k].includes(instrumentType!));
       if (owner) { subjectKind = owner; subjectEvidence = instrumentEvidence; }
@@ -231,14 +236,18 @@ export function composeDefinition(input: DefinitionDraftInput, template: Templat
   // the documents the description asks for, read from the words after the name
   const rest = lc.length > clause.length + 3 ? lc.slice(clause.length) : lc;
   const documents: DraftDocument[] = []; const seen = new Set<string>();
+  const found: { at: number; doc: DraftDocument; evidence: string }[] = [];
   for (const [re, code, label, labelAr] of DOCUMENT_WORDS) {
     const m = rest.match(re); if (!m || seen.has(code)) continue;
     seen.add(code);
-    const at = rest.indexOf(m[0]); const before = rest.slice(Math.max(0, at - 30), at);
-    const optional = /\boptional(?:ly)?\b|\bif\s+(?:any|available|applicable)\b|\bmay\s+(?:also\s+)?(?:attach|lodge|provide)/.test(before) || /^\s*(?:\([^)]*optional[^)]*\)|if\s+(?:any|available|applicable))/.test(rest.slice(at + m[0].length, at + m[0].length + 30));
-    documents.push({ code, label, labelAr, required: !optional, docType: 'PDF', acceptedFormats: 'PDF, JPG, PNG' });
-    infer('document', code, m[0]);
+    const at = rest.indexOf(m[0]);
+    // "optional" counts only inside the same item of the list: up to the nearest comma, semicolon, full stop or "and"
+    const before = rest.slice(Math.max(0, at - 40), at).split(/[,;.]|\band\b/).pop() ?? '';
+    const after = rest.slice(at + m[0].length, at + m[0].length + 40).split(/[,;.]|\band\b/)[0] ?? '';
+    const optional = /\boptional(?:ly)?\b|\bif\s+(?:any|available|applicable)\b|\bmay\s+(?:also\s+)?(?:attach|lodge|provide)\b/.test(`${before} ${after}`);
+    found.push({ at, doc: { code, label, labelAr, required: !optional, docType: 'PDF', acceptedFormats: 'PDF, JPG, PNG' }, evidence: m[0] });
   }
+  for (const f of found.sort((a, b) => a.at - b.at)) { documents.push(f.doc); infer('document', f.doc.code, f.evidence); }
   if (template?.content?.documents?.length) for (const d of template.content.documents) if (!seen.has(d.code)) { seen.add(d.code); documents.push({ ...d, required: d.required ?? true }); }
   if (!documents.length) gap('No document is named; the checklist is empty.', 'لم يُسمَّ أي مستند؛ قائمة المستندات فارغة.');
 
@@ -286,7 +295,7 @@ export function composeDefinition(input: DefinitionDraftInput, template: Templat
   const field = (key: string, label: string, labelAr: string, type: DraftField['type'], required: boolean, extra: Partial<DraftField> = {}) => { if (!fields.some((f) => f.key === key)) fields.push({ key, label, labelAr, type, required, options: [], section: 'Application', help: '', helpAr: null, multiline: false, lookup: null, ...extra }); };
   if (/\bports?\b|\bharbour/.test(lc)) { field('port', 'Port', 'الميناء', 'text', true); infer('field', 'port', lc.match(/\bports?\b|\bharbour/)![0]); }
   if (/\bfrom\s+\S+\s+to\s+\S+|\bperiod\b|\bdates?\s+of\b|\bstart(?:ing)?\s+date|\bcommenc/.test(lc)) { field('validFrom', 'Requested start', 'تاريخ البدء المطلوب', 'date', true); field('validTo', 'Requested end', 'تاريخ الانتهاء المطلوب', 'date', false); infer('field', 'validFrom, validTo', lc.match(/\bfrom\s+\S+\s+to\s+\S+|\bperiod\b|\bdates?\s+of\b|\bstart(?:ing)?\s+date|\bcommenc\w*/)![0]); }
-  const count = lc.match(/\b(?:number|count|no\.?)\s+of\s+([a-z]+)|\bhow\s+many\s+([a-z]+)/); if (count) { const noun = count[1] ?? count[2]; field(`${slug(noun).replace(/-/g, '')}Count`, `Number of ${noun}`, `عدد ${noun}`, 'number', true); infer('field', `${noun} count`, count[0]); }
+  const count = lc.match(/\b(?:number|count|no\.?)\s+of\s+([a-z]+)|\bhow\s+many\s+([a-z]+)/); if (count) { const noun = count[1] ?? count[2] ?? ''; field(`${slug(noun).replace(/-/g, '')}Count`, `Number of ${noun}`, `عدد ${noun}`, 'number', true); infer('field', `${noun} count`, count[0]); }
   if (/\bvehicle/.test(lc)) { field('vehicleCount', 'Number of vehicles', 'عدد المركبات', 'number', true); infer('field', 'vehicleCount', 'vehicle'); }
   if (/\bstaff|\bpersonnel|\bemployees?\b|\bqualified\s+staff/.test(lc)) { field('staffCount', 'Qualified staff', 'عدد الموظفين المؤهلين', 'number', true); infer('field', 'staffCount', lc.match(/\bstaff|\bpersonnel|\bemployees?\b/)![0]); }
   if (/\bpremises|\baddress|\blocation|\bwarehouse|\boffice/.test(lc)) { field('premises', 'Premises address', 'عنوان المقر', 'text', true); infer('field', 'premises', lc.match(/\bpremises|\baddress|\blocation|\bwarehouse|\boffice/)![0]); }
