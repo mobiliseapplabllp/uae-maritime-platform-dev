@@ -36,9 +36,9 @@ export interface CompletionRequest {
   history: { role: 'user' | 'assistant'; text: string }[];
   language: Language;
 }
-export interface CompletionResult { text: string; profile: string; grounded: boolean; /** set when a hosted model answered through the tool gateway */ provider?: string; residency?: string; redactions?: number; /** the gateway refused the question before any model saw it */ refused?: boolean; reason?: string }
+export interface CompletionResult { text: string; profile: string; grounded: boolean; /** set when a hosted model answered through the tool gateway */ provider?: string; residency?: string; redactions?: number; /** tokens the hosted answer cost, in and out, when the gateway reported them */ tokens?: number; /** the gateway refused the question before any model saw it */ refused?: boolean; reason?: string }
 /** What Settings → AI assistant may vary per request: the profile key reported, the temperature a gateway composes at, and the key it presents. */
-export interface CompletionOptions { profile?: string; temperature?: number; apiKey?: string }
+export interface CompletionOptions { profile?: string; temperature?: number; apiKey?: string; /** what the completion is for, as the gateway logs it: answer, draft, explain */ purpose?: string }
 export interface CompletionClient { readonly profile: string; complete(request: CompletionRequest, options?: CompletionOptions): Promise<CompletionResult> }
 export const COMPLETION_CLIENT = Symbol('COMPLETION_CLIENT');
 
@@ -119,11 +119,11 @@ export class ToolGatewayCompletionClient implements CompletionClient {
     const local: CompletionResult = { ...(await this.fallback.complete(request)), profile };
     try {
       const r = await this.gateway.complete(this.caller, {
-        purpose: 'answer', contract: request.contract, question: request.question, language: request.language, history: request.history,
+        purpose: options.purpose ?? 'answer', contract: request.contract, question: request.question, language: request.language, history: request.history,
         grounding: request.grounding.map((b, i) => ({ marker: CITATION(i), label: b.label, kind: b.kind, untrusted: !!b.untrusted, text: b.text })),
         findings: request.findings, refusals: request.refusals, ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
       }, { userToken: this.userToken });
-      if (r.outcome === 'OK' && r.text) return { text: r.text.trim(), profile: r.profile || profile, grounded: local.grounded, provider: r.provider, residency: r.residency, redactions: r.redactions };
+      if (r.outcome === 'OK' && r.text) return { text: r.text.trim(), profile: r.profile || profile, grounded: local.grounded, provider: r.provider, residency: r.residency, redactions: r.redactions, tokens: (r.tokensIn ?? 0) + (r.tokensOut ?? 0) || undefined };
       if (r.outcome === 'REFUSED') {
         const text = request.language === 'ar' ? `رُفض هذا السؤال عند بوابة الأدوات قبل أن يصل إلى أي نموذج: ${r.reason ?? ''}` : `This question was refused at the tool gateway before any model saw it: ${r.reason ?? ''}`;
         return { text, profile, grounded: false, refused: true, reason: r.reason };

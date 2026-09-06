@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPrompt, callAnthropic, callOpenAiCompatible, callProvider, selectProvider, type ChatRequest, type FetchLike } from '../src/providers';
+import { buildPrompt, callAnthropic, callCli, callOpenAiCompatible, callProvider, selectProvider, type ChatRequest, type FetchLike } from '../src/providers';
 
 const defaults = { timeoutMs: 1000, maxOutputTokens: 300, anthropicVersion: '2023-06-01', anthropicBaseUrl: 'https://api.anthropic.com/' };
 const req: ChatRequest = {
@@ -69,5 +69,26 @@ describe('the adapters', () => {
     await expect(callOpenAiCompatible(uae, buildPrompt(req), undefined, fakeFetch({ choices: [] }).fetch)).rejects.toThrow('no text');
     await expect(callProvider(selectProvider({}, defaults), buildPrompt(req), undefined, fakeFetch({}).fetch)).rejects.toThrow('No hosted provider');
     expect((await callProvider(uae, buildPrompt(req), undefined, fakeFetch({ choices: [{ message: { content: 'ok' } }] }).fetch)).text).toBe('ok');
+  });
+});
+
+describe('the command-line provider', () => {
+  const cli = { ...defaults, cliCommand: 'node', cliArgs: ['-e', "process.stdout.write('cli:' + process.argv[1].length)"], cliTimeoutMs: 5000 };
+  it('exists only where the gateway host names a command, sits abroad for residency, and yields to the residency rule', () => {
+    expect(selectProvider({ provider: 'cli' }, defaults).provider).toBe('local');
+    expect(selectProvider({ provider: 'cli', model: 'laptop' }, cli)).toMatchObject({ provider: 'cli', profile: 'laptop', endpoint: 'node', cliArgs: cli.cliArgs, residency: 'GLOBAL', timeoutMs: 5000 });
+    expect(selectProvider({ provider: 'cli' }, cli).profile).toBe('local-cli');
+    expect(selectProvider({ provider: 'cli', residencyRequired: 'true' }, cli).provider).toBe('local');
+  });
+  it('runs the command without a shell, hands it the prompt as the last argument and reads its output', async () => {
+    const cfg = selectProvider({ provider: 'cli' }, cli);
+    const prompt = buildPrompt(req);
+    const r = await callProvider(cfg, prompt, undefined, (() => { throw new Error('no fetch for a command'); }) as unknown as FetchLike);
+    expect(r.text).toBe(`cli:${prompt.system.length + 2 + prompt.user.length}`);
+    expect(r.tokensIn).toBeGreaterThan(0); expect(r.tokensOut).toBeGreaterThan(0);
+  });
+  it('reports a command that fails or says nothing as a failure, never as an answer', async () => {
+    await expect(callCli({ ...selectProvider({ provider: 'cli' }, cli), cliArgs: ['-e', 'process.exit(3)'] }, buildPrompt(req))).rejects.toThrow('Command-line provider failed');
+    await expect(callCli({ ...selectProvider({ provider: 'cli' }, cli), cliArgs: ['-e', ''] }, buildPrompt(req))).rejects.toThrow('returned no text');
   });
 });

@@ -465,6 +465,13 @@ const en = {
   },
 
   ai: {
+    explain: {
+      button: 'Explain with the assistant',
+      loading: 'Reading the figures…',
+      unavailable: 'The assistant could not explain this just now.',
+      engine: 'Explained by',
+      again: 'Explain again',
+    },
     insights: {
       title: 'Insights and next actions',
       critical: 'critical',

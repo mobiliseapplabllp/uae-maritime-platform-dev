@@ -62,7 +62,7 @@ export default function ServiceDeskDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-approval" label={t('dash.desk.approval', 'Approval rate')} value={d.approvalRatePct90d} display={pct(d.approvalRatePct90d)} target={70} targetLabel={`${t('dash.reference', 'reference')} 70–90%`} sub={`${data.rejected} ${t('dash.desk.rejectedAllTime', 'rejected in all')} · ${data.withdrawn} ${t('dash.desk.withdrawn', 'withdrawn')}`} /></Grid>
 
         <Grid item xs={12} lg={8}>
-          <ChartCard testId="chart-months" title={t('dash.desk.byMonth', 'Intake and decisions')} sub={t('dash.desk.byMonthSub', 'applications received and decided per month, with service-level breaches — trailing 12 months')}>
+          <ChartCard testId="chart-months" title={t('dash.desk.byMonth', 'Intake and decisions')} sub={t('dash.desk.byMonthSub', 'applications received and decided per month, with service-level breaches — trailing 12 months')} explain={{ data: data.series }}>
             <ResponsiveContainer>
               <ComposedChart data={data.series} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -78,7 +78,7 @@ export default function ServiceDeskDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <ChartCard testId="chart-categories" title={t('dash.desk.byCategory', 'Applications by category')} sub={t('dash.desk.byCategorySub', 'all time')}>
+          <ChartCard testId="chart-categories" title={t('dash.desk.byCategory', 'Applications by category')} sub={t('dash.desk.byCategorySub', 'all time')} explain={{ data: data.byCategory.slice(0, 8) }}>
             <ResponsiveContainer>
               <BarChart data={data.byCategory.slice(0, 8)} layout="vertical" margin={{ left: 8, right: 28, top: 4 }} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -92,18 +92,18 @@ export default function ServiceDeskDashboard() {
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-ageing" title={t('dash.desk.ageing', 'Age of the open work')} sub={t('dash.desk.ageingSub', 'days since lodged')} action={{ label: t('dash.desk.openRequests', 'Applications'), to: '/services/requests?open=true' }}>
+          <PanelCard testId="panel-ageing" title={t('dash.desk.ageing', 'Age of the open work')} sub={t('dash.desk.ageingSub', 'days since lodged')} action={{ label: t('dash.desk.openRequests', 'Applications'), to: '/services/requests?open=true' }} explain={{ data: data.ageing.map((b) => ({ label: `${b.bucket} ${t('dash.desk.days', 'days')}`, value: b.count })) }}>
             <BucketBars rows={data.ageing.map((b) => ({ label: `${b.bucket} ${t('dash.desk.days', 'days')}`, value: b.count }))} tone={(i) => ['#0E7C86', '#0B74B0', '#B98A2F', '#D0644A', '#C14F33'][i]} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-stages" title={t('dash.desk.byStage', 'Open work by stage')} sub={t('dash.desk.byStageSub', 'and how much of it is past its service level')}>
+          <PanelCard testId="panel-stages" title={t('dash.desk.byStage', 'Open work by stage')} sub={t('dash.desk.byStageSub', 'and how much of it is past its service level')} explain={{ data: data.byStage.map((s) => ({ label: label(s.status), value: s.count, sub: s.breached ? `${s.breached} ${t('dash.desk.pastSla', 'past service level')}` : undefined })) }}>
             <BucketBars rows={data.byStage.map((s) => ({ label: label(s.status), value: s.count, sub: s.breached ? `${s.breached} ${t('dash.desk.pastSla', 'past service level')}` : undefined }))} />
             <BucketBars rows={data.bySubjectKind.map((s) => ({ label: label(s.subjectKind), value: s.total, display: `${fmtNum(s.total)}`, sub: `${s.open} ${t('dash.desk.openLower', 'open')}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-top" title={t('dash.desk.topServices', 'Most requested services')} sub={t('dash.desk.topServicesSub', 'all time')} action={{ label: t('dash.desk.openCatalogue', 'Service catalogue'), to: '/services' }}>
+          <PanelCard testId="panel-top" title={t('dash.desk.topServices', 'Most requested services')} sub={t('dash.desk.topServicesSub', 'all time')} action={{ label: t('dash.desk.openCatalogue', 'Service catalogue'), to: '/services' }} explain={{ data: data.topServices.map((s) => ({ key: s.key, primary: s.name, value: fmtNum(s.count), to: `/services/${s.key}` })) }}>
             <RankList rows={data.topServices.map((s) => ({ key: s.key, primary: s.name, value: fmtNum(s.count), to: `/services/${s.key}` }))} />
           </PanelCard>
         </Grid>

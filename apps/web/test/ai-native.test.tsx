@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material';
@@ -8,7 +8,10 @@ import { store } from '../src/store';
 import { setSession } from '../src/store/authSlice';
 import { buildTheme } from '../src/theme';
 import api from '../src/api/client';
-import AiInsights, { columnsOf, rowsOf } from '../src/components/ai/AiInsights';
+import AiInsights, { columnsOf, rowsOf, summaryOf } from '../src/components/ai/AiInsights';
+import ExplainButton from '../src/components/ai/ExplainButton';
+import { ChartCard, Yardstick } from '../src/components/dashboard/kit';
+import StatCard from '../src/components/common/StatCard';
 import DraftDialog from '../src/components/ai/DraftDialog';
 import ExtractDialog from '../src/components/ai/ExtractDialog';
 import AiDock, { moduleOfPath } from '../src/components/shell/AiDock';
@@ -109,5 +112,45 @@ describe('the dock follows the screen', () => {
     expect(await screen.findByTestId('ai-dock-intro')).toHaveTextContent('Ask about Revenue');
     await waitFor(() => expect(get).toHaveBeenCalledWith('/ai/suggestions', expect.objectContaining({ params: { module: 'finance' } })));
     expect(await screen.findByText('Which invoices are overdue?')).toBeInTheDocument();
+  });
+});
+
+describe('explain this', () => {
+  beforeEach(() => { store.dispatch(setSession({ user: adminUser, token: 't', refreshToken: 'r' } as never)); });
+  it('asks the assistant with the card\'s own figures and shows the explanation and who composed it', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue(ok({ text: '“Billed revenue” — per month.\n\nbilled: 6,000,000 in Apr 26 to 7,200,000 in Jun 26, up 20%.', engine: 'platform composer', facts: ['billed: up 20%'], meaning: null }) as never);
+    const rows = [{ month: 'Apr 26', billed: 6000000 }, { month: 'Jun 26', billed: 7200000 }];
+    wrap(<ChartCard title="Billed revenue" sub="per month" testId="chart-months" explain={{ data: rows, period: 'trailing 12 months' }}><div /></ChartCard>);
+    fireEvent.click(screen.getByTestId('explain-chart-months'));
+    expect((await screen.findByTestId('explain-text')).textContent).toContain('up 20%');
+    expect(screen.getByTestId('explain-engine').textContent).toContain('platform composer');
+    expect(post).toHaveBeenCalledWith('/ai/explain', expect.objectContaining({ kind: 'chart', title: 'Billed revenue', sub: 'per month', period: 'trailing 12 months', data: rows, language: 'en' }));
+  });
+  it('a yardstick and a stat card explain themselves from what they show, and a reader without ai.use sees no control', async () => {
+    const post = vi.spyOn(api, 'post').mockResolvedValue(ok({ text: 'The reading of 11.4 h is off target.', engine: 'platform composer', facts: [], meaning: null }) as never);
+    wrap(<><Yardstick testId="yard-waiting" label="Anchorage waiting, avg" value={11.4} display="11.4 h" target={4} targetLabel="target ≤ 4 h" higherIsBetter={false} sub="13% within target" /><StatCard label="Vessels in port" value={9} sub="5 at anchorage" testId="stat-in-port" /></>);
+    fireEvent.click(screen.getByTestId('explain-yard-waiting'));
+    expect((await screen.findByTestId('explain-text')).textContent).toContain('off target');
+    expect(post).toHaveBeenCalledWith('/ai/explain', expect.objectContaining({ kind: 'yardstick', title: 'Anchorage waiting, avg', value: '11.4 h', target: 'target ≤ 4 h', sub: '13% within target' }));
+    expect(screen.getByTestId('explain-stat-in-port')).toBeInTheDocument();
+    cleanup();
+    store.dispatch(setSession({ user: { ...adminUser, role: { id: 'r', name: 'Reader', permissions: ['dashboard.view'] }, perms: ['dashboard.view'] }, token: 't', refreshToken: 'r' } as never));
+    wrap(<StatCard label="Vessels in port" value={9} testId="stat-in-port" />);
+    expect(screen.queryByTestId('explain-stat-in-port')).toBeNull();
+  });
+  it('says so when the assistant cannot explain, and offers to ask again', async () => {
+    vi.spyOn(api, 'post').mockRejectedValueOnce(new Error('The assistant is switched off in Settings → AI assistant')).mockResolvedValueOnce(ok({ text: 'Now it can.', engine: 'platform composer', facts: [], meaning: null }) as never);
+    wrap(<ExplainButton ctx={{ kind: 'stat', title: 'Open cases', value: 6 }} testId="open-cases" />);
+    fireEvent.click(screen.getByTestId('explain-open-cases'));
+    expect((await screen.findByTestId('explain-error')).textContent).toContain('switched off');
+    fireEvent.click(screen.getByTestId('explain-again'));
+    expect((await screen.findByTestId('explain-text')).textContent).toBe('Now it can.');
+  });
+  it('a nested answer in the insight dialog shows its scalars and its richest list', () => {
+    const data = { window: { from: '2025-10-01', months: 12 }, estate: { berths: 24, outages: 146, availabilityPct: 90.3 }, byKind: [{ kind: 'PLANNED', outages: 56 }], berths: [{ code: 'LB-1', name: 'Liquid Berth 1', outages: 8, days: 72 }, { code: 'LB-2', name: 'Liquid Berth 2', outages: 3, days: 20 }] };
+    expect(rowsOf(data).map((r) => r.code)).toEqual(['LB-1', 'LB-2']);
+    expect(summaryOf(data)).toEqual([{ label: 'window · from', value: '2025-10-01' }, { label: 'window · months', value: '12' }, { label: 'estate · berths', value: '24' }, { label: 'estate · outages', value: '146' }, { label: 'estate · availabilityPct', value: '90.3' }]);
+    expect(columnsOf(rowsOf(data))).toEqual(['name', 'code', 'outages', 'days']);
+    expect(columnsOf(rowsOf({ only: { nested: { deep: 1 } } }))).toEqual([]); // nothing tabular: the dialog shows the summary instead of an empty table
   });
 });

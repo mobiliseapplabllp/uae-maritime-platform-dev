@@ -154,7 +154,7 @@ export class GatewayService implements OnModuleInit {
     let principal: Principal | null = null;
     if (opts.userToken) { try { principal = await this.resolver.resolve(await this.verifier.verify(opts.userToken), opts.userToken); } catch { principal = null; } }
     const settings = await this.settings.get<AiProviderSettings>('ai', {});
-    const cfg = selectProvider(settings, { timeoutMs: this.env.INFERENCE_TIMEOUT_MS, maxOutputTokens: this.env.MAX_OUTPUT_TOKENS, anthropicVersion: this.env.ANTHROPIC_VERSION, anthropicBaseUrl: this.env.ANTHROPIC_BASE_URL });
+    const cfg = selectProvider(settings, { timeoutMs: this.env.INFERENCE_TIMEOUT_MS, maxOutputTokens: this.env.MAX_OUTPUT_TOKENS, anthropicVersion: this.env.ANTHROPIC_VERSION, anthropicBaseUrl: this.env.ANTHROPIC_BASE_URL, cliCommand: this.env.AI_CLI_COMMAND || undefined, cliArgs: this.env.AI_CLI_ARGS.split(/\s+/).filter(Boolean), cliTimeoutMs: this.env.AI_CLI_TIMEOUT_MS });
     const empty = { redactions: 0, redactionKinds: {}, injection: { score: 0, flags: [] as string[] } };
     const base = { provider: cfg.provider, profile: cfg.profile, residency: cfg.residency };
     if (!verdict.ok) {

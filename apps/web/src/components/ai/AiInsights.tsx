@@ -37,11 +37,25 @@ export function rowsOf(data: unknown): Record<string, unknown>[] {
     const d = data as Record<string, unknown>;
     if (Array.isArray(d.items)) return d.items as Record<string, unknown>[];
     for (const k of ['rows', 'list', 'arrivals', 'overdueList', 'alertList', 'renewals']) if (Array.isArray(d[k])) return d[k] as Record<string, unknown>[];
+    // a nested answer: the longest list of records it carries is the one worth a table
+    const lists = Object.values(d).filter((v): v is Record<string, unknown>[] => Array.isArray(v) && v.length > 0 && typeof v[0] === 'object' && v[0] !== null);
+    if (lists.length) return lists.sort((a, b) => b.length - a.length)[0];
     return [d];
   }
   return [];
 }
-export const columnsOf = (rows: Record<string, unknown>[]) => { const first = rows[0] ?? {}; const cols = PREFERRED.filter((k) => k in first && typeof first[k] !== 'object'); return (cols.length ? cols : Object.keys(first).filter((k) => typeof first[k] !== 'object')).slice(0, 6); };
+/** The scalar figures an answer carries beside its lists — totals, windows, rates — one level down, as label/value pairs. */
+export function summaryOf(data: unknown): { label: string; value: string }[] {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const out: { label: string; value: string }[] = [];
+  const add = (prefix: string, o: Record<string, unknown>) => { for (const [k, v] of Object.entries(o)) { if (out.length >= 12) return; if (v === null || typeof v !== 'object') out.push({ label: `${prefix}${k}`, value: fmtVal(v) }); } };
+  const d = data as Record<string, unknown>;
+  add('', d);
+  for (const [k, v] of Object.entries(d)) if (v && typeof v === 'object' && !Array.isArray(v)) add(`${k} · `, v as Record<string, unknown>);
+  return out;
+}
+/** The columns worth a table: the names the trade reads first, then the other scalar fields, never identifiers. */
+export const columnsOf = (rows: Record<string, unknown>[]) => { const first = rows[0] ?? {}; const scalar = (k: string) => typeof first[k] !== 'object' || first[k] === null; const cols = PREFERRED.filter((k) => k in first && scalar(k)); const rest = Object.keys(first).filter((k) => scalar(k) && !cols.includes(k) && !/^id$|Id$|^_/.test(k)); return [...cols, ...rest].slice(0, 6); };
 
 export default function AiInsights({ module, compact = false }: { module: string; compact?: boolean }) {
   const { t, i18n } = useTranslation(); const ar = i18n.language === 'ar';
@@ -128,12 +142,15 @@ export default function AiInsights({ module, compact = false }: { module: string
         <DialogContent>
           {result?.run.outcome === 'OK' && result.insight.action?.tier === 'ACT' && <Alert severity="success" sx={{ mb: 1 }}>{t('ai.insights.done', 'Done, in your name, and logged at the tool gateway.')}{result.run.callId ? ` (${result.run.callId.slice(0, 8)})` : ''}</Alert>}
           {result && result.run.outcome !== 'OK' && <Alert severity={result.run.outcome === 'REFUSED' ? 'warning' : 'error'} sx={{ mb: 1 }} data-testid="insight-result-refused">{result.run.outcome === 'REFUSED' ? t('ai.insights.refusedAction', 'The tool gateway refused this action.') : t('ai.insights.failedAction', 'The action could not be carried out.')} {result.run.reason}</Alert>}
-          {result?.run.outcome === 'OK' && result.insight.action?.tier === 'READ' && (() => { const rows = rowsOf(result.run.data); const cols = columnsOf(rows); return rows.length ? (
+          {result?.run.outcome === 'OK' && result.insight.action?.tier === 'READ' && summaryOf(result.run.data).length > 0 && (
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mb: 1 }} data-testid="insight-result-summary">{summaryOf(result.run.data).map((p) => <Chip key={p.label} size="small" label={`${p.label}: ${p.value}`} sx={{ height: 20, fontSize: 10.5 }} />)}</Stack>
+          )}
+          {result?.run.outcome === 'OK' && result.insight.action?.tier === 'READ' && (() => { const rows = rowsOf(result.run.data); const cols = columnsOf(rows); return rows.length && cols.length ? (
             <Box sx={{ overflowX: 'auto' }}>
               <Table size="small"><TableHead><TableRow>{cols.map((c) => <TableCell key={c} sx={{ fontSize: 11.5, fontWeight: 700 }}>{c}</TableCell>)}</TableRow></TableHead>
                 <TableBody>{rows.slice(0, 12).map((r, i) => <TableRow key={i}>{cols.map((c) => <TableCell key={c} sx={{ fontSize: 12 }}>{fmtVal(r[c])}</TableCell>)}</TableRow>)}</TableBody></Table>
               {rows.length > 12 && <Typography sx={{ fontSize: 11, color: 'text.secondary', mt: 0.5 }}>{t('ai.insights.more', { defaultValue: '{{n}} more not shown', n: rows.length - 12 })}</Typography>}
-            </Box>) : <Typography sx={{ fontSize: 13 }}>{t('ai.insights.noRows', 'Nothing matched.')}</Typography>; })()}
+            </Box>) : summaryOf(result.run.data).length ? null : <Typography sx={{ fontSize: 13 }}>{t('ai.insights.noRows', 'Nothing matched.')}</Typography>; })()}
         </DialogContent>
         <DialogActions><Button onClick={() => setResult(null)}>{t('common.close', 'Close')}</Button></DialogActions>
       </Dialog>

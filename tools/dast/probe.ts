@@ -574,6 +574,17 @@ async function main() {
     return refused.includes('admin.overview') && !/dormant against the/.test(text) ? null : `a shipping agent asking about dormant accounts got tools ${JSON.stringify(r.body?.data?.tools)} refusals ${JSON.stringify(refused)}`;
   });
 
+  await probe('an explanation is composed from the figures the card sent and nothing else, and refuses what is malformed or oversized', 'A03', 'medium', async () => {
+    const ok = await http('/ai/explain', { method: 'POST', token: G, body: JSON.stringify({ kind: 'yardstick', title: 'Anchorage waiting, avg', value: '11.4 h', target: 'target ≤ 4 h', module: 'ops' }) });
+    if (ok.status !== 201 || !/11\.4 h/.test(String(ok.body?.data?.text ?? '')) || ok.body?.data?.grounded !== true) return `a shipping agent asking for an explanation got ${ok.status}: ${JSON.stringify(ok.body?.data ?? ok.body).slice(0, 160)}`;
+    const bad = await http('/ai/explain', { method: 'POST', token: G, body: JSON.stringify({ kind: 'spreadsheet', title: 'x' }) });
+    if (bad.status !== 400) return `an unknown kind of card was accepted with ${bad.status}`;
+    const big = await http('/ai/explain', { method: 'POST', token: G, body: JSON.stringify({ kind: 'chart', title: 'x', data: Array.from({ length: 3000 }, (_, i) => ({ month: `m${i}`, note: 'y'.repeat(80), value: i })) }) });
+    if (big.status !== 413 && big.status !== 400) return `a payload far larger than any card draws was accepted with ${big.status}`;
+    const anon = await http('/ai/explain', { method: 'POST', body: JSON.stringify({ kind: 'stat', title: 'x', value: 1 }) });
+    return anon.status === 401 ? null : `an explanation without a session answered ${anon.status}`;
+  });
+
   // ---------------------------------------------------------------- Result
   const bySeverity = (s: Severity) => findings.filter((f) => f.severity === s).length;
   console.log(`\n${'-'.repeat(80)}`);

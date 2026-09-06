@@ -16,6 +16,7 @@ import { notify } from '../store/uiSlice';
 import { CHART_SERIES, SERIES_ORDER, SERIES_LABELS, chartChrome, MONO } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import AiInsights from '../components/ai/AiInsights';
+import ExplainButton from '../components/ai/ExplainButton';
 import StatCard from '../components/common/StatCard';
 import StatusChip from '../components/common/StatusChip';
 import { PORTCALL_STATUS_META, CERT_STATUS_META } from '../utils/status';
@@ -33,8 +34,8 @@ export interface DashboardData {
   expiringCerts: { vesselId: string; vessel: string; imo: string; certType: string; expiryDate: string; status: string }[];
   recentActivity: { at: string; actor: string | null; action: string; entity: string; label: string | null }[];
 }
-function ChartCard({ title, sub, children, h = 280 }: { title: string; sub?: string; children: React.ReactNode; h?: number }) {
-  return <Card sx={{ p: 2, height: '100%' }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}<Box sx={{ height: h, mt: 1 }}>{children}</Box></Card>;
+function ChartCard({ title, sub, children, h = 280, explain }: { title: string; sub?: string; children: React.ReactNode; h?: number; explain?: { data?: unknown } }) {
+  return <Card sx={{ p: 2, height: '100%' }}><Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Box><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}</Box>{explain && <ExplainButton ctx={{ kind: 'chart', title, sub, ...explain }} />}</Box><Box sx={{ height: h, mt: 1 }}>{children}</Box></Card>;
 }
 
 export default function Dashboard() {
@@ -75,7 +76,7 @@ export default function Dashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<WorkspacePremiumRoundedIcon />} label="Certificates flagged" value={kpis.certsExpiring + kpis.certsExpired} sub={`${kpis.certsExpired} expired · ${kpis.certsExpiring} expiring`} tone="warning.main" /></Grid>
         <Grid item xs={12}><AiInsights module="mis" /></Grid>
         <Grid item xs={12} lg={8}>
-          <ChartCard title="Cargo throughput" sub="metric tonnes handled per month, by cargo group (containers converted at 12 t/TEU)">
+          <ChartCard title="Cargo throughput" sub="metric tonnes handled per month, by cargo group (containers converted at 12 t/TEU)" explain={{ data: data.throughputByMonth }}>
             <Box dir="ltr" sx={{ height: '100%' }}>{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer>
               <BarChart data={data.throughputByMonth} barCategoryGap="28%">
@@ -91,7 +92,7 @@ export default function Dashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <ChartCard title="Cargo mix" sub="tonnage by commodity, last 12 months — share of total">
+          <ChartCard title="Cargo mix" sub="tonnage by commodity, last 12 months — share of total" explain={{ data: mix }}>
             <Box dir="ltr" sx={{ height: '100%' }}>
             <ResponsiveContainer>
               <BarChart data={mix} layout="vertical" margin={{ left: 8, right: 44, top: 4 }} barCategoryGap="28%">
@@ -106,7 +107,7 @@ export default function Dashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <ChartCard title="Billed revenue" sub={`issued invoices per month, ${profile.currency.code}`} h={240}>
+          <ChartCard title="Billed revenue" sub={`issued invoices per month, ${profile.currency.code}`} h={240} explain={{ data: data.revenueByMonth }}>
             <Box dir="ltr" sx={{ height: '100%' }}>
             <ResponsiveContainer>
               <LineChart data={data.revenueByMonth}>

@@ -1,14 +1,18 @@
+import { execFile } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { FENCE_RULE, fence, type Block } from './policy';
 
 /* The hosted model providers, behind one interface, chosen by Settings → AI.
  *
  * Nothing here names a model: the profile the operator enters in Settings is the model name the provider sees, and
- * what appears in the reply's engine line and the audit trail is that profile key. Two adapters: one speaks the
- * Anthropic Messages API; the other speaks the OpenAI-compatible chat API that the UAE-hosted platforms expose,
- * so a UAE endpoint is configuration rather than code. The residency rule sits above both. */
+ * what appears in the reply's engine line and the audit trail is that profile key. Three adapters: one speaks the
+ * Anthropic Messages API; one speaks the OpenAI-compatible chat API that the UAE-hosted platforms expose, so a UAE
+ * endpoint is configuration rather than code; and one runs a command on the gateway's own host — the operator's
+ * command-line assistant on a laptop — for a demonstration before any API key exists. The command comes from the
+ * gateway's environment, never from a setting, and is run without a shell. The residency rule sits above all three. */
 
-export type ProviderKind = 'local' | 'anthropic' | 'uae';
-export interface ProviderConfig { provider: ProviderKind; profile: string; apiKey?: string; endpoint?: string; residency: 'AE' | 'GLOBAL'; timeoutMs: number; maxOutputTokens: number; anthropicVersion: string }
+export type ProviderKind = 'local' | 'anthropic' | 'uae' | 'cli';
+export interface ProviderConfig { provider: ProviderKind; profile: string; apiKey?: string; endpoint?: string; residency: 'AE' | 'GLOBAL'; timeoutMs: number; maxOutputTokens: number; anthropicVersion: string; cliArgs?: string[] }
 export interface ChatRequest {
   contract: string; question: string; grounding: Block[]; findings: string[]; refusals: string[];
   history: { role: 'user' | 'assistant'; text: string }[]; language: 'en' | 'ar'; temperature?: number;
@@ -25,7 +29,8 @@ const on = (v: unknown) => v === true || String(v).toLowerCase() === 'true';
  * a residency requirement with no resident endpoint means no external inference at all, which is the safe reading
  * of "data stays in country". Anthropic answers only with a key and a profile; otherwise the answer is composed locally.
  */
-export function selectProvider(s: AiProviderSettings, defaults: { timeoutMs: number; maxOutputTokens: number; anthropicVersion: string; anthropicBaseUrl: string }): ProviderConfig {
+export interface ProviderDefaults { timeoutMs: number; maxOutputTokens: number; anthropicVersion: string; anthropicBaseUrl: string; cliCommand?: string; cliArgs?: string[]; cliTimeoutMs?: number }
+export function selectProvider(s: AiProviderSettings, defaults: ProviderDefaults): ProviderConfig {
   const base = { timeoutMs: defaults.timeoutMs, maxOutputTokens: defaults.maxOutputTokens, anthropicVersion: defaults.anthropicVersion };
   const uaeReady = !!(s.uaeEndpoint && String(s.uaeEndpoint).trim() && s.uaeModel && String(s.uaeModel).trim());
   const wants = String(s.provider ?? 'local').trim().toLowerCase();
@@ -35,6 +40,8 @@ export function selectProvider(s: AiProviderSettings, defaults: { timeoutMs: num
   if ((wants === 'anthropic' || wants === 'gateway') && s.apiKey && String(s.apiKey).trim() && s.model && String(s.model).trim()) {
     return { ...base, provider: 'anthropic', profile: String(s.model).trim(), apiKey: String(s.apiKey).trim(), endpoint: defaults.anthropicBaseUrl.replace(/\/+$/, ''), residency: 'GLOBAL' };
   }
+  // the command-line provider exists only where the gateway's host has one configured; the model behind it sits abroad
+  if (wants === 'cli' && defaults.cliCommand) return { ...base, timeoutMs: defaults.cliTimeoutMs ?? base.timeoutMs, provider: 'cli', profile: String(s.model ?? '').trim() || 'local-cli', endpoint: defaults.cliCommand, cliArgs: defaults.cliArgs ?? [], residency: 'GLOBAL' };
   return { ...base, provider: 'local', profile: String(s.model ?? '').trim() || 'platform-local', residency: 'AE' };
 }
 
@@ -83,8 +90,28 @@ export async function callOpenAiCompatible(cfg: ProviderConfig, prompt: { system
   return { text, tokensIn: body.usage?.prompt_tokens ?? 0, tokensOut: body.usage?.completion_tokens ?? 0 };
 }
 
+/**
+ * The command-line provider: the configured command is run without a shell, with the fixed arguments from the
+ * environment and the prompt as the last argument, in a neutral working directory, and its standard output is the
+ * answer. Token counts are estimates, since a command reports none.
+ */
+export function callCli(cfg: ProviderConfig, prompt: { system: string; user: string }): Promise<ChatResult> {
+  const input = `${prompt.system}\n\n${prompt.user}`;
+  return new Promise((resolve, reject) => {
+    const child = execFile(cfg.endpoint ?? '', [...(cfg.cliArgs ?? []), input], { timeout: cfg.timeoutMs, maxBuffer: 4 * 1024 * 1024, cwd: tmpdir(), windowsHide: true }, (err, stdout, stderr) => {
+      if (err) return reject(new Error(`Command-line provider failed: ${String(stderr || err.message).trim().slice(0, 300)}`));
+      const text = String(stdout).trim();
+      if (!text) return reject(new Error('Command-line provider returned no text'));
+      resolve({ text, tokensIn: Math.ceil(input.length / 4), tokensOut: Math.ceil(text.length / 4) });
+    });
+    child.stdin?.on('error', () => undefined);
+    child.stdin?.end();
+  });
+}
+
 export function callProvider(cfg: ProviderConfig, prompt: { system: string; user: string }, temperature: number | undefined, fetchFn: FetchLike): Promise<ChatResult> {
   if (cfg.provider === 'anthropic') return callAnthropic(cfg, prompt, temperature, fetchFn);
   if (cfg.provider === 'uae') return callOpenAiCompatible(cfg, prompt, temperature, fetchFn);
+  if (cfg.provider === 'cli') return callCli(cfg, prompt);
   return Promise.reject(new Error('No hosted provider is configured'));
 }

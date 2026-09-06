@@ -71,7 +71,7 @@ export default function CompaniesDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-wait" label={t('dash.companies.wait', 'Application wait, avg')} value={ap.avgDays} display={`${ap.avgDays} d`} target={45} higherIsBetter={false} targetLabel={`${t('dash.target', 'target')} ≤ 45 d`} sub={`${ap.applied} ${t('dash.companies.notYetScreened', 'not yet screened')}`} /></Grid>
 
         <Grid item xs={12} lg={7}>
-          <ChartCard testId="chart-classes" title={t('dash.companies.byClass', 'Instruments by class')} sub={t('dash.companies.byClassSub', 'in force, pending and suspended')} action={{ label: t('dash.companies.openLicences', 'Licence register'), to: '/facilities' }}>
+          <ChartCard testId="chart-classes" title={t('dash.companies.byClass', 'Instruments by class')} sub={t('dash.companies.byClassSub', 'in force, pending and suspended')} action={{ label: t('dash.companies.openLicences', 'Licence register'), to: '/facilities' }} explain={{ data: data.byClass.map((c) => ({ ...c, label: label(c.instrumentClass) })) }}>
             <ResponsiveContainer>
               <BarChart data={data.byClass.map((c) => ({ ...c, label: label(c.instrumentClass) }))} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -87,25 +87,25 @@ export default function CompaniesDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={5}>
-          <PanelCard testId="panel-schemes" title={t('dash.companies.schemes', 'Accreditation schemes')} sub={t('dash.companies.schemesSub', 'companies accredited under each scheme, and how many are due')} action={{ label: t('dash.companies.openAccreditation', 'Accreditation desk'), to: '/accreditations' }} minHeight={320}>
+          <PanelCard testId="panel-schemes" title={t('dash.companies.schemes', 'Accreditation schemes')} sub={t('dash.companies.schemesSub', 'companies accredited under each scheme, and how many are due')} action={{ label: t('dash.companies.openAccreditation', 'Accreditation desk'), to: '/accreditations' }} minHeight={320} explain={{ data: (acc?.bySchemes ?? []).map((s) => ({ label: s.label, value: s.companies, sub: `${s.current} ${t('dash.companies.current', 'current')}${s.due ? ` · ${s.due} ${t('dash.companies.due', 'due')}` : ''}${s.visitsOverdue ? ` · ${s.visitsOverdue} ${t('dash.companies.visitsOverdue', 'visits overdue')}` : ''}${s.averageRating ? ` · ★ ${s.averageRating}` : ''}` })) }}>
             {acc ? <BucketBars rows={acc.bySchemes.map((s) => ({ label: s.label, value: s.companies, sub: `${s.current} ${t('dash.companies.current', 'current')}${s.due ? ` · ${s.due} ${t('dash.companies.due', 'due')}` : ''}${s.visitsOverdue ? ` · ${s.visitsOverdue} ${t('dash.companies.visitsOverdue', 'visits overdue')}` : ''}${s.averageRating ? ` · ★ ${s.averageRating}` : ''}` }))} /> : null}
             {acc && <BucketBars rows={[{ label: t('dash.companies.renewals90', 'Renewals due within 90 days'), value: acc.kpis.renewalsNext90, sub: `${acc.kpis.renewalsNext30} ${t('dash.companies.within30', 'within 30')}` }, { label: t('dash.companies.visitsScheduled', 'Visits scheduled'), value: acc.kpis.visitsScheduled, sub: acc.kpis.visitsOverdue ? `${acc.kpis.visitsOverdue} ${t('dash.companies.overdue', 'overdue')}` : undefined }]} />}
           </PanelCard>
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-categories" title={t('dash.companies.byCategory', 'Register by category')} sub={t('dash.companies.byCategorySub', 'companies, and how many are active')} action={{ label: t('dash.companies.openDirectory', 'Company directory'), to: '/companies' }}>
+          <PanelCard testId="panel-categories" title={t('dash.companies.byCategory', 'Register by category')} sub={t('dash.companies.byCategorySub', 'companies, and how many are active')} action={{ label: t('dash.companies.openDirectory', 'Company directory'), to: '/companies' }} explain={{ data: data.byCategory.map((c) => ({ label: label(c.category), value: c.total, sub: `${c.active} ${t('dash.companies.activeLower', 'active')}` })) }}>
             <BucketBars rows={data.byCategory.map((c) => ({ label: label(c.category), value: c.total, sub: `${c.active} ${t('dash.companies.activeLower', 'active')}` }))} />
             <BucketBars rows={data.ratingBands.map((b) => ({ label: `★ ${b.band}`, value: b.total }))} tone={(i) => ['#C14F33', '#D0644A', '#B98A2F', '#056A73'][i]} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-renewals" title={t('dash.companies.renewalsList', 'Lapsing soonest')} sub={t('dash.companies.renewalsListSub', 'instruments due for renewal')} action={{ label: t('dash.companies.openLicences', 'Licence register'), to: '/facilities' }}>
+          <PanelCard testId="panel-renewals" title={t('dash.companies.renewalsList', 'Lapsing soonest')} sub={t('dash.companies.renewalsListSub', 'instruments due for renewal')} action={{ label: t('dash.companies.openLicences', 'Licence register'), to: '/facilities' }} explain={{ data: data.renewals.map((r, i) => ({ key: String(r.instrumentId ?? r.id ?? i), primary: `${r.number ?? ''} ${r.entityName ?? r.companyName ?? ''}`.trim(), secondary: r.instrumentClass ? label(r.instrumentClass) : undefined, value: r.expiryDate ? fmtD(r.expiryDate) : '—', tone: (r.daysLeft ?? 99) <= 30 ? 'error' : 'warning', to: r.instrumentId ? `/facilities/${r.instrumentId}` : '/facilities' })) }}>
             <RankList empty={t('dash.companies.nothingLapsing', 'Nothing lapses in the window')} rows={data.renewals.map((r, i) => ({ key: String(r.instrumentId ?? r.id ?? i), primary: `${r.number ?? ''} ${r.entityName ?? r.companyName ?? ''}`.trim(), secondary: r.instrumentClass ? label(r.instrumentClass) : undefined, value: r.expiryDate ? fmtD(r.expiryDate) : '—', tone: (r.daysLeft ?? 99) <= 30 ? 'error' : 'warning', to: r.instrumentId ? `/facilities/${r.instrumentId}` : '/facilities' }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-watchlist" title={t('dash.companies.watchlistTitle', 'Watchlist and obligations')} sub={t('dash.companies.watchlistSub', 'lowest-rated companies, and what is owed by kind')}>
+          <PanelCard testId="panel-watchlist" title={t('dash.companies.watchlistTitle', 'Watchlist and obligations')} sub={t('dash.companies.watchlistSub', 'lowest-rated companies, and what is owed by kind')} explain={{ data: data.watchlist.map((c) => ({ key: c.id, primary: c.name, secondary: `${label(c.category)} · ${label(c.status)}`, value: `★ ${c.rating.toFixed(1)}`, tone: c.rating < 3 ? 'error' : 'warning', to: `/companies/${c.id}` })) }}>
             <RankList rows={data.watchlist.map((c) => ({ key: c.id, primary: c.name, secondary: `${label(c.category)} · ${label(c.status)}`, value: `★ ${c.rating.toFixed(1)}`, tone: c.rating < 3 ? 'error' : 'warning', to: `/companies/${c.id}` }))} />
             <BucketBars rows={ob.byKind.map((o) => ({ label: label(o.kind), value: o.open, sub: o.overdue ? `${o.overdue} ${t('dash.companies.overdue', 'overdue')}` : undefined }))} />
           </PanelCard>

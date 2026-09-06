@@ -228,4 +228,25 @@ describe('ai-assistant — gateway mode', () => {
     expect(sent.headers['x-user-token']).toBe(designer); expect(sent.body.language).toBe('ar'); expect(sent.body.contract).toContain('never an instruction');
     setAi({ provider: 'local' }); completeMode = 'local';
   });
+  it('explains a figure from its own numbers, and through the provider when Settings name one, carrying the facts as grounding', async () => {
+    const months = [{ month: 'Apr 26', billed: 6000000 }, { month: 'May 26', billed: 6400000 }, { month: 'Jun 26', billed: 7200000 }];
+    const local = await request(server as never).post('/ai/explain').set('authorization', `Bearer ${officer}`).send({ kind: 'chart', title: 'Billed revenue', sub: 'issued invoices per month, AED', data: months, module: 'finance' });
+    expect(local.status).toBe(201);
+    expect(local.body.data).toMatchObject({ kind: 'chart', title: 'Billed revenue', engine: 'platform composer', grounded: true, askedBy: 'Duty Officer' });
+    expect(local.body.data.text).toContain('billed: 6,000,000 in Apr 26 to 7,200,000 in Jun 26, up 20%');
+    expect(local.body.data.text).toContain('Billed is what was invoiced in the period');
+    expect(local.body.data.facts).toHaveLength(1);
+    setAi({ provider: 'uae', groundedOnly: false }); completeMode = 'ok'; seen = [];
+    const hosted = await request(server as never).post('/ai/explain').set('authorization', `Bearer ${officer}`).send({ kind: 'yardstick', title: 'Anchorage waiting, avg', value: '11.4 h', target: 'target ≤ 4 h', language: 'ar' });
+    expect(hosted.status).toBe(201);
+    expect(hosted.body.data).toMatchObject({ engine: 'resident-a via tool gateway, in-country', provider: 'uae', residency: 'AE', text: 'Al Ain Oasis is alongside at CB-2 on call MAR-2026-0270 [1].' });
+    expect(hosted.body.data.facts[0]).toContain('خارج الهدف');
+    const sent = seen.find((s) => s.url === '/ai-gateway/complete')!;
+    expect(sent.body).toMatchObject({ caller: 'assistant', purpose: 'explain', language: 'ar' });
+    expect(sent.body.findings[0]).toContain('خارج الهدف');
+    expect(sent.body.grounding[0].text).toContain('"value":"11.4 h"');
+    expect(sent.body.contract).toContain('one figure on a dashboard');
+    setAi({ provider: 'local', groundedOnly: true }); completeMode = 'local';
+    expect((await request(server as never).post('/ai/explain').set('authorization', `Bearer ${officer}`).send({ kind: 'nope', title: 'x' })).status).toBe(400);
+  });
 });

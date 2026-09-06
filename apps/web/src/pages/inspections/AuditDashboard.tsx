@@ -13,6 +13,7 @@ import { useLookups } from '../../hooks/useLookups';
 import { chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
 import AiInsights from '../../components/ai/AiInsights';
+import ExplainButton from '../../components/ai/ExplainButton';
 import { fmtD } from '../../utils/format';
 import { KPI_STATUS_COLOR, REGIME_LOOKUP } from './constants';
 import type { InspectionDashboardData, InspectionKpis, KpiResult } from './types';
@@ -38,8 +39,9 @@ function KpiTile({ k, t }: { k: KpiResult; t: (key: string, opts?: Record<string
   const color = KPI_STATUS_COLOR[k.status];
   const value = k.value === null ? t('inspections.kpi.notCaptured') : `${k.value}${k.unit}`;
   return (
-    <Card sx={{ p: 2, height: '100%', borderTop: 3, borderTopColor: color === 'default' ? 'divider' : `${color}.main` }} data-testid={`kpi-${k.key}`}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+    <Card sx={{ p: 2, height: '100%', borderTop: 3, borderTopColor: color === 'default' ? 'divider' : `${color}.main`, position: 'relative' }} data-testid={`kpi-${k.key}`}>
+      <ExplainButton corner ctx={{ kind: 'yardstick', title: t(`inspections.kpi.${k.key}`, { defaultValue: k.label }), value, target: `target ≥ ${k.target}${k.unit}`, sub: k.detail }} testId={`kpi-${k.key}`} />
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1} sx={{ pr: 3 }}>
         <Typography sx={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3 }}>{t(`inspections.kpi.${k.key}`, { defaultValue: k.label })}</Typography>
         <Chip size="small" color={color === 'default' ? undefined : color} variant={color === 'default' ? 'outlined' : 'filled'} label={t(`inspections.kpi.status.${k.status}`)} sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
       </Stack>
@@ -95,6 +97,7 @@ export default function AuditDashboard() {
           <InsightsRoundedIcon color="primary" />
           <Box sx={{ flex: 1, minWidth: 240 }}>
             <Typography variant="h6" component="h2" id="smart-kpis" sx={{ fontSize: 15 }}>{t('inspections.kpi.title')}</Typography>
+            {kpis && <ExplainButton ctx={{ kind: 'panel', title: t('inspections.kpi.title'), data: kpis.kpis }} testId="inspect-kpis" />}
             <Typography variant="caption" color="text.secondary">{t('inspections.kpi.sub')}</Typography>
           </Box>
           {kpis && (
@@ -138,7 +141,7 @@ export default function AuditDashboard() {
       <Grid container spacing={2}>
         <Grid item xs={12} lg={7.5}>
           <Card sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('inspections.byMonth')}</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('inspections.byMonth')}</Typography><ExplainButton ctx={{ kind: 'chart', title: t('inspections.byMonth'), sub: t('inspections.byMonthSub'), data: data.byMonth }} testId="inspect-months" /></Box>
             <Typography variant="caption" color="text.secondary">{t('inspections.byMonthSub')}</Typography>
             <Box dir="ltr">
               <ResponsiveContainer width="100%" height={270}>
@@ -158,7 +161,7 @@ export default function AuditDashboard() {
         </Grid>
         <Grid item xs={12} lg={4.5}>
           <Card sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('inspections.byType')}</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('inspections.byType')}</Typography><ExplainButton ctx={{ kind: 'panel', title: t('inspections.byType'), sub: t('inspections.byTypeSub'), data: data.byType }} testId="inspect-types" /></Box>
             <Typography variant="caption" color="text.secondary">{t('inspections.byTypeSub')}</Typography>
             <TableContainer sx={{ overflowX: 'auto', mt: 1 }}>
               <Table size="small" aria-label={t('inspections.byType')}>

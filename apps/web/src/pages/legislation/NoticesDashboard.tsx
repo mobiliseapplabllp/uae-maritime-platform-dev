@@ -73,7 +73,7 @@ export default function NoticesDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-lead" label={t('dash.notices.leadTime', 'IMO item: seen to assessed')} value={imo?.kpis.leadTimeDays ?? null} display={imo?.kpis.leadTimeDays == null ? '—' : `${imo.kpis.leadTimeDays} d`} target={14} higherIsBetter={false} targetLabel={`${t('dash.target', 'target')} ≤ 14 d`} sub={imo ? `${imo.kpis.withInstrument} ${t('dash.notices.withInstrument', 'linked to an instrument')}` : ''} /></Grid>
 
         <Grid item xs={12} lg={8}>
-          <ChartCard testId="chart-months" title={t('dash.notices.byMonth', 'Issuance and acknowledgements')} sub={t('dash.notices.byMonthSub', 'instruments issued per month by kind, with the acknowledgements received — trailing 12 months')}>
+          <ChartCard testId="chart-months" title={t('dash.notices.byMonth', 'Issuance and acknowledgements')} sub={t('dash.notices.byMonthSub', 'instruments issued per month by kind, with the acknowledgements received — trailing 12 months')} explain={{ data: data.byMonth }}>
             <ResponsiveContainer>
               <ComposedChart data={data.byMonth} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -91,19 +91,19 @@ export default function NoticesDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <PanelCard testId="panel-imo" title={t('dash.notices.imoFunnel', 'IMO watch: seen to transposed')} sub={t('dash.notices.imoFunnelSub', 'items by stage, with the sources behind them')} action={{ label: t('dash.notices.openImo', 'IMO watch'), to: '/legislation/imo' }} minHeight={320}>
+          <PanelCard testId="panel-imo" title={t('dash.notices.imoFunnel', 'IMO watch: seen to transposed')} sub={t('dash.notices.imoFunnelSub', 'items by stage, with the sources behind them')} action={{ label: t('dash.notices.openImo', 'IMO watch'), to: '/legislation/imo' }} minHeight={320} explain={{ data: funnel }}>
             <BucketBars rows={funnel} tone={(i) => ['#B98A2F', '#0B74B0', '#056A73', '#8A96A3'][i]} />
             {imo && <BucketBars rows={imo.bySource.slice(0, 6).map((s) => ({ label: s.label ?? s.source, value: s.items, sub: s.new ? `${s.new} ${t('dash.notices.imoNewLower', 'new')}` : undefined }))} />}
           </PanelCard>
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-outstanding" title={t('dash.notices.outstanding', 'Most acknowledgements owed')} sub={t('dash.notices.outstandingSub', 'instruments still unread by those who must read them')} action={{ label: t('dash.notices.openLibrary', 'Notice library'), to: '/legislation' }}>
+          <PanelCard testId="panel-outstanding" title={t('dash.notices.outstanding', 'Most acknowledgements owed')} sub={t('dash.notices.outstandingSub', 'instruments still unread by those who must read them')} action={{ label: t('dash.notices.openLibrary', 'Notice library'), to: '/legislation' }} explain={{ data: data.outstanding.map((o) => ({ key: o.id, primary: `${o.refNo} · ${o.title}`, secondary: `${o.acknowledgements}/${o.recipients} ${t('dash.notices.acknowledged', 'acknowledged')}`, value: `${o.outstanding}`, tone: 'warning', to: `/legislation?q=${encodeURIComponent(o.refNo)}` })) }}>
             <RankList empty={t('dash.notices.allRead', 'Everything required has been acknowledged')} rows={data.outstanding.map((o) => ({ key: o.id, primary: `${o.refNo} · ${o.title}`, secondary: `${o.acknowledgements}/${o.recipients} ${t('dash.notices.acknowledged', 'acknowledged')}`, value: `${o.outstanding}`, tone: 'warning', to: `/legislation?q=${encodeURIComponent(o.refNo)}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-drafts" title={t('dash.notices.draftsTitle', 'Drafts in the four-eyes ladder')} sub={t('dash.notices.draftsSub', 'drafted, reviewed, cleared — then approved')}>
+          <PanelCard testId="panel-drafts" title={t('dash.notices.draftsTitle', 'Drafts in the four-eyes ladder')} sub={t('dash.notices.draftsSub', 'drafted, reviewed, cleared — then approved')} explain={{ data: data.drafts.map((d) => ({ key: d.id, primary: `${d.refNo} · ${d.title}`, secondary: `${label(d.type)} · ${d.draftedBy}`, value: d.cleared ? t('dash.notices.cleared', 'cleared') : d.reviewed ? t('dash.notices.reviewed', 'reviewed') : t('dash.notices.drafted', 'drafted'), tone: d.cleared ? 'success' : d.reviewed ? 'warning' : 'default', to: `/legislation?q=${encodeURIComponent(d.refNo)}` })) }}>
             <RankList empty={t('dash.notices.noDrafts', 'No drafts open')} rows={data.drafts.map((d) => ({ key: d.id, primary: `${d.refNo} · ${d.title}`, secondary: `${label(d.type)} · ${d.draftedBy}`, value: d.cleared ? t('dash.notices.cleared', 'cleared') : d.reviewed ? t('dash.notices.reviewed', 'reviewed') : t('dash.notices.drafted', 'drafted'), tone: d.cleared ? 'success' : d.reviewed ? 'warning' : 'default', to: `/legislation?q=${encodeURIComponent(d.refNo)}` }))} />
             {imo && imo.attention.length > 0 && <>
               <RankList testId="imo-attention" rows={imo.attention.slice(0, 4).map((i) => ({ key: i.id, primary: `${i.reference} · ${i.title}`, secondary: `${i.sourceLabel ?? i.source} · ${i.publishedOn ? fmtD(i.publishedOn) : ''}`, value: i.overdue ? t('dash.notices.overdue', 'overdue') : label(i.status), tone: i.overdue ? 'error' : 'warning', to: '/legislation/imo' }))} />
@@ -111,7 +111,7 @@ export default function NoticesDashboard() {
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-review" title={t('dash.notices.reviewList', 'Due for review')} sub={t('dash.notices.reviewListSub', { defaultValue: 'in force for more than {{y}} years without amendment, oldest first', y: currency.reviewYears })}>
+          <PanelCard testId="panel-review" title={t('dash.notices.reviewList', 'Due for review')} sub={t('dash.notices.reviewListSub', { defaultValue: 'in force for more than {{y}} years without amendment, oldest first', y: currency.reviewYears })} explain={{ data: data.reviewList.map((r) => ({ key: r.id, primary: `${r.refNo} · ${r.title}`, secondary: `${label(r.type)} · ${r.category}`, value: `${r.ageYears} y`, tone: r.ageYears > 10 ? 'error' : 'warning', to: `/legislation?q=${encodeURIComponent(r.refNo)}` })) }}>
             <RankList empty={t('dash.notices.nothingAged', 'Nothing past its review age')} rows={data.reviewList.map((r) => ({ key: r.id, primary: `${r.refNo} · ${r.title}`, secondary: `${label(r.type)} · ${r.category}`, value: `${r.ageYears} y`, tone: r.ageYears > 10 ? 'error' : 'warning', to: `/legislation?q=${encodeURIComponent(r.refNo)}` }))} />
             <BucketBars rows={data.byType.slice(0, 6).map((x) => ({ label: label(x.type), value: x.inForce, display: `${x.inForce}`, sub: `${x.total} ${t('dash.notices.inAll', 'in all')}` }))} />
           </PanelCard>

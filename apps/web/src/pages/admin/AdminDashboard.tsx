@@ -64,7 +64,7 @@ export default function AdminDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-posture" label={t('dash.admin.posture', 'Access posture')} value={k.postureScore} display={`${k.postureScore}`} target={80} targetLabel={`${t('dash.target', 'target')} ≥ 80`} sub={t('dash.admin.postureSub', 'coverage, privilege, dormancy and the review')} /></Grid>
 
         <Grid item xs={12} lg={7}>
-          <ChartCard testId="chart-audit" title={t('dash.admin.auditByDay', 'The ledger, day by day')} sub={t('dash.admin.auditByDaySub', 'audit events recorded and sign-ins, last 14 days')} action={{ label: t('dash.admin.openAudit', 'Audit log'), to: '/admin/audit' }}>
+          <ChartCard testId="chart-audit" title={t('dash.admin.auditByDay', 'The ledger, day by day')} sub={t('dash.admin.auditByDaySub', 'audit events recorded and sign-ins, last 14 days')} action={{ label: t('dash.admin.openAudit', 'Audit log'), to: '/admin/audit' }} explain={{ data: (audit?.byDay ?? []).map((d) => ({ ...d, label: fmtD(d.day).slice(0, 6) })) }}>
             <ResponsiveContainer>
               <ComposedChart data={(audit?.byDay ?? []).map((d) => ({ ...d, label: fmtD(d.day).slice(0, 6) }))} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -79,7 +79,7 @@ export default function AdminDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={5}>
-          <ChartCard testId="chart-roles" title={t('dash.admin.byRole', 'Accounts by role')} sub={t('dash.admin.byRoleSub', 'people in each role, and how many carry a second factor')} action={{ label: t('dash.admin.openRoles', 'Roles'), to: '/admin/roles' }}>
+          <ChartCard testId="chart-roles" title={t('dash.admin.byRole', 'Accounts by role')} sub={t('dash.admin.byRoleSub', 'people in each role, and how many carry a second factor')} action={{ label: t('dash.admin.openRoles', 'Roles'), to: '/admin/roles' }} explain={{ data: data.byRole.slice(0, 9).map(({ role, ...r }) => ({ ...r, roleName: role })) }}>
             <ResponsiveContainer>
               <BarChart data={data.byRole.slice(0, 9).map(({ role, ...r }) => ({ ...r, roleName: role }))} layout="vertical" margin={{ left: 8, right: 24, top: 4 }} barCategoryGap="24%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -94,17 +94,17 @@ export default function AdminDashboard() {
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-privileged" title={t('dash.admin.privilegedList', 'Privileged accounts')} sub={t('dash.admin.privilegedSub', 'those who can change who may do what — uncovered first')} action={{ label: t('dash.admin.openUsers', 'Users'), to: '/admin/users' }}>
+          <PanelCard testId="panel-privileged" title={t('dash.admin.privilegedList', 'Privileged accounts')} sub={t('dash.admin.privilegedSub', 'those who can change who may do what — uncovered first')} action={{ label: t('dash.admin.openUsers', 'Users'), to: '/admin/users' }} explain={{ data: data.privilegedList.map((u) => ({ key: u.id, primary: u.name, secondary: `${u.roleName}${u.lastLoginAt ? ` · ${t('dash.admin.lastSeen', 'last seen')} ${fromNow(u.lastLoginAt)}` : ''}`, value: u.mfaEnrolled ? t('dash.admin.covered', 'covered') : t('dash.admin.noMfa', 'no second factor'), tone: u.mfaEnrolled ? 'success' : 'error', to: `/admin/users?q=${encodeURIComponent(u.name)}` })) }}>
             <RankList rows={data.privilegedList.map((u) => ({ key: u.id, primary: u.name, secondary: `${u.roleName}${u.lastLoginAt ? ` · ${t('dash.admin.lastSeen', 'last seen')} ${fromNow(u.lastLoginAt)}` : ''}`, value: u.mfaEnrolled ? t('dash.admin.covered', 'covered') : t('dash.admin.noMfa', 'no second factor'), tone: u.mfaEnrolled ? 'success' : 'error', to: `/admin/users?q=${encodeURIComponent(u.name)}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-dormant" title={t('dash.admin.dormantList', 'Dormant accounts')} sub={t('dash.admin.dormantListSub', 'longest silent first — confirm or revoke in the review')} action={{ label: t('dash.admin.openReviews', 'Access reviews'), to: '/admin/access-reviews' }}>
+          <PanelCard testId="panel-dormant" title={t('dash.admin.dormantList', 'Dormant accounts')} sub={t('dash.admin.dormantListSub', 'longest silent first — confirm or revoke in the review')} action={{ label: t('dash.admin.openReviews', 'Access reviews'), to: '/admin/access-reviews' }} explain={{ data: data.dormantList.map((u) => ({ key: u.id, primary: u.name, secondary: `${u.roleName} · ${u.department || '—'}`, value: u.days === null ? t('dash.admin.never', 'never signed in') : `${u.days} d`, tone: 'warning', to: `/admin/users?q=${encodeURIComponent(u.name)}` })) }}>
             <RankList empty={t('dash.admin.noDormant', 'No dormant accounts')} rows={data.dormantList.map((u) => ({ key: u.id, primary: u.name, secondary: `${u.roleName} · ${u.department || '—'}`, value: u.days === null ? t('dash.admin.never', 'never signed in') : `${u.days} d`, tone: 'warning', to: `/admin/users?q=${encodeURIComponent(u.name)}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-changes" title={t('dash.admin.changes', 'Four-eyes changes')} sub={t('dash.admin.changesSub', 'privileged grants by kind and outcome')}>
+          <PanelCard testId="panel-changes" title={t('dash.admin.changes', 'Four-eyes changes')} sub={t('dash.admin.changesSub', 'privileged grants by kind and outcome')} explain={{ data: data.changesByKind.map((c) => ({ label: label(c.kind), value: c.pending + c.approved + c.rejected + c.cancelled, display: `${c.pending + c.approved + c.rejected + c.cancelled}`, sub: `${c.pending} ${t('dash.admin.pending', 'pending')} · ${c.approved} ${t('dash.admin.approved', 'approved')} · ${c.rejected} ${t('dash.admin.rejectedShort', 'rejected')}` })) }}>
             <BucketBars rows={data.changesByKind.map((c) => ({ label: label(c.kind), value: c.pending + c.approved + c.rejected + c.cancelled, display: `${c.pending + c.approved + c.rejected + c.cancelled}`, sub: `${c.pending} ${t('dash.admin.pending', 'pending')} · ${c.approved} ${t('dash.admin.approved', 'approved')} · ${c.rejected} ${t('dash.admin.rejectedShort', 'rejected')}` }))} />
             {review && <Typography variant="body2" sx={{ mt: 2 }} data-testid="review-line">{t('dash.admin.reviewLine', { defaultValue: 'Review opened {{opened}}: {{confirmed}} confirmed, {{revoked}} revoked, {{privileged}} privileged still pending.', opened: review.openedAt ? fmtD(review.openedAt) : '—', confirmed: review.confirmed, revoked: review.revoked, privileged: review.pendingPrivileged })}</Typography>}
             <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>{t('dash.admin.byDepartment', 'Departments')}</Typography>
@@ -112,7 +112,7 @@ export default function AdminDashboard() {
           </PanelCard>
         </Grid>
         {audit && <Grid item xs={12}>
-          <PanelCard testId="panel-services" title={t('dash.admin.byService', 'Where the ledger writes come from')} sub={t('dash.admin.byServiceSub', 'events by service, all time — and the most frequent actions')}>
+          <PanelCard testId="panel-services" title={t('dash.admin.byService', 'Where the ledger writes come from')} sub={t('dash.admin.byServiceSub', 'events by service, all time — and the most frequent actions')} explain={{ data: audit.byService.slice(0, 8).map((s) => ({ label: s.service, value: s.count, display: fmtNum(s.count) })) }}>
             <Grid container spacing={2}>
               <Grid item xs={12} md={6}><BucketBars rows={audit.byService.slice(0, 8).map((s) => ({ label: s.service, value: s.count, display: fmtNum(s.count) }))} /></Grid>
               <Grid item xs={12} md={6}><BucketBars rows={audit.byAction.slice(0, 8).map((a) => ({ label: label(a.action), value: a.count, display: fmtNum(a.count) }))} /></Grid>

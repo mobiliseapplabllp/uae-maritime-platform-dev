@@ -68,7 +68,7 @@ export default function HarbourDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-tugs" label={t('dash.harbour.tugUtil', 'Tug utilisation, 30 d')} value={k.tugUtilisationPct} display={`${k.tugUtilisationPct}%`} target={40} targetLabel={`${t('dash.reference', 'reference')} 40–60%`} sub={`${t('dash.harbour.pilots', 'pilots')} ${k.pilotUtilisationPct}%`} /></Grid>
 
         <Grid item xs={12} lg={8}>
-          <ChartCard testId="chart-months" title={t('dash.harbour.byMonth', 'Calls and waiting time')} sub={t('dash.harbour.byMonthSub', 'arrivals per month with the average wait at anchorage — trailing 12 months')}>
+          <ChartCard testId="chart-months" title={t('dash.harbour.byMonth', 'Calls and waiting time')} sub={t('dash.harbour.byMonthSub', 'arrivals per month with the average wait at anchorage — trailing 12 months')} explain={{ data: data.byMonth }}>
             <ResponsiveContainer>
               <ComposedChart data={data.byMonth} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -85,7 +85,7 @@ export default function HarbourDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <ChartCard testId="chart-types" title={t('dash.harbour.byType', 'Turnaround by vessel type')} sub={t('dash.harbour.byTypeSub', 'average hours in port, sailed calls — 12 months')}>
+          <ChartCard testId="chart-types" title={t('dash.harbour.byType', 'Turnaround by vessel type')} sub={t('dash.harbour.byTypeSub', 'average hours in port, sailed calls — 12 months')} explain={{ data: data.byType.slice(0, 7).map((x) => ({ ...x, label: label(x.type) })) }}>
             <ResponsiveContainer>
               <BarChart data={data.byType.slice(0, 7).map((x) => ({ ...x, label: label(x.type) }))} layout="vertical" margin={{ left: 8, right: 36, top: 4 }} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -100,33 +100,33 @@ export default function HarbourDashboard() {
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-terminals" title={t('dash.harbour.byTerminal', 'Occupancy by terminal')} sub={t('dash.harbour.byTerminalSub', 'occupied hours against available hours, 30 days')} action={{ label: t('dash.harbour.openBoard', 'Berth board'), to: '/berth-board' }}>
+          <PanelCard testId="panel-terminals" title={t('dash.harbour.byTerminal', 'Occupancy by terminal')} sub={t('dash.harbour.byTerminalSub', 'occupied hours against available hours, 30 days')} action={{ label: t('dash.harbour.openBoard', 'Berth board'), to: '/berth-board' }} explain={{ data: data.byTerminal.map((x) => ({ label: x.terminal, value: x.occupancyPct, display: `${x.occupancyPct}%`, sub: `${x.berths} ${t('dash.harbour.berths', 'berths')}` })) }}>
             <BucketBars rows={data.byTerminal.map((x) => ({ label: x.terminal, value: x.occupancyPct, display: `${x.occupancyPct}%`, sub: `${x.berths} ${t('dash.harbour.berths', 'berths')}` }))} max={100} tone={(i) => (data.byTerminal[i].occupancyPct > targets.congestionPct ? '#C14F33' : '#0E7C86')} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-craft" title={t('dash.harbour.craft', 'Marine craft utilisation')} sub={t('dash.harbour.craftSub', 'assist hours against the hours the fleet could work, 30 days')} action={{ label: t('dash.harbour.openCraft', 'Marine craft'), to: '/marine-services' }}>
+          <PanelCard testId="panel-craft" title={t('dash.harbour.craft', 'Marine craft utilisation')} sub={t('dash.harbour.craftSub', 'assist hours against the hours the fleet could work, 30 days')} action={{ label: t('dash.harbour.openCraft', 'Marine craft'), to: '/marine-services' }} explain={{ data: data.craftByType.map((x) => ({ label: `${label(x.type)} (${x.craft})`, value: x.utilisationPct, display: `${x.utilisationPct}%`, sub: `${x.jobs} ${t('dash.harbour.jobs', 'jobs')} · ${fmtNum(x.hours)} h` })) }}>
             <BucketBars rows={data.craftByType.map((x) => ({ label: `${label(x.type)} (${x.craft})`, value: x.utilisationPct, display: `${x.utilisationPct}%`, sub: `${x.jobs} ${t('dash.harbour.jobs', 'jobs')} · ${fmtNum(x.hours)} h` }))} max={100} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-outages" title={t('dash.harbour.outagesByKind', 'Berth downtime by cause')} sub={t('dash.harbour.outagesSub', 'hours lost in the last 12 months')}>
+          <PanelCard testId="panel-outages" title={t('dash.harbour.outagesByKind', 'Berth downtime by cause')} sub={t('dash.harbour.outagesSub', 'hours lost in the last 12 months')} explain={{ data: data.outagesByKind.map((x) => ({ label: label(x.kind), value: x.hours, display: `${fmtNum(x.hours)} h`, sub: `${x.count}` })) }}>
             <BucketBars rows={data.outagesByKind.map((x) => ({ label: label(x.kind), value: x.hours, display: `${fmtNum(x.hours)} h`, sub: `${x.count}` }))} />
           </PanelCard>
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-arrivals" title={t('dash.harbour.arrivals', 'Expected arrivals, 7 days')} sub={t('dash.harbour.arrivalsSub', 'announced and confirmed calls, soonest first')} action={{ label: t('dash.harbour.openSchedule', 'Schedule'), to: '/schedule' }}>
+          <PanelCard testId="panel-arrivals" title={t('dash.harbour.arrivals', 'Expected arrivals, 7 days')} sub={t('dash.harbour.arrivalsSub', 'announced and confirmed calls, soonest first')} action={{ label: t('dash.harbour.openSchedule', 'Schedule'), to: '/schedule' }} explain={{ data: data.arrivals.map((a) => ({ key: a.id, primary: a.vesselName, secondary: `${a.vcn} · ${a.agentName || '—'}${a.berthCode ? ` · ${a.berthCode}` : ''}`, value: fmtDT(a.eta), to: `/port-calls/${a.id}` })) }}>
             <RankList empty={t('dash.harbour.noArrivals', 'No arrivals announced')} rows={data.arrivals.map((a) => ({ key: a.id, primary: a.vesselName, secondary: `${a.vcn} · ${a.agentName || '—'}${a.berthCode ? ` · ${a.berthCode}` : ''}`, value: fmtDT(a.eta), to: `/port-calls/${a.id}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-anchored" title={t('dash.harbour.anchored', 'At anchorage now')} sub={t('dash.harbour.anchoredSub', 'longest waiting first')}>
+          <PanelCard testId="panel-anchored" title={t('dash.harbour.anchored', 'At anchorage now')} sub={t('dash.harbour.anchoredSub', 'longest waiting first')} explain={{ data: data.anchored.map((a) => ({ key: a.id, primary: a.vesselName, secondary: `${a.vcn} · ${a.since ? `${t('dash.harbour.since', 'since')} ${fromNow(a.since)}` : ''}${a.etb ? ` · ETB ${fmtDT(a.etb)}` : ''}`, value: hrs(a.waitingHrs), tone: a.waitingHrs > targets.anchorageAlertHrs ? 'error' : a.waitingHrs > targets.waitingHrs ? 'warning' : 'success', to: `/port-calls/${a.id}` })) }}>
             <RankList empty={t('dash.harbour.noAnchored', 'Nobody is waiting')} rows={data.anchored.map((a) => ({ key: a.id, primary: a.vesselName, secondary: `${a.vcn} · ${a.since ? `${t('dash.harbour.since', 'since')} ${fromNow(a.since)}` : ''}${a.etb ? ` · ETB ${fmtDT(a.etb)}` : ''}`, value: hrs(a.waitingHrs), tone: a.waitingHrs > targets.anchorageAlertHrs ? 'error' : a.waitingHrs > targets.waitingHrs ? 'warning' : 'success', to: `/port-calls/${a.id}` }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-agents" title={t('dash.harbour.agents', 'Calls by agent')} sub={t('dash.harbour.agentsSub', 'share of arrivals, 12 months')} action={{ label: t('dash.harbour.openCompanies', 'Companies'), to: '/companies' }}>
+          <PanelCard testId="panel-agents" title={t('dash.harbour.agents', 'Calls by agent')} sub={t('dash.harbour.agentsSub', 'share of arrivals, 12 months')} action={{ label: t('dash.harbour.openCompanies', 'Companies'), to: '/companies' }} explain={{ data: data.agents.map((a) => ({ label: a.agentName || a.agentCode, value: a.calls, display: `${a.calls}`, sub: `${a.sharePct}%` })) }}>
             <BucketBars rows={data.agents.map((a) => ({ label: a.agentName || a.agentCode, value: a.calls, display: `${a.calls}`, sub: `${a.sharePct}%` }))} />
           </PanelCard>
         </Grid>

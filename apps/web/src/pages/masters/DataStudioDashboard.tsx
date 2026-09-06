@@ -62,7 +62,7 @@ export default function DataStudioDashboard() {
         ))}
 
         <Grid item xs={12} lg={7}>
-          <ChartCard testId="chart-masters" title={t('dash.studio.largest', 'The largest masters')} sub={t('dash.studio.largestSub', 'values per master, with the share carrying an Arabic label')} action={{ label: t('dash.studio.openMasters', 'All masters'), to: '/masters' }} h={320}>
+          <ChartCard testId="chart-masters" title={t('dash.studio.largest', 'The largest masters')} sub={t('dash.studio.largestSub', 'values per master, with the share carrying an Arabic label')} action={{ label: t('dash.studio.openMasters', 'All masters'), to: '/masters' }} h={320} explain={{ data: data.masters.slice(0, 12).map((m) => ({ ...m, label: humanise(m.category) })) }}>
             <ResponsiveContainer>
               <BarChart data={data.masters.slice(0, 12).map((m) => ({ ...m, label: humanise(m.category) }))} layout="vertical" margin={{ left: 8, right: 40, top: 4 }} barCategoryGap="24%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -75,13 +75,18 @@ export default function DataStudioDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={5}>
-          <PanelCard testId="panel-weakest" title={t('dash.studio.weakest', 'Masters needing work')} sub={t('dash.studio.weakestSub', 'lowest grade first — open one to complete it')} minHeight={320}>
+          <PanelCard testId="panel-weakest" title={t('dash.studio.weakest', 'Masters needing work')} sub={t('dash.studio.weakestSub', 'lowest grade first — open one to complete it')} minHeight={320} explain={{ data: data.weakest.map((m) => ({ key: m.category, primary: humanise(m.category), secondary: `${m.entries} ${t('dash.studio.values', 'values')} · ${m.arabicPct}% ${t('dash.studio.arabicShort', 'Arabic')}${m.duplicates ? ` · ${m.duplicates} ${t('dash.studio.dupShort', 'duplicate')}` : ''}${m.invalid ? ` · ${m.invalid} ${t('dash.studio.invalidShort', 'malformed')}` : ''}${m.stale ? ` · ${t('dash.studio.staleShort', 'stale')}` : ''}`, value: `${m.grade} · ${m.score}`, tone: m.grade === 'D' ? 'error' : m.grade === 'C' ? 'warning' : 'default', to: `/masters/m/${m.category}` })) }}>
             <RankList empty={t('dash.studio.allGood', 'Every master grades A')} rows={data.weakest.map((m) => ({ key: m.category, primary: humanise(m.category), secondary: `${m.entries} ${t('dash.studio.values', 'values')} · ${m.arabicPct}% ${t('dash.studio.arabicShort', 'Arabic')}${m.duplicates ? ` · ${m.duplicates} ${t('dash.studio.dupShort', 'duplicate')}` : ''}${m.invalid ? ` · ${m.invalid} ${t('dash.studio.invalidShort', 'malformed')}` : ''}${m.stale ? ` · ${t('dash.studio.staleShort', 'stale')}` : ''}`, value: `${m.grade} · ${m.score}`, tone: m.grade === 'D' ? 'error' : m.grade === 'C' ? 'warning' : 'default', to: `/masters/m/${m.category}` }))} />
           </PanelCard>
         </Grid>
 
         <Grid item xs={12} md={6}>
-          <PanelCard testId="panel-golden" title={t('dash.studio.goldenTitle', 'Golden record completeness')} sub={t('dash.studio.goldenSub', 'key fields filled on the records other services copy')}>
+          <PanelCard testId="panel-golden" title={t('dash.studio.goldenTitle', 'Golden record completeness')} sub={t('dash.studio.goldenSub', 'key fields filled on the records other services copy')} explain={{ data: [
+              { label: t('dash.studio.vesselsGolden', { defaultValue: 'Vessels ({{n}})', n: k.goldenVessels }), value: k.vesselCompletenessPct, display: `${k.vesselCompletenessPct}%` },
+              { label: t('dash.studio.companiesGolden', { defaultValue: 'Companies ({{n}})', n: k.goldenCompanies }), value: k.companyCompletenessPct, display: `${k.companyCompletenessPct}%` },
+              { label: t('dash.studio.arabicRow', 'Master values with Arabic'), value: k.arabicPct, display: `${k.arabicPct}%` },
+              { label: t('dash.studio.timelinessRow', 'Masters touched recently'), value: dim('Timeliness')?.score ?? 0, display: `${dim('Timeliness')?.score ?? 0}%` },
+            ] }}>
             <BucketBars rows={[
               { label: t('dash.studio.vesselsGolden', { defaultValue: 'Vessels ({{n}})', n: k.goldenVessels }), value: k.vesselCompletenessPct, display: `${k.vesselCompletenessPct}%` },
               { label: t('dash.studio.companiesGolden', { defaultValue: 'Companies ({{n}})', n: k.goldenCompanies }), value: k.companyCompletenessPct, display: `${k.companyCompletenessPct}%` },
@@ -91,7 +96,7 @@ export default function DataStudioDashboard() {
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={6}>
-          <PanelCard testId="panel-settings" title={t('dash.studio.recent', 'Recent setting changes')} sub={t('dash.studio.recentSub', 'who changed what in the last 30 days')} action={{ label: t('dash.studio.openSettings', 'Settings'), to: '/admin/settings' }}>
+          <PanelCard testId="panel-settings" title={t('dash.studio.recent', 'Recent setting changes')} sub={t('dash.studio.recentSub', 'who changed what in the last 30 days')} action={{ label: t('dash.studio.openSettings', 'Settings'), to: '/admin/settings' }} explain={{ data: data.recentSettings.map((s) => ({ key: s.key, primary: s.key.startsWith('module:') ? `${t('dash.studio.moduleSetting', 'Module')} · ${s.key.slice(7)}` : humanise(s.key), secondary: s.updatedBy, value: s.updatedAt ? fromNow(s.updatedAt) : '—', to: settingLink(s.key) })) }}>
             <RankList empty={t('dash.studio.noChanges', 'No changes in 30 days')} rows={data.recentSettings.map((s) => ({ key: s.key, primary: s.key.startsWith('module:') ? `${t('dash.studio.moduleSetting', 'Module')} · ${s.key.slice(7)}` : humanise(s.key), secondary: s.updatedBy, value: s.updatedAt ? fromNow(s.updatedAt) : '—', to: settingLink(s.key) }))} />
           </PanelCard>
         </Grid>

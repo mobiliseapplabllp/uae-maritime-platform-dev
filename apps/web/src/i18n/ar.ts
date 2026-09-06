@@ -463,6 +463,13 @@ const ar: Dictionary = {
   },
 
   ai: {
+    explain: {
+      button: 'اشرح مع المساعد',
+      loading: 'جارٍ قراءة الأرقام…',
+      unavailable: 'تعذّر على المساعد شرح هذا الآن.',
+      engine: 'شرحه',
+      again: 'اشرح مرة أخرى',
+    },
     insights: {
       title: 'رؤى وإجراءات تالية',
       critical: 'حرجة',

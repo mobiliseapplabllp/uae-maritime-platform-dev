@@ -11,6 +11,7 @@ import { notify } from '../../store/uiSlice';
 import { chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
 import AiInsights from '../../components/ai/AiInsights';
+import ExplainButton from '../../components/ai/ExplainButton';
 import StatusChip from '../../components/common/StatusChip';
 import { INCIDENT_STATUS_META, SEVERITY_META } from '../../utils/status';
 import { fromNow, titleCase } from '../../utils/format';
@@ -25,10 +26,12 @@ const Kpi = ({ label, value, sub, tone }: { label: string; value: React.ReactNod
     {sub && <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>{sub}</Typography>}
   </Card>
 );
-const Section = ({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) => (
+const Section = ({ title, sub, children, explain }: { title: string; sub?: string; children: React.ReactNode; explain?: { data?: unknown } }) => (
   <Card sx={{ p: 2, height: '100%' }}>
-    <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>
-    {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
+      <Box><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}</Box>
+      {explain && <ExplainButton ctx={{ kind: 'chart', title, sub, ...explain }} />}
+    </Box>
     <Box sx={{ mt: 1.5 }}>{children}</Box>
   </Card>
 );
@@ -68,7 +71,7 @@ export default function IncidentDashboard() {
 
       <Grid container spacing={2}>
         <Grid item xs={12} lg={7.5}>
-          <Section title={t('incidents.byMonth')} sub={t('incidents.byMonthSub')}>
+          <Section title={t('incidents.byMonth')} sub={t('incidents.byMonthSub')} explain={{ data: data.byMonth }}>
             <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={data.byMonth} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
@@ -84,7 +87,7 @@ export default function IncidentDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12} lg={4.5}>
-          <Section title={t('incidents.ageing')} sub={t('incidents.ageingSub')}>
+          <Section title={t('incidents.ageing')} sub={t('incidents.ageingSub')} explain={{ data: data.aging }}>
             <Box dir="ltr">
             <ResponsiveContainer width="100%" height={170}>
               <BarChart data={data.aging} layout="vertical" margin={{ top: 0, right: 18, left: 4, bottom: 0 }}>
@@ -105,7 +108,7 @@ export default function IncidentDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12} md={7}>
-          <Section title={t('incidents.byType')} sub={t('incidents.trailing12')}>
+          <Section title={t('incidents.byType')} sub={t('incidents.trailing12')} explain={{ data: data.byType }}>
             <Box dir="ltr">
             <ResponsiveContainer width="100%" height={Math.max(200, data.byType.length * 26)}>
               <BarChart data={data.byType} layout="vertical" margin={{ top: 0, right: 24, left: 24, bottom: 0 }}>
@@ -120,7 +123,7 @@ export default function IncidentDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12} md={5}>
-          <Section title={t('incidents.liveOpen')} sub={t('incidents.liveOpenSub')}>
+          <Section title={t('incidents.liveOpen')} sub={t('incidents.liveOpenSub')} explain={{ data: data.openList }}>
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small" aria-label={t('incidents.liveOpen')}>
                 <TableHead><TableRow><TableCell>Case</TableCell><TableCell>Severity</TableCell><TableCell>Status</TableCell><TableCell>Age</TableCell></TableRow></TableHead>
@@ -145,7 +148,7 @@ export default function IncidentDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12}>
-          <Section title={t('incidents.byCategory')} sub={t('incidents.byCategorySub')}>
+          <Section title={t('incidents.byCategory')} sub={t('incidents.byCategorySub')} explain={{ data: data.byCategory }}>
             <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
               {data.byCategory.map((c) => <Chip key={c.category} label={`${titleCase(c.category)} · ${c.count}`} variant="outlined" sx={{ fontWeight: 600 }} />)}
             </Stack>

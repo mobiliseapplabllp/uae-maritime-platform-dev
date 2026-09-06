@@ -8,6 +8,10 @@ export const envSchema = baseEnvSchema.extend({
   /** How long an upstream tool call or an external inference may take before it is abandoned and recorded as such. */
   TOOL_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
   INFERENCE_TIMEOUT_MS: z.coerce.number().int().positive().default(25_000),
+  /** A local command that answers a prompt on stdout (the operator's own CLI on the gateway host); unset in deployment. */
+  AI_CLI_COMMAND: z.string().trim().optional(),
+  AI_CLI_ARGS: z.string().default('-p --output-format text'),
+  AI_CLI_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   /** The hosted model providers' addresses. Which one answers, and with which model, is configuration in Settings → AI. */
   ANTHROPIC_BASE_URL: z.string().default('https://api.anthropic.com'),
   ANTHROPIC_VERSION: z.string().default('2023-06-01'),

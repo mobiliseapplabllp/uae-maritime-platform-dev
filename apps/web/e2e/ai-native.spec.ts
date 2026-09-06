@@ -91,4 +91,19 @@ test.describe('AI-native modules', () => {
     await expect(page.getByTestId(`def-company.ship-chandler-approval-${stamp}`)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId(`ver-company.ship-chandler-approval-${stamp}-DEV-1`)).toBeVisible();
   });
+  test('every chart and card carries an explain control, and the assistant explains the figures on the screen', async ({ page }) => {
+    await login(page);
+    await page.goto('/invoices/overview');
+    await expect(page.getByTestId('revenue-dashboard')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('chart-months').locator('.recharts-wrapper')).toHaveCount(1, { timeout: 15_000 });
+    await page.getByTestId('explain-chart-months').click();
+    const text = page.getByTestId('explain-text');
+    await expect(text).toBeVisible({ timeout: 30_000 });
+    await expect(text).toContainText(/billed|collected/i);
+    await expect(page.getByTestId('explain-engine')).toContainText(/platform composer|via/);
+    await expectAccessible(page, 'explain dialog');
+    await page.keyboard.press('Escape');
+    await page.getByTestId('explain-yard-dso').click();
+    await expect(page.getByTestId('explain-text')).toContainText(/target/i, { timeout: 30_000 });
+  });
 });

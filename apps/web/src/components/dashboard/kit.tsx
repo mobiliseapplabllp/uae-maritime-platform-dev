@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import ExplainButton from '../ai/ExplainButton';
 import { useNavigate } from 'react-router-dom';
 import { Box, ButtonBase, Card, Chip, Grid, LinearProgress, Skeleton, Stack, Tooltip, Typography } from '@mui/material';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
@@ -35,13 +36,18 @@ export function DashboardSkeleton({ tiles = 8 }: { tiles?: number }) {
 }
 
 /** A titled card with a fixed-height chart area. The plot is laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL. */
-export function ChartCard({ title, sub, children, h = 280, action, testId }: { title: string; sub?: string; children: ReactNode; h?: number; action?: { label: string; to: string }; testId?: string }) {
+/** What a chart or panel hands the assistant to explain it: the rows it draws, and the unit or period they are in. */
+export interface Explainable { data?: unknown; unit?: string; period?: string }
+export function ChartCard({ title, sub, children, h = 280, action, testId, explain }: { title: string; sub?: string; children: ReactNode; h?: number; action?: { label: string; to: string }; testId?: string; explain?: Explainable }) {
   const navigate = useNavigate();
   return (
     <Card sx={{ p: 2, height: '100%' }} data-testid={testId}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 1 }}>
         <Box><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}</Box>
-        {action && <Typography variant="caption" component="button" onClick={() => navigate(action.to)} sx={{ color: 'primary.main', cursor: 'pointer', fontWeight: 600, background: 'none', border: 0, font: 'inherit', whiteSpace: 'nowrap' }}>{action.label} →</Typography>}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+          {explain && <ExplainButton ctx={{ kind: 'chart', title, sub, ...explain }} testId={testId} />}
+          {action && <Typography variant="caption" component="button" onClick={() => navigate(action.to)} sx={{ color: 'primary.main', cursor: 'pointer', fontWeight: 600, background: 'none', border: 0, font: 'inherit', whiteSpace: 'nowrap' }}>{action.label} →</Typography>}
+        </Box>
       </Box>
       <Box sx={{ height: h, mt: 1 }}><Box dir="ltr" sx={{ height: '100%' }}>{children}</Box></Box>
     </Card>
@@ -49,13 +55,16 @@ export function ChartCard({ title, sub, children, h = 280, action, testId }: { t
 }
 
 /** A section card without a chart: lists, tables, rankings. */
-export function PanelCard({ title, sub, children, action, testId, minHeight }: { title: string; sub?: string; children: ReactNode; action?: { label: string; to: string }; testId?: string; minHeight?: number }) {
+export function PanelCard({ title, sub, children, action, testId, minHeight, explain }: { title: string; sub?: string; children: ReactNode; action?: { label: string; to: string }; testId?: string; minHeight?: number; explain?: Explainable }) {
   const navigate = useNavigate();
   return (
     <Card sx={{ p: 2, height: '100%', minHeight }} data-testid={testId}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 1, mb: 1 }}>
         <Box><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}</Box>
-        {action && <Typography variant="caption" component="button" onClick={() => navigate(action.to)} sx={{ color: 'primary.main', cursor: 'pointer', fontWeight: 600, background: 'none', border: 0, font: 'inherit', whiteSpace: 'nowrap' }}>{action.label} →</Typography>}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+          {explain && <ExplainButton ctx={{ kind: 'panel', title, sub, ...explain }} testId={testId} />}
+          {action && <Typography variant="caption" component="button" onClick={() => navigate(action.to)} sx={{ color: 'primary.main', cursor: 'pointer', fontWeight: 600, background: 'none', border: 0, font: 'inherit', whiteSpace: 'nowrap' }}>{action.label} →</Typography>}
+        </Box>
       </Box>
       {children}
     </Card>
@@ -77,8 +86,9 @@ const TONE_COLOR: Record<Tone, string> = { success: 'success.main', warning: 'wa
 export function Yardstick({ label, value, display, target, targetLabel, higherIsBetter = true, sub, testId }: { label: string; value: number | null | undefined; display: string; target: number; targetLabel: string; higherIsBetter?: boolean; sub?: string; testId?: string }) {
   const tone = toneOf(value, target, higherIsBetter);
   return (
-    <Card sx={{ px: 2, py: 1.5, height: '100%', borderLeft: 3, borderLeftColor: TONE_COLOR[tone] }} data-testid={testId}>
-      <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 22, lineHeight: 1.15, fontVariantNumeric: 'tabular-nums' }}>{display}</Typography>
+    <Card sx={{ px: 2, py: 1.5, height: '100%', borderLeft: 3, borderLeftColor: TONE_COLOR[tone], position: 'relative' }} data-testid={testId}>
+      <ExplainButton corner ctx={{ kind: 'yardstick', title: label, sub, value: display, target: targetLabel }} testId={testId} />
+      <Typography sx={{ fontFamily: 'Archivo', fontWeight: 800, fontSize: 22, lineHeight: 1.15, fontVariantNumeric: 'tabular-nums', pr: 3 }}>{display}</Typography>
       <Typography sx={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'text.secondary', mt: 0.25 }}>{label}</Typography>
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.5 }}>
         <Chip size="small" label={targetLabel} sx={{ height: 18, fontSize: 10.5, color: TONE_COLOR[tone], borderColor: TONE_COLOR[tone] }} variant="outlined" />

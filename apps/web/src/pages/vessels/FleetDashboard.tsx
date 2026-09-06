@@ -10,6 +10,7 @@ import { notify } from '../../store/uiSlice';
 import { CHART_SERIES, chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
 import AiInsights from '../../components/ai/AiInsights';
+import ExplainButton from '../../components/ai/ExplainButton';
 import EntityHover from '../../components/common/EntityHover';
 import { fmtNum } from '../../utils/format';
 import { certHealthPct, typeLabel } from './shared';
@@ -22,10 +23,12 @@ const Kpi = ({ label, value, sub }: { label: string; value: React.ReactNode; sub
     {sub && <Typography sx={{ fontSize: 11, color: 'text.secondary' }}>{sub}</Typography>}
   </Card>
 );
-const Section = ({ title, sub, children }: { title: string; sub?: string; children: React.ReactNode }) => (
+const Section = ({ title, sub, children, explain }: { title: string; sub?: string; children: React.ReactNode; explain?: { data?: unknown } }) => (
   <Card sx={{ p: 2, height: '100%' }}>
-    <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>
-    {sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
+      <Box><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{title}</Typography>{sub && <Typography variant="caption" color="text.secondary">{sub}</Typography>}</Box>
+      {explain && <ExplainButton ctx={{ kind: 'chart', title, sub, ...explain }} />}
+    </Box>
     <Box sx={{ mt: 1.5 }}>{children}</Box>
   </Card>
 );
@@ -65,7 +68,7 @@ export default function FleetDashboard() {
 
       <Grid container spacing={2}>
         <Grid item xs={12} md={5}>
-          <Section title="Composition by type">
+          <Section title="Composition by type" explain={{ data: data.byType }}>
             <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={data.byType} layout="vertical" margin={{ top: 0, right: 24, left: 8, bottom: 0 }}>
@@ -80,7 +83,7 @@ export default function FleetDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12} md={4}>
-          <Section title="Age profile" sub="Years since build">
+          <Section title="Age profile" sub="Years since build" explain={{ data: data.ageBands }}>
             <Box dir="ltr">
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={data.ageBands} margin={{ top: 4, right: 8, left: -22, bottom: 0 }}>
@@ -95,7 +98,7 @@ export default function FleetDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12} md={3}>
-          <Section title="Flags & class">
+          <Section title="Flags & class" explain={{ data: data.byFlag }}>
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700 }}>FLAG STATES</Typography>
             <Stack direction="row" spacing={0.75} sx={{ my: 1, flexWrap: 'wrap' }} useFlexGap>
               {data.byFlag.map((f) => <Chip key={f.flag} size="small" variant="outlined" label={`${f.flag} · ${f.count}`} sx={{ fontWeight: 600 }} />)}
@@ -108,7 +111,7 @@ export default function FleetDashboard() {
           </Section>
         </Grid>
         <Grid item xs={12}>
-          <Section title="Vessels needing certificate attention" sub="Expiring within 30 days or already expired — plan renewals and surveys">
+          <Section title="Vessels needing certificate attention" sub="Expiring within 30 days or already expired — plan renewals and surveys" explain={{ data: data.certAlertVessels }}>
             <TableContainer sx={{ overflowX: 'auto' }}>
               <Table size="small">
                 <TableHead><TableRow><TableCell>Vessel</TableCell><TableCell>Type</TableCell><TableCell align="right">Certificates flagged</TableCell><TableCell align="right">Record</TableCell></TableRow></TableHead>

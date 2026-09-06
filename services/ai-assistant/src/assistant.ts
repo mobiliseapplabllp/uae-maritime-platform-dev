@@ -195,7 +195,7 @@ export async function answer(deps: AssistantDeps, request: AnswerRequest): Promi
     flagged: hits.filter((h) => h.doc.untrusted).map((h) => ({ id: h.doc.id, label: h.doc.title, markers: h.doc.injectionMarkers })),
     suggestions: followUps(tools, hits),
     /* The profile the operator configured, never a vendor's model name; where a hosted model answered, the gateway says which residency it sat in. */
-    engine: composed.refused ? 'refused at the tool gateway' : composed.provider && composed.provider !== 'local' ? `${composed.profile} via tool gateway, ${composed.residency === 'AE' ? 'in-country' : 'hosted abroad'} (grounded)` : `${composed.profile} (grounded)`,
+    engine: composed.refused ? 'refused at the tool gateway' : composed.provider === 'cli' ? `${composed.profile} via the command line on the gateway host` : composed.provider && composed.provider !== 'local' ? `${composed.profile} via tool gateway, ${composed.residency === 'AE' ? 'in-country' : 'hosted abroad'} (grounded)` : `${composed.profile} (grounded)`,
     grounded: composed.grounded,
     latencyMs: Math.round(Number(process.hrtime.bigint() - started) / 1e6),
   };

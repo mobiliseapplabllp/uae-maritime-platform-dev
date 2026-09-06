@@ -65,7 +65,7 @@ export default function RevenueDashboard() {
         <Grid item xs={6} md={3}><Yardstick testId="yard-current" label={t('dash.revenue.currentShare', 'Book not yet due')} value={currentShare} display={currentShare === null ? '—' : `${currentShare}%`} target={targets.currentSharePct} targetLabel={`${t('dash.target', 'target')} ≥ ${targets.currentSharePct}%`} sub={`${k.collectionRate12mPct ?? '—'}% ${t('dash.revenue.collectionRate', 'collected of billed, 12 months')}`} /></Grid>
 
         <Grid item xs={12} lg={8}>
-          <ChartCard testId="chart-months" title={t('dash.revenue.byMonth', 'Billed and collected')} sub={t('dash.revenue.byMonthSub', { defaultValue: 'issued invoices and payments received per month, {{currency}} — trailing 12 months', currency: data.currency })}>
+          <ChartCard testId="chart-months" title={t('dash.revenue.byMonth', 'Billed and collected')} sub={t('dash.revenue.byMonthSub', { defaultValue: 'issued invoices and payments received per month, {{currency}} — trailing 12 months', currency: data.currency })} explain={{ data: data.byMonth }}>
             <ResponsiveContainer>
               <ComposedChart data={data.byMonth} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} vertical={false} />
@@ -80,7 +80,7 @@ export default function RevenueDashboard() {
           </ChartCard>
         </Grid>
         <Grid item xs={12} lg={4}>
-          <ChartCard testId="chart-lines" title={t('dash.revenue.byLine', 'Revenue by service line')} sub={t('dash.revenue.byLineSub', 'share of billed, 12 months')}>
+          <ChartCard testId="chart-lines" title={t('dash.revenue.byLine', 'Revenue by service line')} sub={t('dash.revenue.byLineSub', 'share of billed, 12 months')} explain={{ data: data.byLine.slice(0, 8) }}>
             <ResponsiveContainer>
               <BarChart data={data.byLine.slice(0, 8)} layout="vertical" margin={{ left: 8, right: 44, top: 4 }} barCategoryGap="28%">
                 <CartesianGrid stroke={grid} horizontal={false} />
@@ -94,17 +94,17 @@ export default function RevenueDashboard() {
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-ageing" title={t('dash.revenue.ageing', 'Ageing of the open book')} sub={t('dash.revenue.ageingSub', 'days past due — count and amount outstanding')} action={{ label: t('dash.revenue.openOverdue', 'Overdue'), to: '/invoices?overdue=true' }}>
+          <PanelCard testId="panel-ageing" title={t('dash.revenue.ageing', 'Ageing of the open book')} sub={t('dash.revenue.ageingSub', 'days past due — count and amount outstanding')} action={{ label: t('dash.revenue.openOverdue', 'Overdue'), to: '/invoices?overdue=true' }} explain={{ data: data.ageing.map((b) => ({ label: b.bucket === 'Current' ? t('dash.revenue.current', 'Not yet due') : `${b.bucket} ${t('dash.revenue.days', 'days')}`, value: b.amount, display: fmtMoneyShort(b.amount), sub: `${b.count}` })) }}>
             <BucketBars rows={data.ageing.map((b) => ({ label: b.bucket === 'Current' ? t('dash.revenue.current', 'Not yet due') : `${b.bucket} ${t('dash.revenue.days', 'days')}`, value: b.amount, display: fmtMoneyShort(b.amount), sub: `${b.count}` }))} tone={(i) => ['#0E7C86', '#B98A2F', '#D0644A', '#C14F33', '#8B2E1F'][i]} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-debtors" title={t('dash.revenue.debtors', 'Debtors')} sub={t('dash.revenue.debtorsSub', 'outstanding by account — overdue in red')} action={{ label: t('dash.revenue.openCompanies', 'Companies'), to: '/companies' }}>
+          <PanelCard testId="panel-debtors" title={t('dash.revenue.debtors', 'Debtors')} sub={t('dash.revenue.debtorsSub', 'outstanding by account — overdue in red')} action={{ label: t('dash.revenue.openCompanies', 'Companies'), to: '/companies' }} explain={{ data: data.debtors.map((d) => ({ key: d.name, primary: d.name, secondary: `${d.invoices} ${t('dash.revenue.invoices12m', 'invoices, 12 m')} · ${fmtMoneyShort(d.billed)} ${t('dash.revenue.billedLower', 'billed')}${d.avgDaysToPay !== null ? ` · ${d.avgDaysToPay} ${t('dash.revenue.daysToPay', 'days to pay')}` : ''}`, value: fmtMoneyShort(d.outstanding), tone: d.overdue > 0 ? 'error' : d.outstanding > 0 ? 'warning' : 'success' })) }}>
             <RankList rows={data.debtors.map((d) => ({ key: d.name, primary: d.name, secondary: `${d.invoices} ${t('dash.revenue.invoices12m', 'invoices, 12 m')} · ${fmtMoneyShort(d.billed)} ${t('dash.revenue.billedLower', 'billed')}${d.avgDaysToPay !== null ? ` · ${d.avgDaysToPay} ${t('dash.revenue.daysToPay', 'days to pay')}` : ''}`, value: fmtMoneyShort(d.outstanding), tone: d.overdue > 0 ? 'error' : d.outstanding > 0 ? 'warning' : 'success' }))} />
           </PanelCard>
         </Grid>
         <Grid item xs={12} md={4}>
-          <PanelCard testId="panel-overdue" title={t('dash.revenue.overdueList', 'Overdue invoices')} sub={t('dash.revenue.overdueListSub', 'largest first — open the account to remind or record a payment')}>
+          <PanelCard testId="panel-overdue" title={t('dash.revenue.overdueList', 'Overdue invoices')} sub={t('dash.revenue.overdueListSub', 'largest first — open the account to remind or record a payment')} explain={{ data: data.overdueList.map((o) => ({ key: o.id, primary: `${o.number} · ${o.billTo}`, secondary: `${o.vesselName} · ${o.daysOverdue} ${t('dash.revenue.daysOverdue', 'days overdue')}${o.reminded ? ` · ${t('dash.revenue.reminded', 'reminded')}` : ''}`, value: fmtMoneyShort(o.outstanding), tone: 'error', to: `/invoices/${o.id}` })) }}>
             <RankList empty={t('dash.revenue.noOverdue', 'Nothing is overdue')} rows={data.overdueList.map((o) => ({ key: o.id, primary: `${o.number} · ${o.billTo}`, secondary: `${o.vesselName} · ${o.daysOverdue} ${t('dash.revenue.daysOverdue', 'days overdue')}${o.reminded ? ` · ${t('dash.revenue.reminded', 'reminded')}` : ''}`, value: fmtMoneyShort(o.outstanding), tone: 'error', to: `/invoices/${o.id}` }))} />
             {data.methods.length > 0 && <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap', fontSize: 12, color: 'text.secondary' }}>{data.methods.map((m) => <span key={m.method}>{m.method.toLowerCase()}: {fmtNum(m.count)} · {fmtMoneyShort(m.amount)}</span>)}</Stack>}
           </PanelCard>

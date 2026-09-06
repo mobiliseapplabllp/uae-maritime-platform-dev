@@ -11,6 +11,7 @@ import { notify } from '../../store/uiSlice';
 import { CHART_SERIES, chartChrome, MONO } from '../../theme';
 import PageHeader from '../../components/common/PageHeader';
 import AiInsights from '../../components/ai/AiInsights';
+import ExplainButton from '../../components/ai/ExplainButton';
 import PageStats from '../../components/common/PageStats';
 import EntityHover from '../../components/common/EntityHover';
 import { fmtNum } from '../../utils/format';
@@ -69,7 +70,7 @@ export default function CrewDashboard() {
       <Grid container spacing={2}>
         <Grid item xs={12} md={5}>
           <Card sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.rankDistribution')}</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.rankDistribution')}</Typography><ExplainButton ctx={{ kind: 'chart', title: t('seafarers.rankDistribution'), data: data.byRank }} testId="crew-ranks" /></Box>
             <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
             <ResponsiveContainer width="100%" height={Math.max(220, data.byRank.length * 24)}>
               <BarChart data={data.byRank} layout="vertical" margin={{ top: 8, right: 24, left: 40, bottom: 0 }}>
@@ -85,7 +86,7 @@ export default function CrewDashboard() {
         </Grid>
         <Grid item xs={12} md={3.5}>
           <Card sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.expiryFunnel')}</Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.expiryFunnel')}</Typography><ExplainButton ctx={{ kind: 'chart', title: t('seafarers.expiryFunnel'), sub: t('seafarers.expiryFunnelSub'), data: funnel }} testId="crew-funnel" /></Box>
             <Typography variant="caption" color="text.secondary">{t('seafarers.expiryFunnelSub')}</Typography>
             <Box dir="ltr">
             <ResponsiveContainer width="100%" height={210}>
@@ -105,7 +106,7 @@ export default function CrewDashboard() {
         <Grid item xs={12} md={3.5}>
           <Card sx={{ height: '100%' }}>
             <Box sx={{ px: 2, py: 1.5 }}>
-              <Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.needsAttention')}</Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}><Typography variant="h6" component="h2" sx={{ fontSize: 15 }}>{t('seafarers.needsAttention')}</Typography><ExplainButton ctx={{ kind: 'list', title: t('seafarers.needsAttention'), sub: t('seafarers.needsAttentionSub'), data: data.alertList }} testId="crew-attention" /></Box>
               <Typography variant="caption" color="text.secondary">{t('seafarers.needsAttentionSub')}</Typography>
             </Box>
             <Divider />

@@ -5,6 +5,7 @@ import { AssistantController } from './assistant.controller';
 import { ConversationsController } from './conversations.controller';
 import { DraftsController } from './drafts.controller';
 import { DefinitionsController } from './definitions.controller';
+import { ExplainController } from './explain.controller';
 import { AssistantConsumer } from './consumer';
 import { CorpusBackfill } from './backfill';
 import { assistantProviders } from './providers';
@@ -14,7 +15,7 @@ import { assistantProviders } from './providers';
 export function buildAppModule(env: Env, principalResolver?: Provider) {
   @Module({
     imports: [KitModule.forRoot({ env, principalResolver })],
-    controllers: [ConversationsController, DraftsController, DefinitionsController, AssistantController],
+    controllers: [ConversationsController, DraftsController, DefinitionsController, ExplainController, AssistantController],
     providers: [...assistantProviders, AssistantConsumer, CorpusBackfill],
   })
   class AppModule {}

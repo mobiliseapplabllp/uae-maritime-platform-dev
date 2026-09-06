@@ -32,7 +32,7 @@ separate repository `maritime-project-presentation` (branch
    assistant reads as the person asking (their token is forwarded), an agent acts as its own identity
    (`kind='agent'` rows in identity, role `AI Agent`, never able to sign in), and a hosted completion is
    redacted, fenced and classified at the gateway before it leaves. `TOOL_MODE=snapshot` on the assistant
-   and `ACTIONS_MODE=off` on the agents exist only for a deployment without the gateway.
+   and `ACTIONS_MODE=off` on the agents exist only for a deployment without the gateway. A command-line provider exists for a laptop demo only: `AI_CLI_COMMAND` on the gateway host, run without a shell, never from a setting.
 7. **Do not apply the MALL SDLC skill** here; the user asked for direct execution.
 
 ## Architecture in one paragraph

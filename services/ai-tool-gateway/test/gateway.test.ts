@@ -50,7 +50,7 @@ beforeAll(async () => {
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => { fakeUrl = `http://127.0.0.1:${(fake.address() as { port: number }).port}`; r(); }));
   for (const k of ['PORTS_URL', 'WORKFLOW_URL', 'REVENUE_URL']) process.env[k] = fakeUrl;
   process.env.SHIPS_URL = 'http://127.0.0.1:1';
-  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: fakeUrl, TOOL_TIMEOUT_MS: '2000', INFERENCE_TIMEOUT_MS: '2000' } as never);
+  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: fakeUrl, TOOL_TIMEOUT_MS: '2000', INFERENCE_TIMEOUT_MS: '2000', AI_CLI_COMMAND: 'node', AI_CLI_ARGS: "-e process.stdout.write('cli:'+process.argv[1].length)" } as never);
   const base = { scope: { level: 'NATIONAL' as const }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const people: Record<string, Principal> = {
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Platform Administrator', perms: ['*'] },
@@ -183,6 +183,14 @@ describe('the service face', () => {
 describe('completion', () => {
   const question = 'How long did the vessel of master khalid.m@example.com (+971 50 123 4567) wait at anchorage?';
   const grounding = [{ marker: 'R1', label: 'Port call KHP/2026/000123', kind: 'port call', text: 'Waited 3.5 h at anchorage. Agent phone +971 4 123 4567.' }];
+  it('answers through the command on the gateway host when Settings choose it, masked and logged like any provider', async () => {
+    setAi({ provider: 'cli', model: 'laptop' });
+    const r = await complete({ caller: 'assistant', question: 'Explain the waiting time for Fatima Al Zaabi', grounding, findings: ['Berth 7 is free'], language: 'en' }, officer);
+    expect(r.body.data).toMatchObject({ outcome: 'OK', provider: 'cli', profile: 'laptop', residency: 'GLOBAL' });
+    expect(r.body.data.text).toMatch(/^cli:\d+$/);
+    expect(r.body.data.tokensIn).toBeGreaterThan(0);
+    setAi({ provider: 'local', model: '' });
+  });
   it('composes nothing itself when no hosted provider is configured, and says so', async () => {
     const r = await complete({ caller: 'assistant', question, grounding }, officer);
     expect(r.body.data).toMatchObject({ outcome: 'LOCAL', provider: 'local', code: 'NO_PROVIDER', residency: 'AE' });
