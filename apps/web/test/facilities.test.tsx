@@ -286,7 +286,7 @@ describe('instrument lifecycle helpers', () => {
     expect(subjectPath('COMPANY', 'c1')).toBe('/companies/c1');
     expect(subjectPath('VESSEL', 'v1')).toBe('/vessels/v1');
     expect(subjectPath('SEAFARER', 's1')).toBe('/seafarers/s1');
-    expect(subjectPath('PORT_FACILITY', 'b1')).toBe('/masters/berths');
+    expect(subjectPath('PORT_FACILITY', 'b1')).toBe('/port-facilities/b1');
     expect(subjectPath('COMPANY', null)).toBeNull();
   });
   it('names a category and builds the public verification path', () => {

@@ -69,6 +69,26 @@ export interface FacilityRow {
   created_at: Date; updated_at: Date;
 }
 export interface IcpReview { reference: string; status: string; reason: string; requestedAt: string; requestedBy: string; expectedBy: string | null; decidedAt: string | null; conditions: unknown[]; checkedAt: string; mode: string; callId?: string }
+/** The outcomes under which a review is over and the facility may be submitted again. */
+export const REVIEW_CLOSED = ['CLEARED', 'REJECTED', 'WITHDRAWN', 'CLOSED'] as const;
+export const reviewOpen = (r: { status: string } | null | undefined) => !!r && !(REVIEW_CLOSED as readonly string[]).includes(String(r.status).toUpperCase());
+export interface IcpReviewRow { id: string; facility_id: string; reference: string; status: string; reason: string; requested_at: Date; requested_by: string; expected_by: Date | string | null; decided_at: Date | null; conditions: unknown[]; checked_at: Date; mode: string }
+export const icpReviewApi = (r: IcpReviewRow) => ({
+  id: r.id, reference: r.reference, status: r.status, reason: r.reason, requestedAt: iso(r.requested_at)!, requestedBy: r.requested_by, expectedBy: dateOnly(r.expected_by),
+  decidedAt: iso(r.decided_at), conditions: r.conditions ?? [], checkedAt: iso(r.checked_at)!, mode: r.mode, open: reviewOpen(r),
+});
+export type IcpReviewApi = ReturnType<typeof icpReviewApi>;
+/** A submission opens a line in the facility's review history; the outcome, asked for or pushed, closes it. */
+export async function recordIcpReview(c: Queryable, facilityId: string, r: IcpReview): Promise<void> {
+  await c.query(
+    `INSERT INTO icp_reviews(id, facility_id, reference, status, reason, requested_at, requested_by, expected_by, decided_at, conditions, checked_at, mode)
+     VALUES (gen_random_uuid()::text, $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [facilityId, r.reference, r.status, r.reason, r.requestedAt, r.requestedBy, r.expectedBy || null, r.decidedAt, JSON.stringify(r.conditions ?? []), r.checkedAt, r.mode]);
+}
+export async function icpReviewsFor(c: Queryable, facilityId: string): Promise<IcpReviewApi[]> {
+  const r = await c.query<IcpReviewRow>('SELECT * FROM icp_reviews WHERE facility_id = $1 ORDER BY requested_at DESC', [facilityId]);
+  return r.rows.map(icpReviewApi);
+}
 export interface AuditRow {
   id: string; number: string; subject_kind: string; subject_id: string; subject_name: string; audited_on: Date;
   auditor_id: string | null; auditor: string; result: string; scope: string; remarks: string; instrument_id: string | null; instrument_no: string; created_at: Date;
@@ -358,5 +378,8 @@ export async function applyIcpOutcome(c: Queryable, before: FacilityRow, o: { st
   const prev = before.icp_review; if (!prev) return before;
   const next: IcpReview = { ...prev, status: String(o.status || prev.status).toUpperCase(), decidedAt: o.decidedAt ?? prev.decidedAt ?? null, conditions: o.conditions ?? prev.conditions ?? [], checkedAt: new Date().toISOString(), mode: o.mode ?? prev.mode };
   const r = await c.query<FacilityRow>('UPDATE port_facilities SET icp_review = $2, updated_at = now() WHERE id = $1 RETURNING *', [before.id, JSON.stringify(next)]);
+  await c.query(`UPDATE icp_reviews SET status = $3, decided_at = $4, conditions = $5, checked_at = now(), mode = $6
+    WHERE id = (SELECT id FROM icp_reviews WHERE facility_id = $1 AND reference = $2 ORDER BY requested_at DESC LIMIT 1)`,
+    [before.id, next.reference, next.status, next.decidedAt, JSON.stringify(next.conditions ?? []), next.mode]);
   return r.rows[0];
 }

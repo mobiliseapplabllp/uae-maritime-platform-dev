@@ -6,7 +6,7 @@ import { AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, assertLookup,
 import { FACILITY_SCOPE } from './scope';
 import type { Env } from './env';
 import {
-  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, applyIcpOutcome, auditApi, cycleApi, facilityApi, obligationApi, visitApi,
+  AUDIT_RESULTS, FACILITY_STATUS, ISPS_STATUS, REVIEW_CLOSED, applyIcpOutcome, auditApi, cycleApi, facilityApi, icpReviewsFor, obligationApi, recordIcpReview, reviewOpen, visitApi,
   publishFacility, ratingFrom, type FacilityRow, type IcpReview,
 } from './directory';
 import { auditsFor, fullFacility, loadFacility } from './read';
@@ -47,14 +47,14 @@ const obligationBody = z.object({ kind: text(40).min(1), title: text(200).min(3)
 const clearBody = z.object({ note: text(600).default('') });
 const visitBody = z.object({ visitType: text(40).min(1), scheduledOn: z.union([text(40), z.null()]).optional(), inspector: text(120).optional(), inspectorId: text(80).nullish(), remarks: text(2000).default(''), complete: completeSchema.optional() });
 
-const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType: 'facility_type', terminal: 'terminal', operatorName: 'operator_name', ispsStatus: 'isps_status', status: 'status', createdAt: 'created_at', updatedAt: 'updated_at' };
+const SORT: Record<string, string> = { code: 'code', name: 'name', facilityType: 'facility_type', terminal: 'terminal', operatorName: 'operator_name', ispsStatus: 'isps_status', socExpiry: 'soc_expiry', reviewStatus: "icp_review->>'status'", status: 'status', createdAt: 'created_at', updatedAt: 'updated_at' };
 
 @Controller('facilities/port-facilities')
 export class PortFacilitiesController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, private readonly hub: IntegrationClient) {}
 
   @RequirePerm('facilities.view') @Get()
-  async list(@Query() query: PageQuery & { facilityType?: string; operator?: string; ispsStatus?: string; status?: string; terminal?: string }, @CurrentUser() user: Principal) {
+  async list(@Query() query: PageQuery & { facilityType?: string; operator?: string; ispsStatus?: string; status?: string; terminal?: string; review?: string }, @CurrentUser() user: Principal) {
     const p = parsePage(query, { defaultSort: 'code', sortable: Object.keys(SORT), maxLimit: 500 });
     const where: string[] = []; const args: unknown[] = [];
     const add = (sql: (i: number) => string, value: unknown) => { args.push(value); where.push(sql(args.length)); };
@@ -63,6 +63,10 @@ export class PortFacilitiesController {
     if (query.ispsStatus) add((i) => `isps_status = $${i}`, query.ispsStatus);
     if (query.status) add((i) => `status = $${i}`, query.status);
     if (query.terminal) add((i) => `lower(terminal) = lower($${i})`, query.terminal);
+    // the federal security review: still with the authority, closed with a given outcome, or never submitted
+    if (query.review === 'open') add((i) => `(icp_review IS NOT NULL AND NOT (upper(icp_review->>'status') = ANY($${i}::text[])))`, [...REVIEW_CLOSED]);
+    else if (query.review === 'none') where.push('icp_review IS NULL');
+    else if (query.review) add((i) => `upper(icp_review->>'status') = upper($${i})`, query.review);
     if (p.q) add((i) => `(name ILIKE $${i} OR code ILIKE $${i} OR terminal ILIKE $${i} OR operator_name ILIKE $${i} OR soc_no ILIKE $${i})`, `%${escapeLike(p.q)}%`);
     scopeWhere(user.scope, where, args, FACILITY_SCOPE);
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -183,7 +187,8 @@ export class PortFacilitiesController {
   async icpReview(@Param('id') id: string, @Body(zod(icpBody)) b: z.infer<typeof icpBody>, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const before = await loadFacility(c, id, user.scope, true);
-      if (before.icp_review && !['CLEARED', 'REJECTED', 'WITHDRAWN', 'CLOSED'].includes(before.icp_review.status)) throw conflict(`${before.name} is already under review (${before.icp_review.reference}, ${before.icp_review.status.toLowerCase()})`);
+      const current = before.icp_review;
+      if (current && reviewOpen(current)) throw conflict(`${before.name} is already under review (${current.reference}, ${current.status.toLowerCase()})`);
       const day = new Date().toISOString().slice(0, 10);
       const out = await this.hub.tryCall<{ reference?: string; status?: string; expectedBy?: string }>('icp', 'requestReview', { facilityId: before.code, reason: b.reason }, { idempotencyKey: `icp:${before.code}:${day}`, correlationId: `facility:${before.id}` });
       if (out.status !== 'ok') throw badGateway(`federal authority: ${out.error ?? out.status}`);
@@ -192,6 +197,8 @@ export class PortFacilitiesController {
       if (!review.reference) throw badGateway('federal authority answered without a reference');
       const r = await c.query<FacilityRow>('UPDATE port_facilities SET icp_review = $2, updated_at = now() WHERE id = $1 RETURNING *', [before.id, JSON.stringify(review)]);
       await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: review.reference, status: review.status, mode: review.mode }, note: b.reason });
+      await recordIcpReview(c, before.id, review);
+      await publishFacility(c, this.env, r.rows[0], {}, EVENTS.facilities.facilityReviewChanged, { reference: review.reference, reviewStatus: review.status, reviewFrom: null, reason: b.reason, requestedBy: user.name, expectedBy: review.expectedBy, decidedAt: null, conditions: [], mode: review.mode });
       return fullFacility(c, r.rows[0]);
     });
   }
@@ -201,13 +208,22 @@ export class PortFacilitiesController {
   async icpReviewRefresh(@Param('id') id: string, @CurrentUser() user: Principal) {
     return withTx(this.pool, async (c) => {
       const before = await loadFacility(c, id, user.scope, true);
-      if (!before.icp_review?.reference) throw conflict(`${before.name} has not been submitted for review`);
-      const out = await this.hub.tryCall<{ status?: string; decidedAt?: string | null; conditions?: unknown[] }>('icp', 'reviewStatus', { reference: before.icp_review.reference }, { correlationId: `facility:${before.id}` });
+      const prev = before.icp_review;
+      if (!prev?.reference) throw conflict(`${before.name} has not been submitted for review`);
+      const out = await this.hub.tryCall<{ status?: string; decidedAt?: string | null; conditions?: unknown[] }>('icp', 'reviewStatus', { reference: prev.reference }, { correlationId: `facility:${before.id}` });
       if (out.status !== 'ok') throw badGateway(`federal authority: ${out.error ?? out.status}`);
-      const row = await applyIcpOutcome(c, before, { status: String(out.data?.status ?? before.icp_review.status), decidedAt: out.data?.decidedAt ?? null, conditions: out.data?.conditions ?? [], mode: out.mode });
+      const row = await applyIcpOutcome(c, before, { status: String(out.data?.status ?? prev.status), decidedAt: out.data?.decidedAt ?? null, conditions: out.data?.conditions ?? [], mode: out.mode });
       await this.audit.record(c, { action: 'ICP_REVIEW', entity: 'PortFacility', entityId: before.id, entityLabel: before.name, after: { reference: row.icp_review?.reference, status: row.icp_review?.status } });
+      if (row.icp_review && row.icp_review.status !== prev.status) await publishFacility(c, this.env, row, {}, EVENTS.facilities.facilityReviewChanged, { reference: row.icp_review.reference, reviewStatus: row.icp_review.status, reviewFrom: prev.status, decidedAt: row.icp_review.decidedAt, conditions: row.icp_review.conditions, mode: row.icp_review.mode });
       return fullFacility(c, row);
     });
+  }
+
+  /** Every review the authority has run on the facility, latest first. */
+  @RequirePerm('facilities.view') @Get(':id/icp-reviews')
+  async icpReviews(@Param('id') id: string, @CurrentUser() user: Principal) {
+    const f = await loadFacility(this.pool, id, user.scope);
+    return icpReviewsFor(this.pool, f.id);
   }
 
   @RequirePerm('facilities.manage') @Post(':id/audits')

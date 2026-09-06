@@ -40,7 +40,8 @@ afterAll(async () => { await app?.close(); await pool?.end(); await new Promise(
 
 describe('the federal security review', () => {
   it('is submitted with a reason, polled for its outcome, and cannot be submitted twice while it runs', async () => {
-    const f = (await srv().get(`${F}?limit=1`).set('authorization', tok('pfso'))).body.data[0];
+    // a facility the seed left unreviewed, so the history below is this test's alone
+    const f = (await srv().get(`${F}?review=none&limit=1&sort=code`).set('authorization', tok('pfso'))).body.data[0];
     expect((await srv().post(`${F}/${f.id}/icp-review`).set('authorization', tok('viewer')).send({ reason: 'Annual' })).status).toBe(403);
     expect((await srv().post(`${F}/${f.id}/icp-review`).set('authorization', tok('pfso')).send({ reason: 'x' })).status).toBe(400);
     const r = await srv().post(`${F}/${f.id}/icp-review`).set('authorization', tok('pfso')).send({ reason: 'Annual statement of compliance renewal' });
@@ -56,12 +57,24 @@ describe('the federal security review', () => {
     expect(done.body.data.icpReview).toMatchObject({ status: 'CLEARED', decidedAt: '2026-09-11T09:20:00Z' });
     // cleared, the facility can be submitted again
     expect((await srv().post(`${F}/${f.id}/icp-review`).set('authorization', tok('pfso')).send({ reason: 'Next year' })).status).toBe(201);
+    // the history keeps every submission, latest first; the outcome closed the earlier line
+    const history = (await srv().get(`${F}/${f.id}/icp-reviews`).set('authorization', tok('viewer'))).body.data as { reference: string; status: string; reason: string; decidedAt: string | null; open: boolean }[];
+    expect(history.map((h) => [h.status, h.open, h.reason])).toEqual([['SUBMITTED', true, 'Next year'], ['CLEARED', false, 'Annual statement of compliance renewal']]);
+    expect(history[1]).toMatchObject({ reference: `ICP-REV-${f.code}`, decidedAt: '2026-09-11T09:20:00.000Z' });
+    // and the desk was told at every change of standing, never for a poll that changed nothing
+    const told = (await pool.query('SELECT payload FROM outbox WHERE subject = $1 ORDER BY id', [subjectFor(EVENTS.facilities.facilityReviewChanged)])).rows.map((r) => r.payload.data as Record<string, unknown>).filter((d) => d.facilityId === f.id);
+    expect(told.map((d) => [d.reviewStatus, d.reviewFrom])).toEqual([['SUBMITTED', null], ['IN_REVIEW', 'SUBMITTED'], ['CLEARED', 'IN_REVIEW'], ['SUBMITTED', null]]);
+    expect(told[0]).toMatchObject({ reference: `ICP-REV-${f.code}`, reason: 'Annual statement of compliance renewal', requestedBy: 'Port Security Desk', name: f.name });
   });
   it('takes the authority\'s callback through the hub as the outcome', async () => {
-    const list = (await srv().get(`${F}?limit=5`).set('authorization', tok('pfso'))).body.data; const f = list[1];
+    const list = (await srv().get(`${F}?review=none&limit=5&sort=code`).set('authorization', tok('pfso'))).body.data; const f = list[1];
     await srv().post(`${F}/${f.id}/icp-review`).set('authorization', tok('pfso')).send({ reason: 'Change of operator' });
     await bus.publish(subjectFor(EVENTS.integration.inboundReceived), makeEvent({ type: EVENTS.integration.inboundReceived, source: 'integration-hub', data: { adapter: 'icp', deliveryId: 'icp-1', eventType: 'review', payload: { reference: `ICP-REV-${f.code}`, status: 'REJECTED', decidedAt: '2026-09-12T08:00:00Z', conditions: ['Perimeter fencing incomplete'] } } })); await bus.drain();
     const after = await srv().get(`${F}/${f.id}`).set('authorization', tok('viewer'));
     expect(after.body.data.icpReview).toMatchObject({ status: 'REJECTED', decidedAt: '2026-09-12T08:00:00Z', conditions: ['Perimeter fencing incomplete'] });
+    const history = (await srv().get(`${F}/${f.id}/icp-reviews`).set('authorization', tok('viewer'))).body.data as { status: string; conditions: unknown[]; open: boolean }[];
+    expect(history).toHaveLength(1); expect(history[0]).toMatchObject({ status: 'REJECTED', conditions: ['Perimeter fencing incomplete'], open: false });
+    const told = (await pool.query('SELECT payload FROM outbox WHERE subject = $1 ORDER BY id', [subjectFor(EVENTS.facilities.facilityReviewChanged)])).rows.map((r) => r.payload.data as Record<string, unknown>).filter((d) => d.facilityId === f.id);
+    expect(told.at(-1)).toMatchObject({ reviewStatus: 'REJECTED', reviewFrom: 'SUBMITTED', pushed: true, conditions: ['Perimeter fencing incomplete'] });
   });
 });

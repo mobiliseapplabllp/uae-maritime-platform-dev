@@ -110,7 +110,7 @@ export const EVENTS = {
     companyStatusChanged: 'facilities.company.status-changed', companySuspended: 'facilities.company.suspended', companyBlacklisted: 'facilities.company.blacklisted',
     companyAudited: 'facilities.company.audited', companyRated: 'facilities.company.rated',
     facilityRegistered: 'facilities.facility.registered', facilityUpdated: 'facilities.facility.updated', facilityDeleted: 'facilities.facility.deleted',
-    facilityIspsChanged: 'facilities.facility.isps-changed', facilityAudited: 'facilities.facility.audited',
+    facilityIspsChanged: 'facilities.facility.isps-changed', facilityReviewChanged: 'facilities.facility.review-changed', facilityAudited: 'facilities.facility.audited',
     obligationRaised: 'facilities.obligation.raised', obligationCleared: 'facilities.obligation.cleared', renewalDue: 'facilities.renewal.due',
     // the annual accreditation cycle and the inspection visits that feed a company's performance rating
     accreditationOpened: 'facilities.accreditation.opened', accreditationRenewed: 'facilities.accreditation.renewed', accreditationDue: 'facilities.accreditation.due',

@@ -1,7 +1,7 @@
 {
   "status": 202,
   "body": {
-    "reference": "ICP-REV-2026-004417",
+    "reference": "ICP-REV-2026-{facilityId}",
     "facilityId": "{facilityId}",
     "status": "SUBMITTED",
     "reason": "{reason}",

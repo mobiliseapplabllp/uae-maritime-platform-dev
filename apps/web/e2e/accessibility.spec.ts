@@ -33,7 +33,7 @@ async function sweep(page: Page, label: string) {
 const STATIC_ROUTES = [
   '/', '/fleet', '/vessels', '/vessels/survey-planner', '/registry', '/certificates',
   '/port-calls', '/berth-planner', '/quay-view', '/schedule', '/marine-services', '/berth-board',
-  '/seafarers', '/seafarers/overview', '/seafarers/met', '/seafarers/crew-lists', '/seafarers/manning', '/seafarers/foreign', '/legislation', '/legislation/imo', '/law', '/companies', '/facilities', '/accreditations',
+  '/seafarers', '/seafarers/overview', '/seafarers/met', '/seafarers/crew-lists', '/seafarers/manning', '/seafarers/foreign', '/legislation', '/legislation/imo', '/law', '/companies', '/port-facilities', '/facilities', '/accreditations',
   '/incidents', '/incidents/overview', '/incidents/risk-matrix', '/nmc/map', '/nmc/incidents',
   '/inspections', '/inspections/overview', '/checklist-builder', '/risk', '/risk/targeting',
   '/invoices', '/mis', '/reports', '/agents', '/agents/decisions', '/agents/escalations', '/agents/assurance',
@@ -64,6 +64,7 @@ async function detailRoutes(page: Page): Promise<string[]> {
     ...await one('/inspections?limit=1', (id) => `/inspections/${id}`),
     ...await one('/invoices?limit=1', (id) => `/invoices/${id}`),
     ...await one('/companies?limit=1', (id) => `/companies/${id}`),
+    ...await one('/facilities/port-facilities?limit=1', (id) => `/port-facilities/${id}`),
     ...await one('/registry?limit=1', (id) => `/registry/${id}`),
     // the public portal needs no session; the slug comes from the published register
     ...await (async () => {

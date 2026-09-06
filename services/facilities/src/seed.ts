@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { STATUTORY_TYPES, buildWorld, stableId, type WorldBerth, type WorldCompany, type WorldLicence } from '@maritime/world';
 import { createDb, runMigrations, seedLookupMirror, withTx, type Queryable } from '@maritime/service-kit';
 import { env } from './env';
-import { classLabel, type Row } from './directory';
+import { classLabel, type IcpReview, type Row } from './directory';
 import { upsertInstrument } from './subjects';
 
 /* Seeds the port-companies desk from the shared world.
@@ -105,6 +105,30 @@ export async function seedFacilities(databaseUrl: string, profile = 'AE', prefix
           isps.status, 1, isps.socNo, isps.expiry, psso?.name ?? '', psso?.phone ?? '', JSON.stringify(CAPABILITY[b.berthType] ?? []),
           b.loaMax, b.draftMax, capacity, unit, b.status === 'MAINTENANCE' ? 'MAINTENANCE' : 'OPERATIONAL',
           isps.status === 'COMPLIANT' ? 'Facility security plan approved; annual verification current.' : '']);
+    }
+
+    /* The federal authority's security reviews: every facility holding a Statement of Compliance was cleared at its
+     * last annual verification, a few are waiting on the authority, and a few were sent back with conditions. The
+     * references follow the authority's format and are fictional; the latest review is mirrored on the facility row. */
+    for (const [i, b] of world.berths.entries()) {
+      const isps = ispsOf(socByBerth.get(b.id), now);
+      const officer = security[i % Math.max(1, security.length)]?.name ?? 'Port Security Desk';
+      const lines: { key: string; status: string; reason: string; requested: Date; decided: Date | null; expected: Date | null; conditions: string[] }[] = [];
+      if (isps.status === 'COMPLIANT') lines.push({ key: 'annual', status: 'CLEARED', reason: 'Annual verification of the facility security plan', requested: new Date(now.getTime() - (300 + (i % 5) * 7) * D), decided: new Date(now.getTime() - (289 + (i % 5) * 7) * D), expected: null, conditions: [] });
+      if (i % 7 === 3) lines.push({ key: 'change', status: 'REJECTED', reason: 'Change of terminal operator', requested: new Date(now.getTime() - 52 * D), decided: new Date(now.getTime() - 40 * D), expected: null, conditions: ['Perimeter fencing to be completed on the landward side', 'CCTV coverage of the secondary gate to be restored'] });
+      if (i % 7 === 5) lines.push({ key: 'renewal', status: 'SUBMITTED', reason: 'Renewal of the Statement of Compliance', requested: new Date(now.getTime() - 3 * D), decided: null, expected: new Date(now.getTime() + 9 * D), conditions: [] });
+      let latest: IcpReview | null = null;
+      for (const [k, l] of lines.entries()) {
+        const reference = `ICP-REV-${l.requested.getUTCFullYear()}-${String(4000 + i * 3 + k).padStart(6, '0')}`;
+        const review: IcpReview = { reference, status: l.status, reason: l.reason, requestedAt: l.requested.toISOString(), requestedBy: officer, expectedBy: l.expected ? l.expected.toISOString().slice(0, 10) : null, decidedAt: l.decided ? l.decided.toISOString() : null, conditions: l.conditions, checkedAt: (l.decided ?? l.requested).toISOString(), mode: 'seed' };
+        await c.query(
+          `INSERT INTO icp_reviews(id, facility_id, reference, status, reason, requested_at, requested_by, expected_by, decided_at, conditions, checked_at, mode)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at, conditions = EXCLUDED.conditions, checked_at = EXCLUDED.checked_at`,
+          [stableId('icp', `${b.code}:${l.key}`), b.id, reference, l.status, l.reason, l.requested, officer, review.expectedBy, l.decided, JSON.stringify(l.conditions), l.decided ?? l.requested, 'seed']);
+        latest = review;
+      }
+      if (latest) await c.query('UPDATE port_facilities SET icp_review = $2 WHERE id = $1', [b.id, JSON.stringify(latest)]);
     }
 
     // the local snapshot of the instrument register — the register itself stays in the instruments service

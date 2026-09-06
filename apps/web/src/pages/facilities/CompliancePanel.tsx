@@ -16,15 +16,15 @@ import { OBLIGATION_STATUS_META } from './accreditationShared';
 import type { DirectoryAudit, Obligation, RatingBreakdown } from './types';
 
 /* The compliance record on one company: the audits taken, what the company still owes, and how its rating is earned. */
-interface Props { companyId: string; audits: DirectoryAudit[]; obligations: Obligation[]; canManage: boolean; onChanged: () => void }
+interface Props { companyId: string; /** The record the audits and obligations sit on; a port facility has the same routes under its own register. */ subjectKind?: 'COMPANY' | 'FACILITY'; audits: DirectoryAudit[]; obligations: Obligation[]; canManage: boolean; onChanged: () => void }
 const RESULTS = ['SATISFACTORY', 'OBSERVATIONS', 'NON_CONFORMITY'];
 
-export default function CompliancePanel({ companyId, audits, obligations, canManage, onChanged }: Props) {
+export default function CompliancePanel({ companyId, subjectKind = 'COMPANY', audits, obligations, canManage, onChanged }: Props) {
   const { t } = useTranslation(); const dispatch = useAppDispatch(); const user = useUser(); const kinds = useLookups('obligationKind');
   const [rating, setRating] = useState<RatingBreakdown | null>(null);
   const [dlg, setDlg] = useState<'audit' | 'raise' | 'clear' | null>(null); const [target, setTarget] = useState<Obligation | null>(null);
   const [vals, setVals] = useState<Record<string, any>>({}); const [busy, setBusy] = useState(false);
-  const base = `/facilities/companies/${companyId}`;
+  const base = subjectKind === 'FACILITY' ? `/facilities/port-facilities/${companyId}` : `/facilities/companies/${companyId}`;
   const loadRating = useCallback(() => { api.get<RatingBreakdown>(`${base}/rating`, { headers: { 'X-Quiet': '1' } }).then((r) => setRating(r.data)).catch(() => setRating(null)); }, [base]);
   useEffect(() => { loadRating(); }, [loadRating, audits.length]);
   const err = (e: Error) => dispatch(notify({ message: e.message, severity: 'error' }));

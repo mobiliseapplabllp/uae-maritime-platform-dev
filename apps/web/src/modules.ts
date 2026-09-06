@@ -101,6 +101,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'facil', name: 'Port Companies', short: 'Companies', color: '#2C6E52', desc: 'The company directory and licensing of everyone working in the port', icon: CorporateFareRoundedIcon, perm: 'facilities.view', home: '/companies',
     nav: [{ header: 'Companies', items: [
       { to: '/companies', label: 'Company Directory', icon: CorporateFareRoundedIcon, perm: 'facilities.view' },
+      { to: '/port-facilities', label: 'Port Facilities', icon: AnchorRoundedIcon, perm: 'facilities.view' },
       { to: '/facilities', label: 'Licence Register', icon: WorkspacePremiumRoundedIcon, perm: 'facilities.view' },
       { to: '/accreditations', label: 'Accreditation Desk', icon: FactCheckRoundedIcon, perm: 'facilities.view' },
     ] }] },

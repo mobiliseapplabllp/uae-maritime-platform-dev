@@ -500,6 +500,31 @@ async function main() {
     const list = await http('/integrations', { token: agent.token });
     return list.status === 403 ? null : `an external agent could read the integration registry (${list.status})`;
   });
+  await probe('the federal security review is the security desk\'s to start, and a facility\'s history is not everyone\'s to read', 'A01', 'high', async () => {
+    const admin = await login('admin@maritime.example');
+    const all: any[] = (await http('/facilities/port-facilities?limit=100&sort=code', { token: admin.token })).body?.data ?? [];
+    if (!all.length) return 'SKIP: no port facility on the register';
+    // a shipping agent holds facilities.view for the directory, so it reads the register — but not beyond its own company, and it starts no review
+    const agent = await login('agent@maritime.example');
+    const mine: any[] = (await http('/facilities/port-facilities?limit=100', { token: agent.token })).body?.data ?? [];
+    const other = all.find((f) => !mine.some((m) => m.id === f.id));
+    if (!other) return 'SKIP: the agent account sees every facility, so containment cannot be probed';
+    const start = await http(`/facilities/port-facilities/${other.id}/icp-review`, { method: 'POST', body: JSON.stringify({ reason: 'probe' }), token: agent.token });
+    if (start.status !== 403) return `a shipping agent could submit a facility for federal review (${start.status})`;
+    const theirs = await http(`/facilities/port-facilities/${other.id}/icp-reviews`, { token: agent.token });
+    if (theirs.status !== 404) return `an agent could read the review history of a facility outside its scope (${theirs.status})`;
+    if (mine[0]) {
+      const own = await http(`/facilities/port-facilities/${mine[0].id}/icp-reviews`, { token: agent.token });
+      if (own.status !== 200) return `an agent could not read the review history of a facility in its own scope (${own.status})`;
+    }
+    // an account without the facilities permission reads no history at all — a terminal supervisor included
+    for (const email of ['idadmin@maritime.example', 'terminal@maritime.example']) {
+      const closed = await http(`/facilities/port-facilities/${other.id}/icp-reviews`, { token: (await login(email)).token });
+      if (closed.status !== 403) return `${email} could read a facility's review history without the facilities permission (${closed.status})`;
+    }
+    const anon = await http(`/facilities/port-facilities/${other.id}/icp-reviews`);
+    return anon.status === 401 ? null : `the review history answered ${anon.status} without a session`;
+  });
   await probe('the public feed and sitemap publish addresses, not identifiers', 'A01', 'medium', async () => {
     const feed = await http('/public/legislation/feed?days=3650');
     if (feed.status !== 200) return `the feed answered ${feed.status}`;

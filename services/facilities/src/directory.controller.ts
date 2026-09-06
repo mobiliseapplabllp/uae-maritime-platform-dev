@@ -7,8 +7,7 @@ import type { Env } from './env';
 import {
   AUDIT_RESULTS, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, ISPS_STATUS,
   OBLIGATION_STATUS, SUBJECT_KINDS, auditApi, directoryDashboard, obligationApi,
-  type AuditRow, type ObligationRow, type Row,
-} from './directory';
+  type AuditRow, type ObligationRow, type Row, REVIEW_CLOSED, YEAR } from './directory';
 import { renewalWorkList } from './compliance';
 
 /* The desk's own views across the register: what the directory looks like as a whole, what work is
@@ -36,10 +35,22 @@ export class DirectoryController {
       instruments: instruments.rows.map((i) => ({ status: i.status, expiryDate: i.expiry_date ? new Date(i.expiry_date).toISOString() : null, subjectKind: i.subject_kind })),
       audits: audits.rows.map((a) => ({ date: new Date(a.audited_on).toISOString(), result: a.result })),
     }, new Date(), this.env.RENEWAL_WINDOW_DAYS);
+    // the federal security reviews: with the authority, cleared in the last year, sent back, or never submitted
+    const reviews = await this.pool.query<Row>(`SELECT icp_review->>'status' AS status, icp_review->>'decidedAt' AS decided_at, count(*) AS n FROM port_facilities GROUP BY 1, 2`);
+    const yearAgo = Date.now() - YEAR;
+    const securityReviews = reviews.rows.reduce((s, r) => {
+      const n = Number(r.n); const status = String(r.status ?? '').toUpperCase(); s.total += n;
+      if (!status) s.never += n;
+      else if (!(REVIEW_CLOSED as readonly string[]).includes(status)) s.open += n;
+      else if (status === 'CLEARED') { if (r.decided_at && new Date(r.decided_at).getTime() >= yearAgo) s.cleared12m += n; }
+      else if (status === 'REJECTED') s.rejected += n;
+      return s;
+    }, { open: 0, cleared12m: 0, rejected: 0, never: 0, total: 0 });
     const worst = await this.pool.query<Row>(
       `SELECT id, code, name, category, status, rating FROM companies WHERE rating > 0 ORDER BY rating LIMIT 5`);
     return {
       ...dash,
+      securityReviews,
       watchlist: worst.rows.map((c) => ({ id: c.id, code: c.code, name: c.name, category: c.category, status: c.status, rating: Number(c.rating) })),
       renewals: (await renewalWorkList(this.pool, this.env.RENEWAL_WINDOW_DAYS)).slice(0, 10),
       generatedAt: new Date().toISOString(),

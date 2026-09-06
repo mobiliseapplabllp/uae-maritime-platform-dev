@@ -16,6 +16,7 @@ test.describe('foundation screens', () => {
     await expectAccessible(page, 'dashboard');
   });
   test('administration and data studio pages load and pass the accessibility sweep', async ({ page }) => {
+    test.setTimeout(150_000); // seven screens, each read at rest and swept with axe — the default minute is too tight when two workers share the machine
     await login(page);
     for (const [path, heading] of [['/admin/users', 'Users'], ['/admin/roles', 'Roles & permissions'], ['/admin/audit', 'Audit log'], ['/admin/settings', 'Platform settings'], ['/masters', 'Data Studio'], ['/masters/berths', 'Berths & terminals'], ['/masters/m/port', 'Ports (UN/LOCODE)'], ['/berth-board', 'Berth board'], ['/settings/module/ops', 'Harbour Operations — settings'], ['/profile', 'My profile']] as const) {
       await page.goto(path);

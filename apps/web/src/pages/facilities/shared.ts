@@ -33,4 +33,13 @@ export const nextActions = (status: LicenseStatus, classLabel = 'Licence'): Lice
 /** The public verification page the certificate QR points at. */
 export const verifyPath = (licenseNo: string) => `/verify/${encodeURIComponent(licenseNo)}`;
 export const verifyUrl = (licenseNo: string) => `${window.location.origin}${verifyPath(licenseNo)}`;
-export const subjectPath = (kind: SubjectKind, id: string | null | undefined) => (!id ? null : kind === 'VESSEL' ? `/vessels/${id}` : kind === 'SEAFARER' ? `/seafarers/${id}` : kind === 'PORT_FACILITY' ? '/masters/berths' : `/companies/${id}`);
+export const subjectPath = (kind: SubjectKind, id: string | null | undefined) => (!id ? null : kind === 'VESSEL' ? `/vessels/${id}` : kind === 'SEAFARER' ? `/seafarers/${id}` : kind === 'PORT_FACILITY' ? `/port-facilities/${id}` : `/companies/${id}`);
+
+/* ---- Port facilities ---- */
+export const ISPS_STATUS_META: StatusMeta = { COMPLIANT: { label: 'Compliant', color: 'success' }, PROVISIONAL: { label: 'Provisional', color: 'info' }, EXPIRED: { label: 'Expired', color: 'error' }, SUSPENDED: { label: 'Suspended', color: 'warning' }, NOT_APPLICABLE: { label: 'Not applicable', color: 'default' } };
+export const FACILITY_STATUS_META: StatusMeta = { OPERATIONAL: { label: 'Operational', color: 'success' }, MAINTENANCE: { label: 'Maintenance', color: 'warning' }, CLOSED: { label: 'Closed', color: 'default' } };
+/** Where the federal security review stands. Anything outside REVIEW_CLOSED is still with the authority. */
+export const REVIEW_STATUS_META: StatusMeta = { SUBMITTED: { label: 'Submitted', color: 'info' }, IN_REVIEW: { label: 'In review', color: 'warning' }, UNDER_REVIEW: { label: 'In review', color: 'warning' }, CLEARED: { label: 'Cleared', color: 'success' }, REJECTED: { label: 'Rejected', color: 'error' }, WITHDRAWN: { label: 'Withdrawn', color: 'default' }, CLOSED: { label: 'Closed', color: 'default' } };
+export const REVIEW_CLOSED = ['CLEARED', 'REJECTED', 'WITHDRAWN', 'CLOSED'];
+export const reviewOpen = (r: { status: string } | null | undefined) => !!r && !REVIEW_CLOSED.includes(String(r.status).toUpperCase());
+export const REVIEW_FILTERS: Option[] = [{ value: 'open', label: 'With the authority' }, { value: 'CLEARED', label: 'Cleared' }, { value: 'REJECTED', label: 'Rejected' }, { value: 'none', label: 'Never submitted' }];

@@ -3,7 +3,7 @@ import type { Pool, PoolClient } from 'pg';
 import { NATIONAL_SCOPE, EVENTS, makeEvent, subjectFor, type EventEnvelope } from '@maritime/contracts';
 import { AuditClient, KIT_BUS, KIT_ENV, KIT_POOL, LOOKUP_SUBJECTS, applyLookupEvent, enqueue, withInbox, type EventBus, type Subscription } from '@maritime/service-kit';
 import type { Env } from './env';
-import { facilityApi, publishCompany, type CompanyRow, type FacilityRow, type Row, applyIcpOutcome } from './directory';
+import { facilityApi, publishCompany, type CompanyRow, type FacilityRow, type Row, applyIcpOutcome, publishFacility } from './directory';
 import { projectSnapshot } from './subjects';
 import { raiseObligation } from './compliance';
 import { closeCycleFromInstrument, openCycle, schemeForInstrumentType, sweepAccreditations } from './accreditation';
@@ -59,18 +59,21 @@ async function syncCycle(c: PoolClient, deps: Deps, instrument: Row, subject: { 
 }
 
 /** The federal authority's callback on a security review, delivered through the hub's signed inbound endpoint. */
-export async function onInbound(c: PoolClient, event: EventEnvelope): Promise<boolean> {
+export async function onInbound(c: PoolClient, env: Env, event: EventEnvelope): Promise<boolean> {
   const d = (event.data ?? {}) as { adapter?: string; payload?: Record<string, unknown> };
   if (d.adapter !== 'icp') return false;
   const p = d.payload ?? {}; const reference = String(p.reference ?? ''); if (!reference) return false;
   const found = await c.query<FacilityRow>("SELECT * FROM port_facilities WHERE icp_review->>'reference' = $1 LIMIT 1 FOR UPDATE", [reference]);
   const row = found.rows[0]; if (!row) return false;
-  await applyIcpOutcome(c, row, { status: String(p.status ?? ''), decidedAt: p.decidedAt ? String(p.decidedAt) : null, conditions: Array.isArray(p.conditions) ? p.conditions : undefined });
+  const after = await applyIcpOutcome(c, row, { status: String(p.status ?? ''), decidedAt: p.decidedAt ? String(p.decidedAt) : null, conditions: Array.isArray(p.conditions) ? p.conditions : undefined });
+  if (after.icp_review && after.icp_review.status !== row.icp_review?.status) {
+    await publishFacility(c, env, after, {}, EVENTS.facilities.facilityReviewChanged, { reference, reviewStatus: after.icp_review.status, reviewFrom: row.icp_review?.status ?? null, decidedAt: after.icp_review.decidedAt, conditions: after.icp_review.conditions, mode: after.icp_review.mode, pushed: true });
+  }
   return true;
 }
 
 export async function applyEvent(c: PoolClient, deps: Deps, event: EventEnvelope): Promise<void> {
-  if (event.type === EVENTS.integration.inboundReceived) { await onInbound(c, event); return; }
+  if (event.type === EVENTS.integration.inboundReceived) { await onInbound(c, deps.env, event); return; }
   if (await applyLookupEvent(c, event)) return; // the masters the directory validates against
   if (event.type === EVENTS.scheduler.sweepAccreditations) { await sweepAccreditations(c, deps.env, deps.audit, new Date(), event); return; }
   const result = await projectSnapshot(c, event);

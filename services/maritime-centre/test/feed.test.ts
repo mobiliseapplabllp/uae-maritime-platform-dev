@@ -67,7 +67,8 @@ describe('the AIS/LRIT feed', () => {
     const expected = advance(25.2, 55.2, 12, 90, 10);
     expect(Number(a.lat)).toBeCloseTo(expected.lat, 4); expect(Number(a.lon)).toBeCloseTo(expected.lon, 4); expect(Number(a.lon)).toBeGreaterThan(55.2);
     expect(Number(b.lat)).toBe(24.98); expect(Number(b.lon)).toBe(55.01);
-    expect((await pool.query<{ n: string }>('SELECT count(*)::text AS n FROM position_history WHERE vessel_id = $1', [ships[0].id])).rows[0].n).toBe('2');
+    // the seeded world may already carry a track for her, depending on the day the picture is built for — only the feed's own fixes are counted
+    expect((await pool.query<{ n: string }>('SELECT count(*)::text AS n FROM position_history WHERE vessel_id = $1 AND received_at = ANY($2::timestamptz[])', [ships[0].id, [new Date('2026-09-05T10:00:00Z'), t1]])).rows[0].n).toBe('2');
   });
   it('stamps a live fix with the time the counterpart gave, and records a hub outage without losing the watermark', async () => {
     mode = 'live';

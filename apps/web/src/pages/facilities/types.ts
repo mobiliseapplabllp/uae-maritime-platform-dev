@@ -82,3 +82,25 @@ export interface CompanyOverlay extends Company {
 export interface RatingEntry { source: 'AUDIT' | 'VISIT'; number: string; date: string; result: string; score: number | null; value: number; recency: number; typeWeight: number; weight: number }
 export interface RatingBreakdown { rating: number | null; recorded?: number; considered: number; entries: RatingEntry[]; method: string }
 export interface VisitOutcome { visit: Visit; rating: number | null; obligations: string[]; cycle: AccreditationCycle | null }
+
+/* ---- Port facilities (facilities service, /facilities/port-facilities) ---- */
+export type IspsStatus = 'COMPLIANT' | 'PROVISIONAL' | 'EXPIRED' | 'SUSPENDED' | 'NOT_APPLICABLE';
+export type FacilityStatus = 'OPERATIONAL' | 'MAINTENANCE' | 'CLOSED';
+/** The federal authority's security review of a port facility, as submitted and as last reported. `mode` says how the answer came: the counterpart itself, or its recorded contract. */
+export interface IcpReview { reference: string; status: string; reason: string; requestedAt: string; requestedBy: string; expectedBy: string | null; decidedAt: string | null; conditions: unknown[]; checkedAt: string; mode: string }
+/** GET /facilities/port-facilities/:id/icp-reviews — one line of the review history. */
+export interface IcpReviewEntry extends IcpReview { id: string; open: boolean }
+/** The local snapshot of an instrument the facility holds (`instrumentApi` in the facilities service). */
+export interface FacilityInstrument { id: string; licenseNo: string; number: string; subjectKind: string; subjectId: string | null; entityName: string; entityType: string; typeLabel: string; instrumentClass: string; classLabel: string; status: string; appliedDate: string | null; issueDate: string | null; expiryDate: string | null; statutory: boolean; inForce: boolean; signed: boolean; performanceRating: number | null; audits: number; conditions: string; daysToExpiry: number | null; expired: boolean }
+/** GET /facilities/port-facilities — a regulated port facility with the desk's record on it (`facilityApi`). */
+export interface PortFacility {
+  id: string; code: string; name: string; nameAr: string | null; facilityType: string; terminal: string; berthType: string; operatorId: string | null; operatorName: string;
+  ispsStatus: IspsStatus; ispsLevel: number; socNo: string; socExpiry: string | null; ispsInForce: boolean; pssoName: string; pssoPhone: string; icpReview: IcpReview | null;
+  capabilities: string[]; loaMax: number | null; draftMax: number | null; capacity: number | null; capacityUnit: string; status: FacilityStatus; remarks: string;
+  instruments: FacilityInstrument[]; instrumentsHeld: number; audits: DirectoryAudit[]; auditCount: number; lastAuditAt: string | null; lastAuditResult: string | null;
+  obligations: Obligation[]; openObligations: number; createdAt: string | null; updatedAt: string | null;
+}
+/** GET /facilities/port-facilities/:id/visits */
+export interface FacilityVisits { subjectId: string; subjectName: string; scheduled: number; overdue: number; visits: Visit[] }
+/** The review counts on GET /facilities/dashboard. */
+export interface SecurityReviewStats { open: number; cleared12m: number; rejected: number; never: number; total: number }

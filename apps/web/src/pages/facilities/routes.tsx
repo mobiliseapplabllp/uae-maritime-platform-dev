@@ -10,4 +10,6 @@ export const routes: RouteDef[] = [
   { path: '/accreditations', perm: 'facilities.view', element: L(() => import('./AccreditationDesk')) },
   { path: '/facilities', perm: 'facilities.view', element: L(() => import('./FacilitiesList')) },
   { path: '/facilities/:id', perm: 'facilities.view', element: L(() => import('./FacilityDetail')) },
+  { path: '/port-facilities', perm: 'facilities.view', element: L(() => import('./PortFacilitiesPage')) },
+  { path: '/port-facilities/:id', perm: 'facilities.view', element: L(() => import('./PortFacilityDetail')) },
 ];
