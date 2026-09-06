@@ -90,7 +90,7 @@ export default function ReportViewer() {
             <Card sx={{ p: 2 }}>
               <Typography variant="h6" component="h2" sx={{ fontSize: 14.5, mb: 1 }}>{t('mis.chartTitle', { series: spec.series.map((s) => columnLabel(def!.columns.find((c) => c.key === s)!)).join(', ') })}</Typography>
               <Box sx={{ height: 260 }}>
-                <Box dir="ltr">{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
+                <Box dir="ltr" sx={{ height: '100%' }}>{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}
                 <ResponsiveContainer>
                   <BarChart data={chartRows(data.rows, spec)} barCategoryGap="28%">
                     <CartesianGrid stroke={grid} vertical={false} />

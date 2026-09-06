@@ -10,6 +10,11 @@ test.describe('foundation screens', () => {
   test('super admin lands on the command centre and can open the launcher', async ({ page }) => {
     await login(page);
     await expect(page.getByText('Vessels at berth', { exact: false })).toBeVisible();
+    // The three charts must be drawn at a real size: a wrapper without a height once collapsed every one of them to nothing.
+    await expect(page.locator('.recharts-wrapper')).toHaveCount(3);
+    await expect(page.locator('.recharts-bar-rectangle path').first()).toBeVisible();
+    const chartHeights = await page.locator('.recharts-wrapper').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+    for (const h of chartHeights) expect(h).toBeGreaterThan(150);
     await page.getByRole('button', { name: 'All applications' }).first().click();
     await expect(page.getByRole('heading', { name: 'Applications' })).toBeVisible();
     await page.keyboard.press('Escape');
