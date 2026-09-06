@@ -2,6 +2,7 @@ import { Controller, Get, Inject } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { CurrentUser, KIT_CACHE, KIT_ENV, KIT_POOL, RequirePerm, scopedKey, type BaseEnv, type Cache, type Principal } from '@maritime/service-kit';
 import { CARGO_GROUP, D, H, certStatus, many, monthKey, months12 } from './queries';
+import { moduleStrip } from './modules';
 import {
   BERTH_SCOPE, CALL_SCOPE, CERTIFICATE_SCOPE, INSPECTION_SCOPE, INVOICE_SCOPE, VESSEL_SCOPE, from,
 } from './scope';
@@ -22,6 +23,12 @@ export class DashboardController {
   @RequirePerm('dashboard.view') @Get('dashboard')
   async summary(@CurrentUser() user: Principal) {
     return this.cache.wrap(scopedKey(user, DASHBOARD_CACHE_PREFIX), this.env.CACHE_TTL_SEC, () => this.compute(user));
+  }
+
+  /** The module strip: every module's headline numbers under the reader's scope, for the Command Centre's tiles. */
+  @RequirePerm('dashboard.view') @Get('dashboard/modules')
+  async modules(@CurrentUser() user: Principal) {
+    return this.cache.wrap(scopedKey(user, `${DASHBOARD_CACHE_PREFIX}:modules`), this.env.CACHE_TTL_SEC, () => moduleStrip(this.pool, user));
   }
 
   private async compute(user: Principal) {

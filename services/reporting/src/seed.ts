@@ -56,6 +56,7 @@ export async function seedReporting(databaseUrl: string, profile?: string) {
     await run('company', world.companies.map((c) => ({ ...c, scope: company(c.code) })));
     await run('vessel', world.vessels.map((v) => ({ ...v, agentName: companyByCode.get(v.agentCode)?.name ?? null, registry: pick<{ vesselId: string }>(world, 'registry').find((r) => r.vesselId === v.id) ?? {}, scope: company(v.agentCode) })));
     await run('instrument', pick<{ entityType: string; status: string; holderCode?: string | null; endorsements?: { result: string }[] }>(world, 'licences').map((l) => ({ ...l, statutory: isStatutory(l.entityType), inForce: !(l.endorsements ?? []).some((x) => x.result === 'NOT_ENDORSED'), signed: l.status === 'ISSUED', scope: company(l.holderCode) })));
+    await run('serviceRequest', pick<{ applicant?: { organisationCode?: string } }>(world, 'serviceRequests').map((r) => ({ ...r, scope: company(r.applicant?.organisationCode) })));
     await run('portCall', world.portCalls.map((p) => ({ ...p, vesselType: byId.get(p.vesselId)?.type ?? null, agentName: companyByCode.get(p.agentCode)?.name ?? null, berthId: p.berthCode ? berthByCode.get(p.berthCode)?.id ?? null : null, scope: company(p.agentCode) })));
     // A certificate, a registration and an invoice inherit the tenancy of the thing they are about.
     const ofVessel = (r: { vesselId?: string | null }) => company(r.vesselId ? byId.get(r.vesselId)?.agentCode : null);

@@ -7,6 +7,7 @@ import type { Env } from './env';
 import { INVOICE_SCOPE, scopedWhere } from './scope';
 import { INVOICE_STATUSES, PAYMENT_METHODS, applySettlement, buildLines, computeTotals, findInvoice, insertInvoice, iso, lockInvoice, newId, nextInvoiceNumber, num, publishDeleted, publishState, round2, settle, toApi, updateInvoice, type PaymentIntent, type Line, type Payment, type Row, billingOf, billingFromEnv, type BillingContext } from './invoicing';
 import { activeTariffs, billToFor, billableCall, findCallSnapshot } from './subjects';
+import { receivablesDashboard } from './receivables';
 
 /* Invoices raised on vessel calls. One live account per call — a cancelled one can be re-raised, an open one cannot be
  * duplicated. Draft is editable, issued is not; payments may arrive in parts and the account settles when they cover it. */
@@ -59,6 +60,22 @@ export class InvoicesController {
     const billed = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.total), 0);
     const collected = rows.rows.filter((r) => r.status !== 'CANCELLED').reduce((s, r) => s + Number(r.paid), 0);
     return { currency: b.currency, taxName: b.taxName, byStatus, billed: round2(billed), collected: round2(collected), outstanding: round2(billed - collected), collectionPct: billed ? Math.round((collected / billed) * 1000) / 10 : 0, overdue: { count: Number(overdue.rows[0].n), amount: round2(Number(overdue.rows[0].total)) } };
+  }
+
+  /** The receivables dashboard: billed, collected, the open book by age and how well the desk collects. */
+  @RequirePerm('invoices.view', 'dashboard.view') @Get('dashboard')
+  async dashboard(@CurrentUser() user: Principal) {
+    const b = await this.billing(); const now = new Date(); const since = new Date(now.getTime() - 400 * 86_400_000);
+    // scoped exactly as the list is: a payer reads their own ledger's ageing, not the administration's
+    const where: string[] = ["(status <> 'CANCELLED' OR COALESCE(issued_at, created_at) >= $1)"]; const args: unknown[] = [since];
+    scopeWhere(user.scope, where, args, INVOICE_SCOPE);
+    type ArRow = { id: string; number: string; status: string; proforma: boolean; total: string; paid_amount: string; tax_amount: string; issued_at: Date | null; due_at: Date | null; paid_at: Date | null; created_at: Date; reminded_at: Date | null; bill_to: string | null; vessel_name: string; lines: { code?: string; description?: string; amount?: number }[] | null; payments: { at: string; amount: number; method?: string }[] | null };
+    const rows = await this.pool.query<ArRow>(
+      `SELECT id, number, status, proforma, total, paid_amount, tax_amount, issued_at, due_at, paid_at, created_at, reminded_at, bill_to->>'name' AS bill_to, vessel_name, lines, payments FROM invoices WHERE ${where.join(' AND ')}`, args);
+    return receivablesDashboard(rows.rows.map((r) => ({
+      id: r.id, number: r.number, status: r.status, proforma: !!r.proforma, total: Number(r.total) || 0, paidAmount: Number(r.paid_amount) || 0, taxAmount: Number(r.tax_amount) || 0,
+      issuedAt: r.issued_at, dueAt: r.due_at, paidAt: r.paid_at, createdAt: r.created_at, remindedAt: r.reminded_at, billTo: r.bill_to ?? '', vesselName: r.vessel_name, lines: r.lines ?? [], payments: r.payments ?? [],
+    })), now, { currency: b.currency, termsDays: Number(b.paymentTermsDays) || 30 });
   }
 
   @RequirePerm('invoices.view') @Get('meta')

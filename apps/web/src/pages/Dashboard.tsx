@@ -16,6 +16,7 @@ import { notify } from '../store/uiSlice';
 import { CHART_SERIES, SERIES_ORDER, SERIES_LABELS, chartChrome, MONO } from '../theme';
 import PageHeader from '../components/common/PageHeader';
 import StatCard from '../components/common/StatCard';
+import ModuleStrip from '../components/dashboard/ModuleStrip';
 import StatusChip from '../components/common/StatusChip';
 import { PORTCALL_STATUS_META, CERT_STATUS_META } from '../utils/status';
 import { fmtMT, fmtNum, fmtMoneyShort, fmtDT, fromNow, fmtD } from '../utils/format';
@@ -63,6 +64,7 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader title="Port operations" sub={`Live position and last 12 months — ${fmtD(new Date())}`} />
+      <ModuleStrip />
       <Grid container spacing={2}>
         <Grid item xs={6} md={3}><StatCard icon={<DirectionsBoatFilledRoundedIcon />} label="Vessels at berth" value={kpis.vesselsAtBerth} sub={`${kpis.berthOccupancyPct}% berth occupancy`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<AnchorRoundedIcon />} label="At anchorage" value={kpis.atAnchorage} sub={`${kpis.expectedArrivals72h} expected in 72 h`} tone="warning.main" /></Grid>

@@ -5,6 +5,7 @@ import type { RouteDef } from '../../routes';
 const L = (f: () => Promise<{ default: React.ComponentType<any> }>) => { const C = lazy(f); return <C />; };
 
 export const routes: RouteDef[] = [
+  { path: '/legislation/overview', perm: 'legislation.view', element: L(() => import('./NoticesDashboard')) },
   { path: '/legislation', perm: 'legislation.view', element: L(() => import('./LegislationPage')) },
   { path: '/legislation/imo', perm: 'legislation.view', element: L(() => import('./ImoWatch')) },
 ];

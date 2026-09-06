@@ -7,8 +7,7 @@ import type { Env } from './env';
 import {
   ACK_CLASSES, allocateRefNo, ackApi, canApprove, canAcknowledge, canSupersede, canTransition, instrumentApi,
   publishInstrument, publishInstrumentDeleted, registerDashboard, stampPublic,
-  type AckRow, type Attachment, type DashboardRow, type InstrumentRow, type LinkRow, type Row,
-} from './instruments';
+  type AckRow, type Attachment, type DashboardRow, type InstrumentRow, type LinkRow, type Row, registerTrends } from './instruments';
 import { acksOf, fullInstrument, loadInstrument, recipientCounts, recipientsIn, recipientsOf, type Q } from './read';
 import { maySeeAcknowledgements } from './scope';
 import { citationOf, portalUrl } from './portal';
@@ -133,7 +132,20 @@ export class LegislationController {
               (SELECT count(*) FROM instrument_acknowledgements a WHERE a.instrument_id = i.id) AS acks, 0 AS recipients
          FROM legal_instruments i`);
     const rows = r.rows.map((x) => ({ ...x, acks: Number(x.acks), recipients: x.ack_required ? recipientsIn(counts, x.ack_class, x.ack_class_value) : 0 }));
-    return { ...registerDashboard(rows, new Date(), this.env.HORIZON_DAYS), roll: counts.all, generatedAt: new Date().toISOString() };
+    const now = new Date();
+    // how promptly readers acknowledge: each acknowledgement against the day its instrument was published, month by month over the year
+    const ackDue = Number((await this.legis()).ackReminderDays) || this.env.ACK_DUE_DAYS;
+    const ack = await this.pool.query<{ key: string; n: string; avg_days: string | null; within: string }>(
+      `SELECT to_char(date_trunc('month', a.at), 'YYYY-MM') AS key, count(*) AS n,
+              avg(EXTRACT(EPOCH FROM (a.at - COALESCE(i.published_at, i.effective_date::timestamptz, i.issued_date::timestamptz))) / 86400) AS avg_days,
+              count(*) FILTER (WHERE a.at <= COALESCE(i.published_at, i.effective_date::timestamptz, i.issued_date::timestamptz) + make_interval(days => COALESCE(i.ack_due_days, $2))) AS within
+         FROM instrument_acknowledgements a JOIN legal_instruments i ON i.id = a.instrument_id
+        WHERE a.at >= $1 GROUP BY 1 ORDER BY 1`, [new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)), ackDue]);
+    const acksByMonth = ack.rows.map((x) => ({ key: x.key, acks: Number(x.n), avgDays: x.avg_days == null ? null : Math.round(Number(x.avg_days) * 10) / 10, within: Number(x.within) }));
+    const acks12m = acksByMonth.reduce((s, m) => s + m.acks, 0);
+    const weighted = acksByMonth.reduce((s, m) => s + (m.avgDays ?? 0) * m.acks, 0);
+    const ackStats = { acksByMonth, acks12m, avgDays: acks12m ? Math.round((weighted / acks12m) * 10) / 10 : null, withinDuePct: acks12m ? Math.round((acksByMonth.reduce((s, m) => s + m.within, 0) / acks12m) * 100) : null };
+    return { ...registerDashboard(rows, now, this.env.HORIZON_DAYS), ...registerTrends(rows, ackStats, now), roll: counts.all, ackDueDays: ackDue, generatedAt: now.toISOString() };
   }
 
   @RequirePerm('legislation.view') @Get('instruments/:id')

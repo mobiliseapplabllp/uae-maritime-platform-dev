@@ -57,7 +57,10 @@ describe('identity-access', () => {
     tokens.admin = ref.body.data.token; tokens.adminRefresh = ref.body.data.refreshToken;
   });
   it('enforces permissions deny-by-default and exposes /meta', async () => {
-    const pilot = await login('arjun.jadeja@maritime.example');
+    // most of the staff have enrolled a second factor; the deny-by-default check wants a pilot who has not, so the token is a plain session
+    const pilots = (await request(server as never).get('/users').query({ role: 'Port Pilot', active: 'true', mfa: 'missing' }).set('authorization', `Bearer ${tokens.admin}`)).body.data as { email: string }[];
+    expect(pilots.length).toBeGreaterThan(0);
+    const pilot = await login(pilots[0].email);
     expect(pilot.status).toBe(201);
     const denied = await request(server as never).get('/users').set('authorization', `Bearer ${pilot.body.data.token}`); expect(denied.status).toBe(403);
     const meta = await request(server as never).get('/meta').set('authorization', `Bearer ${pilot.body.data.token}`);
@@ -94,7 +97,7 @@ describe('identity-access', () => {
     expect((await request(server as never).put(`/roles/${hm.id}`).set('authorization', `Bearer ${tokens.admin}`).send({ name: 'Renamed' })).status).toBe(403);
     expect((await request(server as never).put(`/roles/${pp.id}`).set('authorization', `Bearer ${tokens.admin}`).send({ permissions: ['nope.nothing'] })).status).toBe(400);
     expect((await request(server as never).delete(`/roles/${pp.id}`).set('authorization', `Bearer ${tokens.admin}`)).status).toBe(409);
-    const pilots = (await request(server as never).get('/users').query({ role: 'Port Pilot', active: 'true' }).set('authorization', `Bearer ${tokens.admin}`)).body.data;
+    const pilots = (await request(server as never).get('/users').query({ role: 'Port Pilot', active: 'true', mfa: 'missing' }).set('authorization', `Bearer ${tokens.admin}`)).body.data;
     expect(pilots.length).toBeGreaterThan(0);
     const pilot = await login(pilots[0].email);
     expect(pilot.status).toBe(201);
@@ -323,7 +326,7 @@ describe('identity-access — access controls', () => {
     policy.setOverride({ dormantAction: 'FLAG', dormantAfterDays: 90 });
     try { await sweep(); } finally { policy.setOverride(null); }
     expect((await get(`/users/${ops2.id}`, tokens.admin)).body.data).toMatchObject({ active: true }); expect((await get(`/users/${ops2.id}`, tokens.admin)).body.data.dormantSince).toBeTruthy();
-    expect((await get('/users?dormant=true', tokens.admin)).body.data.map((u: { email: string }) => u.email)).toEqual(expect.arrayContaining(['ops2@maritime.example', 'nmc@maritime.example']));
+    expect((await get('/users?dormant=true&limit=100', tokens.admin)).body.data.map((u: { email: string }) => u.email)).toEqual(expect.arrayContaining(['ops2@maritime.example', 'nmc@maritime.example']));
     policy.setOverride({ dormantAction: 'DEACTIVATE', dormantAfterDays: 90 });
     try { await sweep(); } finally { policy.setOverride(null); }
     expect((await get(`/users/${ops2.id}`, tokens.admin)).body.data).toMatchObject({ active: false, deactivatedReason: 'DORMANT' });

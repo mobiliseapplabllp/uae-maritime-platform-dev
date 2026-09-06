@@ -157,7 +157,9 @@ export function buildServiceRequests(rng: Prng, profile: string, defs: WorldServ
     // the desk keeps the first eighteen statutory surveys and every second seafarer certificate; the rest predate the portal
     if (l.subjectKind === 'VESSEL' && CERT_LABEL[l.entityType]) { statutorySeen += 1; if (statutorySeen > 18) continue; }
     if (l.subjectKind === 'SEAFARER') { seafarerSeen += 1; if (seafarerSeen % 2 === 0) continue; }
-    const submitted = new Date(l.appliedDate); const issuedAt = l.history.find((h) => h.to === 'ISSUED')?.at ?? l.issueDate;
+    const issuedAt = l.history.find((h) => h.to === 'ISSUED')?.at ?? l.issueDate;
+    // the application behind an issued instrument was lodged within a working window of its issue: a desk decides in days, not the years a licence has been held
+    const submitted = new Date(Math.max(new Date(l.appliedDate).getTime(), new Date(issuedAt).getTime() - rng.int(3, def.slaDays + 10) * D));
     push(def, l.subjectKind, l.subjectId, l.subjectModel, l.entityName, 'ISSUED', new Date(submitted.getTime() - D), submitted, new Date(issuedAt), CERT_LABEL[l.entityType] ? { surveyPort: rng.pick(['Khalifa Port', 'Jebel Ali', 'Fujairah']), surveyDate: l.issueDate, recognisedOrganisation: rng.pick(codesOf('recognisedOrganisation')) } : { note: 'Lodged through the portal' }, l);
   }
   // the live desk across every domain

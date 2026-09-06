@@ -48,6 +48,22 @@ describe('reporting', () => {
     expect(d.kpis.vesselsAtBerth).toBeGreaterThan(0); expect(d.throughputByMonth).toHaveLength(12); expect(d.berthBoard.length).toBe(24);
     expect(d.arrivals.length).toBeGreaterThan(0); expect(d.throughputByMonth.some((m: { total: number }) => m.total > 0)).toBe(true);
   });
+  it('answers the module strip for every module, under the reader\'s scope, with the service desk projected', async () => {
+    const r = await get('/dashboard/modules'); expect(r.status).toBe(200);
+    const modules: { key: string; kpis: { label: string; value: number }[] }[] = r.body.data.modules;
+    expect(modules.map((m) => m.key)).toEqual(['ops', 'ships', 'crew', 'legis', 'incidents', 'inspect', 'facil', 'services', 'finance', 'mis', 'masters', 'agents', 'admin']);
+    for (const m of modules) for (const k of m.kpis) expect(typeof k.value).toBe('number');
+    const services = modules.find((m) => m.key === 'services')!;
+    expect(services.kpis.find((k) => k.label === 'Applications open')!.value).toBeGreaterThan(0);
+    const finance = modules.find((m) => m.key === 'finance')!;
+    expect(finance.kpis.find((k) => k.label === 'Outstanding')!.value).toBeGreaterThan(0);
+    // a shipping agent sees the strip for their own company: fewer calls, never more
+    const mine = await get('/dashboard/modules', 'gss'); expect(mine.status).toBe(200);
+    const inPort = (body: typeof r.body) => body.data.modules.find((m: { key: string }) => m.key === 'ops').kpis[0].value;
+    expect(inPort(mine.body)).toBeLessThanOrEqual(inPort(r.body));
+    const seeded = await pool.query("SELECT count(*) AS n, count(*) FILTER (WHERE sla_breached) AS breached FROM rm_service_requests"); expect(Number(seeded.rows[0].n)).toBeGreaterThan(100);
+    const invoices = await pool.query("SELECT count(*) AS n FROM rm_invoices WHERE due_at IS NOT NULL AND status = 'ISSUED' AND paid_amount = 0"); expect(Number(invoices.rows[0].n)).toBeGreaterThan(0);
+  });
   it('computes every stat scope and enforces the scope permission', async () => {
     for (const scope of ['portcalls', 'berths', 'registry', 'vessels', 'certificates', 'seafarers', 'met', 'crewLists', 'legislation', 'facilities', 'inspections', 'incidents', 'invoices', 'risk', 'masters', 'users', 'tariffs', 'marine', 'audit']) {
       const r = await get(`/stats/${scope}`); expect(r.status, scope).toBe(200); expect(r.body.data.cards.length, scope).toBeGreaterThanOrEqual(4);

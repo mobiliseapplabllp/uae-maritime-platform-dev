@@ -36,7 +36,8 @@ const STATIC_ROUTES = [
   '/seafarers', '/seafarers/overview', '/seafarers/met', '/seafarers/crew-lists', '/seafarers/manning', '/seafarers/foreign', '/legislation', '/legislation/imo', '/law', '/companies', '/port-facilities', '/facilities', '/accreditations',
   '/incidents', '/incidents/overview', '/incidents/risk-matrix', '/nmc/map', '/nmc/incidents',
   '/inspections', '/inspections/overview', '/checklist-builder', '/risk', '/risk/targeting',
-  '/invoices', '/mis', '/reports', '/agents', '/agents/decisions', '/agents/escalations', '/agents/assurance',
+  '/invoices', '/invoices/overview', '/mis', '/reports',
+  '/ops/overview', '/legislation/overview', '/companies/overview', '/services/overview', '/services', '/services/requests', '/services/studio', '/masters/overview', '/admin/overview', '/agents', '/agents/decisions', '/agents/escalations', '/agents/assurance',
   '/platform', '/platform/slas', '/platform/incidents', '/platform/compliance',
   '/admin/users', '/admin/roles', '/admin/access-reviews', '/admin/audit', '/admin/settings', '/admin/settings/notifications', '/admin/settings/smtp', '/admin/settings/ai', '/settings/module/admin', '/settings/module/ops', '/admin/settings/integrations', '/masters', '/profile',
 ];

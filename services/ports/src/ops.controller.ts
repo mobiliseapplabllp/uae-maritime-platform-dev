@@ -9,6 +9,7 @@ import { BERTH_SCOPE, CALL_SCOPE, RESOURCE_SCOPE, scopedWhere } from './scope';
 import { toApi as berthApi, type BerthRow } from './berths';
 import { JOB_KINDS, RESOURCE_STATUS, bucketJobs, core, findResource, historyReport, jobsOf, publishResource, publishResourceDeleted, resourceOutagesOf, serviceDigest, toApi as resourceApi, type JobApi, type JobRow, type OutageApi, type ResourceOutageRow, type ResourceRow } from './resources';
 import { DAY, availability, clampMonths, dayKey, dayStart, daysBetween, iso, monthWindow, num, round1 } from './history';
+import { DEFAULT_TARGETS, harbourDashboard } from './harbour';
 
 /* Harbour operations: the quay twin, the day programme, the berth window planner and the marine craft board.
  * Everything here is read-only over the call register and the estate, except the craft board, which the duty officer works. */
@@ -28,6 +29,35 @@ const fmtQty = (n: number) => new Intl.NumberFormat('en-AE').format(n);
 export class OpsController {
   constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_SETTINGS) private readonly settings: SettingsClient) {}
   private ops() { return this.settings.moduleGet('ops', { anchorageAlertHrs: 24, scheduleWindowDays: 5 }); }
+
+  /** The harbour dashboard: service quality over the last thirty days, the year month by month, and the live position. */
+  @RequirePerm('portcalls.view', 'dashboard.view') @Get('dashboard')
+  async dashboard(@CurrentUser() user: Principal) {
+    const now = new Date(); const since = new Date(now.getTime() - 400 * DAY); const month = new Date(now.getTime() - 31 * DAY);
+    /* A dashboard is a read of every call it counts, so it is narrowed exactly as the register is: a port officer sees their
+     * port's quality of service, an agent their own company's calls against the same estate. */
+    const where: string[] = ['(pc.ata >= $1 OR pc.eta >= $1 OR pc.status = ANY($2))']; const args: unknown[] = [since, [...OPEN_STATUSES]];
+    scopeWhere(user.scope, where, args, { ...CALL_SCOPE, alias: 'pc' });
+    const sc = scopedWhere(user.scope, BERTH_SCOPE); const w = scopedWhere(user.scope, RESOURCE_SCOPE);
+    type CallRow = { id: string; vcn: string; vessel_name: string; vessel_type: string | null; status: string; agent_code: string; agent_name: string; purpose: string; eta: Date; etb: Date | null; etd: Date | null; ata: Date | null; atb: Date | null; atd: Date | null; berth_id: string | null; berth_code: string | null; cargo_ops: { cargoType?: string; qtyMT?: number; qty?: number; unit?: string }[] | null };
+    const [calls, berths, outages, resources, jobs, craftOutages, ops] = await Promise.all([
+      this.pool.query<CallRow>(`SELECT pc.id, pc.vcn, pc.vessel_name, pc.vessel_type, pc.status, pc.agent_code, pc.agent_name, pc.purpose, pc.eta, pc.etb, pc.etd, pc.ata, pc.atb, pc.atd, pc.berth_id, pc.berth_code, pc.cargo_ops FROM port_calls pc WHERE ${where.join(' AND ')}`, args),
+      this.pool.query<BerthRow>(`SELECT * FROM berths ${sc.sql}`, sc.args),
+      this.pool.query<{ berth_id: string; from_at: Date; to_at: Date; kind: string }>('SELECT berth_id, from_at, to_at, kind FROM berth_outages WHERE to_at >= $1', [since]),
+      this.pool.query<{ id: string; type: string; status: string }>(`SELECT id, type, status FROM resources ${w.sql}`, w.args),
+      this.pool.query<{ resource_id: string; kind: string; at: Date; ended_at: Date | null; hours: string }>('SELECT resource_id, kind, at, ended_at, hours FROM resource_jobs WHERE at >= $1', [month]),
+      this.pool.query<{ resource_id: string; from_at: Date; to_at: Date }>('SELECT resource_id, from_at, to_at FROM resource_outages WHERE to_at >= $1', [month]),
+      this.settings.moduleGet('ops', { anchorageAlertHrs: 24, berthWindowSlackHrs: 4 }),
+    ]);
+    return harbourDashboard({
+      calls: calls.rows.map((c) => ({ id: c.id, vcn: c.vcn, vesselName: c.vessel_name, vesselType: c.vessel_type, status: c.status, agentCode: c.agent_code, agentName: c.agent_name, purpose: c.purpose, eta: c.eta, etb: c.etb, etd: c.etd, ata: c.ata, atb: c.atb, atd: c.atd, berthId: c.berth_id, berthCode: c.berth_code, cargoOps: c.cargo_ops ?? [] })),
+      berths: berths.rows.map((b) => ({ id: b.id, code: b.code, name: b.name, terminal: b.terminal, berthType: b.berth_type, status: b.status })),
+      outages: outages.rows.map((o) => ({ berthId: o.berth_id, from: o.from_at, to: o.to_at, kind: o.kind })),
+      resources: resources.rows,
+      jobs: jobs.rows.map((j) => ({ resourceId: j.resource_id, kind: j.kind, at: j.at, endedAt: j.ended_at, hours: Number(j.hours) || 0 })),
+      resourceOutages: craftOutages.rows.map((o) => ({ resourceId: o.resource_id, from: o.from_at, to: o.to_at })),
+    }, now, { ...DEFAULT_TARGETS, etaSlackHrs: Number(ops.berthWindowSlackHrs) || 4, anchorageAlertHrs: Number(ops.anchorageAlertHrs) || 24 });
+  }
 
   /** Everything the quay view needs in one call: the estate with its occupants, who is at anchor and who is inbound. */
   @RequirePerm('portcalls.view') @Get('twin')

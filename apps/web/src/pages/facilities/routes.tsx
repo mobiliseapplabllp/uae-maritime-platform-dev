@@ -5,6 +5,7 @@ import type { RouteDef } from '../../routes';
 const L = (f: () => Promise<{ default: React.ComponentType<any> }>) => { const C = lazy(f); return <C />; };
 
 export const routes: RouteDef[] = [
+  { path: '/companies/overview', perm: 'facilities.view', element: L(() => import('./CompaniesDashboard')) },
   { path: '/companies', perm: 'facilities.view', element: L(() => import('./CompaniesPage')) },
   { path: '/companies/:id', perm: 'facilities.view', element: L(() => import('./CompanyDetail')) },
   { path: '/accreditations', perm: 'facilities.view', element: L(() => import('./AccreditationDesk')) },

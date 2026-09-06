@@ -264,3 +264,34 @@ export function registerDashboard(rows: DashboardRow[], now = new Date(), horizo
   };
 }
 export type RegisterDashboard = ReturnType<typeof registerDashboard>;
+
+/* ------------------------------------------------------------------------------- dashboard trends --- */
+
+export interface AckStats { acksByMonth: { key: string; acks: number; avgDays: number | null; within: number }[]; acks12m: number; avgDays: number | null; withinDuePct: number | null }
+const MONTH_KEY = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+const MONTH_LABEL = (d: Date) => d.toLocaleString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+/**
+ * The register's trends for the dashboard: issuance month by month by kind, how promptly readers acknowledge, and how
+ * much of the law in force has stood untouched for five years — the review age a legal desk watches. Merged into the
+ * register dashboard by the controller; kept apart so each can be tested on its own.
+ */
+export function registerTrends(rows: DashboardRow[], ack: AckStats | null, now = new Date(), reviewYears = 5) {
+  const months = Array.from({ length: 12 }, (_, k) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11 + k, 1)));
+  const acksBy = new Map((ack?.acksByMonth ?? []).map((a) => [a.key, a]));
+  const byMonth = months.map((m) => {
+    const key = MONTH_KEY(m); const list = rows.filter((r) => MONTH_KEY(new Date(r.issued_date)) === key && r.status !== 'DRAFT');
+    return { key, month: MONTH_LABEL(m), issued: list.length, circulars: list.filter((r) => r.type === 'CIRCULAR').length, notices: list.filter((r) => r.type === 'NOTICE').length, other: list.filter((r) => r.type !== 'CIRCULAR' && r.type !== 'NOTICE').length, acknowledgements: acksBy.get(key)?.acks ?? 0 };
+  });
+  const inForce = rows.filter((r) => r.status === 'IN_FORCE');
+  const cutoff = now.getTime() - reviewYears * 365.25 * D;
+  const aged = inForce.filter((r) => new Date(r.issued_date).getTime() < cutoff);
+  const ageYears = (r: DashboardRow) => (now.getTime() - new Date(r.issued_date).getTime()) / (365.25 * D);
+  return {
+    byMonth,
+    issued12m: byMonth.reduce((s, m) => s + m.issued, 0),
+    currency: { inForce: inForce.length, olderThanReview: aged.length, olderThanReviewPct: inForce.length ? Math.round((aged.length / inForce.length) * 100) : 0, reviewYears, avgAgeYears: inForce.length ? Math.round((inForce.reduce((s, r) => s + ageYears(r), 0) / inForce.length) * 10) / 10 : 0 },
+    acknowledgements: { acks12m: ack?.acks12m ?? 0, avgDays: ack?.avgDays ?? null, withinDuePct: ack?.withinDuePct ?? null },
+    reviewList: aged.sort((a, b) => new Date(a.issued_date).getTime() - new Date(b.issued_date).getTime()).slice(0, 8)
+      .map((r) => ({ id: r.id, refNo: r.ref_no, title: r.title, type: r.type, category: r.category, issuedDate: iso(r.issued_date), ageYears: Math.round(ageYears(r) * 10) / 10 })),
+  };
+}

@@ -8,7 +8,7 @@ import { policyOf } from './policy';
 import {
   AUDIT_RESULTS, COMPANY_STATUS, COMPANY_STATUS_TRANSITIONS, FACILITY_STATUS, ISPS_STATUS,
   OBLIGATION_STATUS, SUBJECT_KINDS, auditApi, directoryDashboard, obligationApi,
-  type AuditRow, type ObligationRow, type Row, REVIEW_CLOSED, YEAR } from './directory';
+  type AuditRow, type ObligationRow, type Row, REVIEW_CLOSED, YEAR, directoryExtras } from './directory';
 import { renewalWorkList } from './compliance';
 
 /* The desk's own views across the register: what the directory looks like as a whole, what work is
@@ -50,8 +50,23 @@ export class DirectoryController {
     }, { open: 0, cleared12m: 0, rejected: 0, never: 0, total: 0 });
     const worst = await this.pool.query<Row>(
       `SELECT id, code, name, category, status, rating FROM companies WHERE rating > 0 ORDER BY rating LIMIT 5`);
+    const [fullInstruments, obligations, icpReviews, cycles] = await Promise.all([
+      this.pool.query<Row>('SELECT status, instrument_class, expiry_date, applied_date, issue_date FROM instruments'),
+      this.pool.query<Row>('SELECT status, kind, due_at FROM obligations'),
+      this.pool.query<Row>('SELECT status, requested_at, decided_at FROM icp_reviews'),
+      this.pool.query<Row>('SELECT company_id, category, cycle_no, starts_on, ends_on, status FROM accreditation_cycles'),
+    ]);
+    const dateOf = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
+    const extras = directoryExtras({
+      instruments: fullInstruments.rows.map((i) => ({ status: i.status, instrumentClass: i.instrument_class, expiryDate: dateOf(i.expiry_date), appliedDate: dateOf(i.applied_date), issueDate: dateOf(i.issue_date) })),
+      obligations: obligations.rows.map((o) => ({ status: o.status, kind: o.kind, dueAt: dateOf(o.due_at) })),
+      icpReviews: icpReviews.rows.map((r) => ({ status: r.status, requestedAt: dateOf(r.requested_at), decidedAt: dateOf(r.decided_at) })),
+      cycles: cycles.rows.map((c) => ({ companyId: c.company_id, category: c.category, cycleNo: Number(c.cycle_no), startsOn: dateOf(c.starts_on), endsOn: dateOf(c.ends_on), status: c.status })),
+      ratings: companies.rows.map((c) => Number(c.rating) || 0),
+    }, new Date());
     return {
       ...dash,
+      ...extras,
       securityReviews,
       watchlist: worst.rows.map((c) => ({ id: c.id, code: c.code, name: c.name, category: c.category, status: c.status, rating: Number(c.rating) })),
       renewals: (await renewalWorkList(this.pool, (await this.policy()).RENEWAL_WINDOW_DAYS)).slice(0, 10),

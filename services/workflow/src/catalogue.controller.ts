@@ -6,6 +6,7 @@ import type { Env } from './env';
 import { CATEGORY_AR, CATEGORY_ORDER } from './defaults';
 import type { DefinitionContent, FormField } from './schema';
 import { contentOf, definitionToApi, loadDefinition, loadPublished, type DefinitionRow } from './repo';
+import { deskDashboard } from './desk';
 
 export const D = 86_400_000;
 export type Tone = 'default' | 'success' | 'warning' | 'error' | 'info';
@@ -95,7 +96,15 @@ export class CatalogueController {
     const names = new Map(rows.map((r) => [r.definition_key, r.definition_name]));
     const topServices = [...count((r) => r.definition_key).entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([key, n]) => ({ key, name: names.get(key) ?? key, count: n }));
     const cat = await this.pool.query<{ published: string; total: string }>("SELECT count(*) FILTER (WHERE status = 'PUBLISHED') AS published, count(*) AS total FROM service_definitions");
+    type DeskSql = { status: string; category: string; definition_key: string; subject_kind: string | null; auto: boolean; info_requested: boolean; created_at: Date; submitted_at: Date | null; decided_at: Date | null; closed_at: Date | null; sla_due_at: Date | null; sla_breached_at: Date | null; fees_total: string | null; payment_status: string | null; paid_at: string | null };
+    const desk = (await this.pool.query<DeskSql>(
+      `SELECT r.status, r.category, r.definition_key, r.subject_kind, coalesce(d.auto_approvable, false) AS auto, r.created_at, r.submitted_at, r.decided_at, r.closed_at, r.sla_due_at, r.sla_breached_at,
+              (r.fees->>'total')::numeric AS fees_total, r.payment->>'status' AS payment_status, r.payment->>'paidAt' AS paid_at,
+              EXISTS (SELECT 1 FROM jsonb_array_elements(coalesce(r.timeline, '[]'::jsonb)) e WHERE e->>'to' = 'INFO_REQUESTED' OR e->>'action' = 'request_info') AS info_requested
+         FROM service_requests r LEFT JOIN service_definitions d ON d.id = r.definition_id`)).rows;
+    const yard = deskDashboard(desk.map((r) => ({ status: r.status, category: r.category, definitionKey: r.definition_key, subjectKind: r.subject_kind, auto: !!r.auto, infoRequested: !!r.info_requested, createdAt: r.created_at, submittedAt: r.submitted_at, decidedAt: r.decided_at, closedAt: r.closed_at, slaDueAt: r.sla_due_at, slaBreachedAt: r.sla_breached_at, feesTotal: Number(r.fees_total) || 0, paymentStatus: r.payment_status, paidAt: r.paid_at })), now);
     return {
+      ...yard,
       total: rows.length, open: open.length, breached: breached.length, slaCompliance: open.length ? Math.round(((open.length - breached.length) / open.length) * 100) : 100, avgDecisionDays: avg,
       approved: rows.filter((r) => r.status === 'APPROVED' || r.status === 'ISSUED').length, rejected: rows.filter((r) => r.status === 'REJECTED').length, issued: rows.filter((r) => r.status === 'ISSUED').length, withdrawn: rows.filter((r) => r.status === 'WITHDRAWN').length,
       automated: rows.filter((r) => r.auto && (r.status === 'APPROVED' || r.status === 'ISSUED')).length, byCategory, byStatus, topServices, catalogue: { published: Number(cat.rows[0].published), total: Number(cat.rows[0].total) }, cards: await serviceCards(this.pool, this.env),

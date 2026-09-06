@@ -5,6 +5,7 @@ import type { Pool } from 'pg';
 import { EVENTS, PASSWORD_MAX, SCOPE_LEVELS, passwordProblems, type PageQuery } from '@maritime/contracts';
 import { KIT_ENV, KIT_POOL, AuditClient, CurrentUser, RequirePerm, zod, paged, parsePage, escapeLike, notFound, badRequest, forbidden, conflict, withTx, enqueue, eventFromContext, type Principal, type Queryable } from '@maritime/service-kit';
 import { UsersRepo, toSafe, USER_SELECT, type UserRow } from './users.repo';
+import { adminDashboard } from './dashboard';
 import { changeApi, decideChange, isPrivileged, requestChange, type ChangeRow } from './change-requests';
 import { PolicyService, type AdminPolicy } from '../policy';
 import { MfaService } from '../mfa/mfa.service';
@@ -55,6 +56,29 @@ export class UsersController {
 
   /* ------------------------------------------------------------------------------- approvals --- */
   /** Declared before `:id` so the path is not read as an account id. */
+  /** The access posture: second-factor coverage, dormant and privileged accounts, sessions, lockouts, the four-eyes queue and the review in progress. */
+  @RequirePerm('users.view', 'dashboard.view') @Get('dashboard')
+  async dashboard() {
+    const now = new Date(); const policy = await this.policy.get();
+    type URow = { id: string; name: string; email: string; role_name: string | null; permissions: string[] | null; mfa_required: boolean | null; system: boolean | null; active: boolean; department: string; created_at: Date; last_login_at: Date | null; mfa_enrolled_at: Date | null; mfa_due_at: Date | null; dormant_since: Date | null };
+    const [users, sessions, locks, changes, cycle] = await Promise.all([
+      this.pool.query<URow>('SELECT u.id, u.name, u.email, u.active, u.department, u.created_at, u.last_login_at, u.mfa_enrolled_at, u.mfa_due_at, u.dormant_since, r.name AS role_name, r.permissions, r.mfa_required, r.system FROM users u LEFT JOIN roles r ON r.id = u.role_id'),
+      this.pool.query<{ user_id: string; expires_at: Date; revoked_at: Date | null; last_used_at: Date | null }>('SELECT user_id, expires_at, revoked_at, last_used_at FROM refresh_tokens WHERE expires_at > now()'),
+      this.pool.query<{ identity: string; failures: number; first_failure_at: Date; locked_until: Date | null }>('SELECT identity, failures, first_failure_at, locked_until FROM login_attempts'),
+      this.pool.query<{ kind: string; status: string; requested_at: Date; decided_at: Date | null }>('SELECT kind, status, requested_at, decided_at FROM change_requests'),
+      this.pool.query<{ id: string; opened_at: Date; due_at: Date; closed_at: Date | null; total: number }>('SELECT id, opened_at, due_at, closed_at, total FROM access_review_cycles ORDER BY opened_at DESC LIMIT 1'),
+    ]);
+    const c = cycle.rows[0];
+    const items = c ? (await this.pool.query<{ decision: string; privileged: boolean }>('SELECT decision, privileged FROM access_review_items WHERE cycle_id = $1', [c.id])).rows : [];
+    return adminDashboard({
+      users: users.rows.map((u) => ({ id: u.id, name: u.name, email: u.email, roleName: u.role_name ?? '', permissions: u.permissions ?? [], roleMfaRequired: !!u.mfa_required, roleSystem: !!u.system, active: u.active, department: u.department, createdAt: u.created_at, lastLoginAt: u.last_login_at, mfaEnrolledAt: u.mfa_enrolled_at, mfaDueAt: u.mfa_due_at, dormantSince: u.dormant_since })),
+      sessions: sessions.rows.map((s) => ({ userId: s.user_id, expiresAt: s.expires_at, revokedAt: s.revoked_at, lastUsedAt: s.last_used_at })),
+      locks: locks.rows.map((l) => ({ identity: l.identity, failures: Number(l.failures), firstFailureAt: l.first_failure_at, lockedUntil: l.locked_until })),
+      changes: changes.rows.map((x) => ({ kind: x.kind, status: x.status, requestedAt: x.requested_at, decidedAt: x.decided_at })),
+      review: c ? { id: c.id, openedAt: c.opened_at, dueAt: c.due_at, closedAt: c.closed_at, total: Number(c.total), items } : null,
+    }, now, { dormantDays: Number(policy.dormantAfterDays) || 90 });
+  }
+
   @RequirePerm('users.view', 'roles.view') @Get('changes')
   async changes(@Query() query: { status?: string; limit?: string }) {
     const status = ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'].includes(String(query.status)) ? String(query.status) : 'PENDING';

@@ -165,6 +165,9 @@ export function watchDashboard(items: ItemApi[], polls: ReturnType<typeof pollAp
       sources: polls.length, polledOk: polls.filter((p) => p.lastStatus === 'OK').length, failed: polls.filter((p) => p.lastStatus === 'FAILED').length, neverPolled: polls.filter((p) => p.lastStatus === 'NEVER').length,
       items: items.length, new: by('NEW'), assessed: by('ASSESSED'), transposed: by('TRANSPOSED'), dismissed: by('DISMISSED'), overdue: items.filter((i) => i.overdue).length,
       last30Days: items.filter((i) => new Date(i.firstSeenAt).getTime() >= since30).length, withInstrument: items.filter((i) => i.instrumentId).length,
+      // how long an item waits from being seen to being assessed, and what falls due within a fortnight
+      leadTimeDays: (() => { const done = items.filter((i) => i.assessedAt); return done.length ? Math.round(done.reduce((s, i) => s + (new Date(i.assessedAt as string).getTime() - new Date(i.firstSeenAt).getTime()) / 86_400_000, 0) / done.length * 10) / 10 : null; })(),
+      dueSoon: items.filter((i) => (i.status === 'NEW' || i.status === 'ASSESSED') && (i as { dueOn?: string | null }).dueOn && new Date((i as { dueOn?: string | null }).dueOn as string).getTime() <= now.getTime() + 14 * 86_400_000 && !i.overdue).length,
     },
     bySource: polls.map((p) => ({ ...p, items: items.filter((i) => i.source === p.source).length, new: items.filter((i) => i.source === p.source && i.status === 'NEW').length })),
     attention: items.filter((i) => i.status === 'NEW' || i.overdue).sort((a, b) => (b.publishedOn ?? '').localeCompare(a.publishedOn ?? '')).slice(0, 10),

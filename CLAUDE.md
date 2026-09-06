@@ -83,6 +83,7 @@ pnpm e2e                                   # Playwright drives + parity diffs
   each saying who reads it. Service tests pin `MDM_URL: 'http://127.0.0.1:1'` so the seeded
   fallbacks apply, or stand up a small settings server when the test changes a value; the client
   caches for thirty seconds, so a test that changes a value invalidates the key.
+- Every module opens on its dashboard, and a dashboard is a pure calculation over the owning service's records with a named yardstick beside each figure (`components/dashboard/kit.tsx`, `Yardstick`); month to date is compared with the same days of the previous month; the Command Centre strip reads `GET /dashboard/modules`. A field named `role` in chart data lands on the SVG as an ARIA role — rename it before it reaches Recharts.
 - The traffic picture (`/nmc/map`) draws real map tiles and every ship the AIS feed reports; the feed's
   live counterpart is a websocket stream held by the integration hub (`ais-lrit`, aisstream.io by
   default, key and boxes of sea in Settings → Integrations) and answered to the track store as the

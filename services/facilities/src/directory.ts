@@ -390,3 +390,62 @@ export async function applyIcpOutcome(c: Queryable, before: FacilityRow, o: { st
     [before.id, next.reference, next.status, next.decidedAt, JSON.stringify(next.conditions ?? []), next.mode]);
   return r.rows[0];
 }
+
+/* ------------------------------------------------------------------------------ dashboard extras --- */
+
+export interface DirectoryExtrasInput {
+  instruments: { status: string; instrumentClass: string; expiryDate: string | null; appliedDate: string | null; issueDate: string | null }[];
+  obligations: { status: string; kind: string; dueAt: string | null }[];
+  icpReviews: { status: string; requestedAt: string | null; decidedAt: string | null }[];
+  cycles: { companyId: string; category: string; cycleNo: number; startsOn: string | null; endsOn: string | null; status: string }[];
+  ratings: number[];
+}
+const DAY_MS = 86_400_000;
+/**
+ * What a licensing desk watches beyond the headcount: expiries in the thirty, sixty and ninety-day windows, the
+ * applications waiting and how long the oldest has waited, obligations past their date, the federal security reviews
+ * and how long a clearance takes, how ratings spread, and whether renewals land before the old cycle lapses.
+ */
+export function directoryExtras(input: DirectoryExtrasInput, now = new Date()) {
+  const t = now.getTime(); const yearAgo = t - 365 * DAY_MS;
+  const ms = (d: string | null | undefined) => (d ? new Date(d).getTime() : NaN);
+  const issued = input.instruments.filter((i) => i.status === 'ISSUED');
+  const within = (days: number) => issued.filter((i) => i.expiryDate && ms(i.expiryDate) > t && ms(i.expiryDate) <= t + days * DAY_MS).length;
+  const expired = issued.filter((i) => i.expiryDate && ms(i.expiryDate) <= t).length;
+  const byClass = [...new Set(input.instruments.map((i) => i.instrumentClass))].map((instrumentClass) => ({
+    instrumentClass, issued: issued.filter((i) => i.instrumentClass === instrumentClass).length,
+    pending: input.instruments.filter((i) => i.instrumentClass === instrumentClass && (i.status === 'APPLIED' || i.status === 'UNDER_REVIEW')).length,
+    suspended: input.instruments.filter((i) => i.instrumentClass === instrumentClass && i.status === 'SUSPENDED').length,
+  })).sort((a, b) => b.issued - a.issued);
+  const applied = input.instruments.filter((i) => i.status === 'APPLIED' || i.status === 'UNDER_REVIEW');
+  const waits = applied.map((i) => (i.appliedDate ? (t - ms(i.appliedDate)) / DAY_MS : 0));
+  const openObl = input.obligations.filter((o) => o.status === 'OPEN');
+  const overdueObl = openObl.filter((o) => o.dueAt && ms(o.dueAt) < t);
+  const oblByKind = [...new Set(input.obligations.map((o) => o.kind))].map((kind) => ({ kind, open: openObl.filter((o) => o.kind === kind).length, overdue: overdueObl.filter((o) => o.kind === kind).length })).sort((a, b) => b.open - a.open);
+  const decided = input.icpReviews.filter((r) => r.requestedAt && r.decidedAt && (r.status === 'CLEARED' || r.status === 'REJECTED'));
+  const clearance = decided.filter((r) => r.status === 'CLEARED').map((r) => (ms(r.decidedAt) - ms(r.requestedAt)) / DAY_MS);
+  const bands = [['1–2', 1, 2], ['2–3', 2, 3], ['3–4', 3, 4], ['4–5', 4, 5.01]] as const;
+  const rated = input.ratings.filter((r) => r > 0);
+  // a renewal is on time when the next cycle under the same scheme starts no later than the day the previous one ends
+  const keyed = new Map<string, DirectoryExtrasInput['cycles']>();
+  for (const c of input.cycles) { const k = `${c.companyId}|${c.category}`; const l = keyed.get(k); if (l) l.push(c); else keyed.set(k, [c]); }
+  let renewals = 0; let onTime = 0;
+  for (const list of keyed.values()) {
+    const sorted = [...list].sort((a, b) => a.cycleNo - b.cycleNo);
+    for (let i = 1; i < sorted.length; i += 1) { const prev = sorted[i - 1]; const next = sorted[i]; if (!prev.endsOn || !next.startsOn) continue; renewals += 1; if (ms(next.startsOn) <= ms(prev.endsOn) + DAY_MS) onTime += 1; }
+  }
+  return {
+    expiries: { d30: within(30), d60: within(60), d90: within(90), expired },
+    byClass,
+    applications: { pending: applied.length, applied: input.instruments.filter((i) => i.status === 'APPLIED').length, underReview: input.instruments.filter((i) => i.status === 'UNDER_REVIEW').length, oldestDays: waits.length ? Math.round(Math.max(...waits)) : 0, avgDays: waits.length ? Math.round(waits.reduce((s, x) => s + x, 0) / waits.length) : 0 },
+    obligations: { open: openObl.length, overdue: overdueObl.length, byKind: oblByKind },
+    securityReviewsDetail: {
+      submitted: input.icpReviews.filter((r) => r.status === 'SUBMITTED').length, cleared12m: decided.filter((r) => r.status === 'CLEARED' && ms(r.decidedAt) >= yearAgo).length,
+      rejected12m: decided.filter((r) => r.status === 'REJECTED' && ms(r.decidedAt) >= yearAgo).length,
+      avgClearanceDays: clearance.length ? Math.round(clearance.reduce((s, x) => s + x, 0) / clearance.length) : null,
+    },
+    ratingBands: bands.map(([band, lo, hi]) => ({ band, total: rated.filter((r) => r >= lo && r < hi).length })),
+    renewalStats: { total: renewals, onTime, onTimePct: renewals ? Math.round((onTime / renewals) * 100) : null },
+    issued12m: input.instruments.filter((i) => i.issueDate && ms(i.issueDate) >= yearAgo).length,
+  };
+}

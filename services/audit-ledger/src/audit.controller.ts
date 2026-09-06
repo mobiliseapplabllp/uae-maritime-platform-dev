@@ -34,11 +34,25 @@ export class AuditController {
     const span = await this.pool.query<{ n: string; oldest: Date | null; newest: Date | null }>('SELECT count(*) AS n, min(at) AS oldest, max(at) AS newest FROM audit_entries');
     return { anchor: await anchorOf(this.pool), entries: Number(span.rows[0].n), oldestAt: span.rows[0].oldest ? new Date(span.rows[0].oldest).toISOString() : null, newestAt: span.rows[0].newest ? new Date(span.rows[0].newest).toISOString() : null };
   }
+  /** The ledger at a glance: totals, the busiest actions and services, and the last fourteen days day by day. */
   @RequirePerm('audit.view') @Get('summary')
   async summary() {
-    const r = await this.pool.query<{ action: string; n: string }>('SELECT action, count(*) AS n FROM audit_entries GROUP BY action ORDER BY n DESC LIMIT 20');
-    const t = await this.pool.query<{ n: string; first: Date | null; last: Date | null }>('SELECT count(*) AS n, min(at) AS first, max(at) AS last FROM audit_entries');
-    return { total: Number(t.rows[0].n), first: t.rows[0].first, last: t.rows[0].last, byAction: r.rows.map((x) => ({ action: x.action, count: Number(x.n) })) };
+    const [r, t, days, services, actors] = await Promise.all([
+      this.pool.query<{ action: string; n: string }>('SELECT action, count(*) AS n FROM audit_entries GROUP BY action ORDER BY n DESC LIMIT 20'),
+      this.pool.query<{ n: string; first: Date | null; last: Date | null }>('SELECT count(*) AS n, min(at) AS first, max(at) AS last FROM audit_entries'),
+      this.pool.query<{ day: string; n: string; logins: string; actors: string }>(
+        `SELECT to_char(date_trunc('day', at), 'YYYY-MM-DD') AS day, count(*) AS n, count(*) FILTER (WHERE action = 'LOGIN') AS logins, count(DISTINCT actor_id) FILTER (WHERE actor_kind = 'user') AS actors
+           FROM audit_entries WHERE at >= now() - interval '14 days' GROUP BY 1 ORDER BY 1`),
+      this.pool.query<{ service: string; n: string }>('SELECT service, count(*) AS n FROM audit_entries GROUP BY service ORDER BY n DESC LIMIT 12'),
+      this.pool.query<{ n: string; last24h: string; last7d: string }>(
+        `SELECT count(DISTINCT actor_id) FILTER (WHERE actor_kind = 'user' AND at >= now() - interval '7 days') AS n, count(*) FILTER (WHERE at >= now() - interval '24 hours') AS last24h, count(*) FILTER (WHERE at >= now() - interval '7 days') AS last7d FROM audit_entries`),
+    ]);
+    return {
+      total: Number(t.rows[0].n), first: t.rows[0].first, last: t.rows[0].last, byAction: r.rows.map((x) => ({ action: x.action, count: Number(x.n) })),
+      byDay: days.rows.map((d) => ({ day: d.day, events: Number(d.n), logins: Number(d.logins), actors: Number(d.actors) })),
+      byService: services.rows.map((x) => ({ service: x.service, count: Number(x.n) })),
+      last24h: Number(actors.rows[0].last24h), last7d: Number(actors.rows[0].last7d), activeActors7d: Number(actors.rows[0].n),
+    };
   }
   @RequirePerm('audit.view') @Get(':id')
   async get(@Param('id') id: string) { const r = await this.pool.query<Row>('SELECT * FROM audit_entries WHERE event_id::text = $1 OR seq::text = $1', [id]); if (!r.rows[0]) throw notFound('Audit entry not found'); return toApi(r.rows[0]); }
