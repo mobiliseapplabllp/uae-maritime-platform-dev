@@ -24,13 +24,14 @@ export interface Operation { key: string; summary: string; method: 'GET' | 'POST
 export interface Adapter {
   key: string; name: string; nameAr?: string | null; counterpart: string; kind: 'system' | 'custom'; protocol: 'rest' | 'soap'; description: string; reference: string | null;
   mode: 'stub' | 'live'; enabled: boolean; baseUrl: string | null; defaultBaseUrl: string | null; contractVersion: string; timeoutMs: number; maxAttempts: number;
-  auth: { type: AuthType; header?: string }; secrets: Record<string, boolean>; headers: Record<string, string>; healthPath: string; schedule: { pollMinutes?: number | null };
+  auth: { type: AuthType; header?: string }; secrets: Record<string, boolean>; headers: Record<string, string>; healthPath: string; schedule: { pollMinutes?: number | null; boundingBoxes?: [number, number][][]; classB?: boolean };
   inbound: { enabled: boolean; secretSet: boolean }; operations: Operation[]; updatedAt: string | null; updatedBy: string | null;
   last24h: { calls: number; failed: number; dead: number; latencyP95: number | null; lastCallAt: string | null; inbound: number; lastInboundAt: string | null }; openDeadLetters: number;
   certification: { passed: number; operations: number; certifiedAt: string } | null;
 }
 export interface CallRow { id: string; operation: string; status: string; mode: string; httpStatus: number | null; attempts: number; durationMs: number | null; error: string | null; correlationId: string | null; startedAt: string }
-export interface AdapterDetail extends Adapter { inboundUrl: string; recentCalls: CallRow[]; certifications: { contractVersion: string; operations: number; passed: number; certifiedAt: string }[]; recentInbound: { id: string; deliveryId: string; eventType: string; payload: unknown; receivedAt: string }[] }
+export interface StreamStats { running: boolean; connected: boolean; connectedAt: string | null; lastMessageAt: string | null; messages: number; positions: number; statics: number; targets: number; reconnects: number; lastError: string; boxes: number }
+export interface AdapterDetail extends Adapter { stream?: StreamStats | null; inboundUrl: string; recentCalls: CallRow[]; certifications: { contractVersion: string; operations: number; passed: number; certifiedAt: string }[]; recentInbound: { id: string; deliveryId: string; eventType: string; payload: unknown; receivedAt: string }[] }
 interface DeadLetter { id: string; adapter: string; operation: string; error: string | null; attempts: number; createdAt: string; replayedAt: string | null }
 interface TestOutcome { mode: string; ok: boolean; httpStatus: number | null; durationMs: number; detail: string; target: string | null }
 
@@ -131,7 +132,7 @@ function AdapterDrawer({ keyName, canManage, onClose, onChanged }: { keyName: st
   const load = useCallback(() => Promise.all([api.get<AdapterDetail>(`/integrations/${keyName}`), api.get<DeadLetter[]>('/integrations/dead-letters', { params: { open: 'true' }, headers: { 'X-Quiet': '1' } }).catch(() => ({ data: [] as DeadLetter[] }))])
     .then(([r, dl]) => {
       const a = r.data; setD(a); setDead(dl.data.filter((x) => x.adapter === keyName));
-      setForm({ name: a.name, nameAr: a.nameAr ?? '', counterpart: a.counterpart, description: a.description, mode: a.mode, baseUrl: a.baseUrl ?? '', enabled: a.enabled, timeoutMs: a.timeoutMs, maxAttempts: a.maxAttempts, healthPath: a.healthPath, authType: a.auth.type, authHeader: a.auth.header ?? '', pollMinutes: a.schedule?.pollMinutes ?? '' });
+      setForm({ name: a.name, nameAr: a.nameAr ?? '', counterpart: a.counterpart, description: a.description, mode: a.mode, baseUrl: a.baseUrl ?? '', enabled: a.enabled, timeoutMs: a.timeoutMs, maxAttempts: a.maxAttempts, healthPath: a.healthPath, authType: a.auth.type, authHeader: a.auth.header ?? '', pollMinutes: a.schedule?.pollMinutes ?? '', boundingBoxes: a.schedule?.boundingBoxes ? JSON.stringify(a.schedule.boundingBoxes) : '', classB: !!a.schedule?.classB });
       setEntered({}); setHeaders(toRows(a.headers)); setOps(a.operations.map((o) => ({ ...o }))); if (!invokeOp && a.operations[0]) setInvokeOp(a.operations[0].key);
     }).catch(err), [keyName, err]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
@@ -143,6 +144,12 @@ function AdapterDrawer({ keyName, canManage, onClose, onChanged }: { keyName: st
       auth: { type: form.authType as AuthType, ...(form.authType === 'apiKey' && form.authHeader ? { header: form.authHeader } : {}) }, headers: fromRows(headers),
       schedule: { pollMinutes: form.pollMinutes === '' ? null : Number(form.pollMinutes) },
     };
+    // the AIS stream's own knobs: the boxes of sea it subscribes to, and whether small craft (class B) come too
+    if (d?.key === 'ais-lrit') {
+      const boxes = parseJson(String(form.boundingBoxes ?? ''));
+      (out.schedule as Record<string, unknown>).boundingBoxes = Array.isArray(boxes.value) ? boxes.value : undefined;
+      (out.schedule as Record<string, unknown>).classB = !!form.classB;
+    }
     if (Object.keys(entered).length) out.secrets = entered;
     // the address travels only when it was edited: a stub address is the adapter's own and is not re-validated on every save
     if ((form.baseUrl ?? '') !== (d?.baseUrl ?? '')) out.baseUrl = form.baseUrl ? form.baseUrl : null;
@@ -204,6 +211,23 @@ function AdapterDrawer({ keyName, canManage, onClose, onChanged }: { keyName: st
                 <Grid item xs={6} sm={4}><TextField fullWidth size="small" type="number" label="Attempts" value={form.maxAttempts ?? 3} onChange={(e) => set('maxAttempts', e.target.value)} disabled={ro} inputProps={{ min: 1, max: 10 }} /></Grid>
                 <Grid item xs={12} sm={6}><TextField fullWidth size="small" label="Health path" value={form.healthPath ?? ''} onChange={(e) => set('healthPath', e.target.value)} disabled={ro} placeholder="/health" helperText="What 'Test connection' asks of a live counterpart" /></Grid>
                 <Grid item xs={12} sm={6}><TextField fullWidth size="small" type="number" label="Poll every (minutes)" value={form.pollMinutes ?? ''} onChange={(e) => set('pollMinutes', e.target.value)} disabled={ro} inputProps={{ min: 1, max: 1440 }} helperText="For a feed the scheduler reads; blank when the counterpart is only called on demand" /></Grid>
+                {d.key === 'ais-lrit' && <>
+                  <Grid item xs={12}><Divider><Typography variant="caption">The stream</Typography></Divider></Grid>
+                  <Grid item xs={12} sm={8}><TextField fullWidth size="small" label="Boxes of sea to subscribe to" value={form.boundingBoxes ?? ''} onChange={(e) => set('boundingBoxes', e.target.value)} disabled={ro} placeholder="[[[5,42],[32,80]]]" helperText={`[[south, west], [north, east]] per box, degrees; empty subscribes to the Gulf, the Gulf of Oman and the Arabian Sea${form.boundingBoxes && parseJson(String(form.boundingBoxes)).error ? ' — not valid JSON' : ''}`} error={!!form.boundingBoxes && !!parseJson(String(form.boundingBoxes)).error} inputProps={{ 'data-testid': 'stream-boxes' }} /></Grid>
+                  <Grid item xs={12} sm={4}><FormControlLabel control={<Switch checked={!!form.classB} onChange={(e) => set('classB', e.target.checked)} disabled={ro} />} label="Include small craft (class B)" /></Grid>
+                  {d.stream && (
+                    <Grid item xs={12}>
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center" data-testid="stream-status">
+                        <Chip size="small" color={d.stream.connected ? 'success' : 'warning'} label={d.stream.connected ? `Connected since ${fmtDT(d.stream.connectedAt ?? '')}` : d.stream.running ? 'Reconnecting' : 'Stopped'} />
+                        <Chip size="small" variant="outlined" label={`${d.stream.targets.toLocaleString('en-GB')} ships in the buffer`} />
+                        <Chip size="small" variant="outlined" label={`${d.stream.messages.toLocaleString('en-GB')} messages · ${d.stream.reconnects} reconnects`} />
+                        {d.stream.lastMessageAt && <Chip size="small" variant="outlined" label={`last ${fromNow(d.stream.lastMessageAt)}`} />}
+                        {d.stream.lastError && <Chip size="small" color="error" label={d.stream.lastError} />}
+                      </Stack>
+                    </Grid>
+                  )}
+                  {!d.stream && form.mode === 'live' && <Grid item xs={12}><Typography variant="caption" color="text.secondary">Live with a websocket address and an API key, the hub holds the stream open and answers the track store from its buffer; save, then Test connection.</Typography></Grid>}
+                </>}
                 <Grid item xs={12}><Divider><Typography variant="caption">Authentication</Typography></Divider></Grid>
                 <Grid item xs={12} sm={5}>
                   <TextField select fullWidth size="small" label="Type" value={form.authType ?? 'none'} onChange={(e) => { set('authType', e.target.value); setEntered({}); }} disabled={ro} inputProps={{ 'data-testid': 'adapter-auth-type' }}>

@@ -63,12 +63,12 @@ export default function VesselCard({ target, trackShown, onClose, onTrack, onFol
   );
 
   return (
-    <Card data-testid="vessel-card" aria-live="polite" sx={{ width: 380, maxWidth: 'calc(100vw - 32px)', overflow: 'hidden', boxShadow: 8 }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, py: 1 }}>
+    <Card data-testid="vessel-card" aria-live="polite" sx={{ width: 380, maxWidth: 'calc(100vw - 32px)', overflow: 'hidden', boxShadow: 8, flex: '0 0 auto' }}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ px: 1.5, pt: 1.25, pb: 1 }}>
         <Box sx={{ width: 28, height: 28, borderRadius: '7px', bgcolor: CATEGORY_COLOR[target.category], flexShrink: 0 }} aria-hidden />
         {flag && <Tooltip title={countryName(target.flag)}><Typography component="span" sx={{ fontSize: 20, lineHeight: 1 }} aria-label={countryName(target.flag)}>{flag}</Typography></Tooltip>}
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 800, fontFamily: 'Archivo', fontSize: 18, lineHeight: 1.1, textTransform: 'uppercase' }} noWrap>{target.name}</Typography>
+          <Typography sx={{ fontWeight: 800, fontFamily: 'Archivo', fontSize: 18, lineHeight: 1.3, textTransform: 'uppercase' }} noWrap>{target.name}</Typography>
           <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block' }}>{target.typeLabel || CATEGORY_LABEL[target.category]}{target.registered ? ' · on the register' : ''}</Typography>
         </Box>
         <IconButton size="small" onClick={onClose} aria-label="Close"><CloseRoundedIcon fontSize="small" /></IconButton>
@@ -94,8 +94,8 @@ export default function VesselCard({ target, trackShown, onClose, onTrack, onFol
           <Box sx={{ position: 'absolute', left: 0, top: 1, width: 12, height: 12, borderRadius: '50%', bgcolor: 'primary.main' }} />
           <Box sx={{ position: 'absolute', right: 0, top: 0, width: 0, height: 0, borderTop: '7px solid transparent', borderBottom: '7px solid transparent', borderLeft: '14px solid', borderLeftColor: 'primary.main' }} />
         </Box>
-        <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-          <Button size="small" variant={trackShown ? 'contained' : 'outlined'} color="inherit" startIcon={<TimelineRoundedIcon />} onClick={onTrack} data-testid="card-track">{trackShown ? 'Hide track' : 'Past track'}</Button>
+        <Stack direction="row" spacing={1} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap alignItems="center">
+          <Button size="small" variant={trackShown ? 'contained' : 'outlined'} color="inherit" startIcon={<TimelineRoundedIcon />} onClick={onTrack} data-testid="card-track" sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{trackShown ? 'Hide track' : 'Past track'}</Button>
           {voyage?.vcn && <Chip size="small" variant="outlined" label={`Call ${voyage.vcn}${voyage.status ? ` · ${voyage.status}` : ''}`} />}
         </Stack>
       </Box>

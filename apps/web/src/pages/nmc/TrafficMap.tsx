@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Box, Button, Chip, Divider, FormControlLabel, IconButton, InputAdornment, List, ListItemButton, ListItemText, Paper, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, Divider, FormControlLabel, IconButton, InputAdornment, List, ListItem, ListItemButton, ListItemText, Paper, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField, Tooltip, Typography } from '@mui/material';
 import RadarRoundedIcon from '@mui/icons-material/RadarRounded';
 import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import FullscreenRoundedIcon from '@mui/icons-material/FullscreenRounded';
@@ -146,17 +146,30 @@ export default function TrafficMap() {
     }
   }, [layers, showAreas]);
   useEffect(() => {
-    const g = groups.current; if (!g) return;
+    const g = groups.current; const m = map.current; if (!g || !m) return;
     g.incidents.clearLayers();
     if (!showIncidents) return;
+    // cases within a marker's width of each other share one marker: two touch targets on top of each other are neither
+    const placed: { x: number; y: number; cases: OpenIncident[]; lat: number; lon: number }[] = [];
     for (const i of openCases) {
       const lat = i.position?.lat ?? i.location?.lat; const lon = i.position?.lon ?? i.location?.lon;
       if (lat == null || lon == null) continue;
-      const hot = ['HIGH', 'CRITICAL'].includes(i.severity); const c = hot ? '#A33229' : i.severity === 'MEDIUM' ? '#9C6412' : '#4A6472';
-      L.marker([lat, lon], { icon: L.divIcon({ className: 'maritime-incident', html: `<svg width="22" height="22" viewBox="-11 -11 22 22" aria-hidden><path d="M0,-8 L8,6 L-8,6 Z" fill="${hot ? c + '33' : 'none'}" stroke="${c}" stroke-width="2.2" stroke-linejoin="round"/><circle cy="2" r="1.4" fill="${c}"/></svg>`, iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: true, alt: `Open incident ${i.number}` })
-        .bindTooltip(`${i.number} — ${i.severity}`).on('click', () => navigate(`/incidents/${i.id}`)).addTo(g.incidents);
+      const pt = m.latLngToContainerPoint([lat, lon]);
+      const near = placed.find((p) => Math.hypot(p.x - pt.x, p.y - pt.y) < 32);
+      if (near) near.cases.push(i); else placed.push({ x: pt.x, y: pt.y, cases: [i], lat, lon });
     }
-  }, [openCases, showIncidents, navigate]);
+    for (const p of placed) {
+      const top = p.cases.reduce((a, b) => (['HIGH', 'CRITICAL'].includes(b.severity) && !['HIGH', 'CRITICAL'].includes(a.severity) ? b : a), p.cases[0]);
+      const hot = ['HIGH', 'CRITICAL'].includes(top.severity); const c = hot ? '#A33229' : top.severity === 'MEDIUM' ? '#9C6412' : '#4A6472';
+      const many = p.cases.length > 1;
+      const label = many ? `${p.cases.length} open incidents here: ${p.cases.map((x) => x.number).join(', ')}` : `Open incident ${top.number}, ${top.severity.toLowerCase()} severity`;
+      const badge = many ? `<circle cx="9" cy="-9" r="7" fill="${c}"/><text x="9" y="-6" text-anchor="middle" font-size="9" font-weight="700" fill="#fff" font-family="Public Sans, sans-serif">${p.cases.length}</text>` : '';
+      const marker = L.marker([p.lat, p.lon], { icon: L.divIcon({ className: 'maritime-incident', html: `<svg width="28" height="28" viewBox="-14 -14 28 28" aria-hidden><path d="M0,-9 L9,7 L-9,7 Z" fill="${hot ? c + '33' : 'none'}" stroke="${c}" stroke-width="2.4" stroke-linejoin="round"/><circle cy="2.5" r="1.6" fill="${c}"/>${badge}</svg>`, iconSize: [28, 28], iconAnchor: [14, 14] }), keyboard: true, alt: label })
+        .bindTooltip(many ? p.cases.map((x) => `${x.number} — ${x.severity}`).join('<br/>') : `${top.number} — ${top.severity}`)
+        .on('click', () => navigate(many ? '/incidents?open=true' : `/incidents/${top.id}`)).addTo(g.incidents);
+      marker.getElement()?.setAttribute('aria-label', label);
+    }
+  }, [openCases, showIncidents, navigate, zoom]);
   useEffect(() => { layer.current?.setState({ hidden }); loadTargets(); }, [hidden]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const on = () => { const f = document.fullscreenElement === stage.current; setFull(f); setTimeout(() => map.current?.invalidateSize(), 50); };
@@ -205,10 +218,10 @@ export default function TrafficMap() {
             {results.length > 0 && (
               <List dense disablePadding data-testid="traffic-search-results" sx={{ maxHeight: 260, overflowY: 'auto' }}>
                 {results.map((t) => (
-                  <ListItemButton key={t.mmsi} onClick={() => centreOn(t)}>
+                  <ListItem key={t.mmsi} disablePadding><ListItemButton onClick={() => centreOn(t)}>
                     <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: CATEGORY_COLOR[t.category], mr: 1, flexShrink: 0 }} aria-hidden />
                     <ListItemText primary={`${flagEmoji(t.flag)} ${t.name}`} secondary={`${t.typeLabel} · ${navLabel(t.navStatus)} · ${ageWords(t.receivedAt)}${t.registered ? ' · on the register' : ''}`} primaryTypographyProps={{ noWrap: true, fontWeight: 600, fontSize: 13 }} secondaryTypographyProps={{ noWrap: true, fontSize: 11 }} />
-                  </ListItemButton>
+                  </ListItemButton></ListItem>
                 ))}
               </List>
             )}
@@ -237,10 +250,10 @@ export default function TrafficMap() {
         <Tooltip title={`Back to ${home.name}`}><IconButton aria-label={`Back to ${home.name}`} onClick={() => map.current?.setView([home.lat, home.lon], 9)} sx={{ position: 'absolute', left: 12, top: 90, zIndex: 1000, bgcolor: 'background.paper', boxShadow: 2, '&:hover': { bgcolor: 'background.paper' } }} size="small"><HomeRoundedIcon fontSize="small" /></IconButton></Tooltip>
 
         {/* the card and the side panel — right */}
-        <Stack spacing={1} sx={{ position: 'absolute', top: 12, right: 12, zIndex: 1000, alignItems: 'flex-end', maxHeight: 'calc(100% - 24px)' }}>
+        <Stack spacing={1} sx={{ position: 'absolute', top: 12, right: 12, bottom: 12, zIndex: 1000, alignItems: 'flex-end', overflowY: 'auto', overflowX: 'hidden', pr: 0.25, '&::-webkit-scrollbar': { width: 6 } }}>
           {selected && <VesselCard target={selected} trackShown={!!track} onClose={() => select(null)} onTrack={toggleTrack} onFollow={onFollow} />}
           {track && <Chip size="small" label={`Track: ${track.summary.fixes} fixes · ${track.summary.distanceNm} nm · max ${track.summary.maxSpeedKn} kn over ${track.hours} h`} sx={{ bgcolor: 'background.paper' }} data-testid="track-summary" />}
-          <Paper elevation={4} sx={{ width: panelOpen ? 320 : 'auto', maxWidth: 'calc(100vw - 24px)', display: 'flex', flexDirection: 'column', maxHeight: selected ? 'calc(100vh - 560px)' : 'calc(100% - 12px)', minHeight: panelOpen ? 160 : 0 }} data-testid="traffic-side-panel">
+          <Paper elevation={4} sx={{ width: panelOpen ? 320 : 'auto', maxWidth: 'calc(100vw - 24px)', display: 'flex', flexDirection: 'column', flex: '0 0 auto', maxHeight: selected ? 280 : '100%', minHeight: panelOpen ? 120 : 0 }} data-testid="traffic-side-panel">
             <Stack direction="row" alignItems="center">
               <IconButton size="small" onClick={() => setPanelOpen((o) => !o)} aria-label={panelOpen ? 'Collapse the side panel' : 'Open the side panel'} aria-expanded={panelOpen}>{panelOpen ? <ChevronRightRoundedIcon fontSize="small" /> : <ChevronLeftRoundedIcon fontSize="small" />}</IconButton>
               {panelOpen && <Tabs value={panel} onChange={(_, v) => setPanel(v)} sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0.5, fontSize: 12 } }}><Tab value="alerts" label={`Alerts (${alerts.length})`} /><Tab value="fleet" label={`My fleet (${watch.length})`} /></Tabs>}
@@ -269,12 +282,12 @@ export default function TrafficMap() {
             {panelOpen && panel === 'fleet' && (
               <List dense sx={{ overflowY: 'auto', py: 0 }} aria-label="My fleet" data-testid="my-fleet">
                 {watch.map((w) => (
-                  <ListItemButton key={w.mmsi} onClick={() => { if (w.target) centreOn(w.target); }}>
+                  <ListItem key={w.mmsi} disablePadding><ListItemButton onClick={() => { if (w.target) centreOn(w.target); }}>
                     <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: w.target ? CATEGORY_COLOR[w.target.category] : '#8A96A3', mr: 1, flexShrink: 0 }} aria-hidden />
                     <ListItemText primary={`${flagEmoji(w.target?.flag)} ${w.name}`} secondary={w.target ? `${navLabel(w.target.navStatus)} · ${w.target.sog.toFixed(1)} kn · ${ageWords(w.target.receivedAt)}` : 'No position held'} primaryTypographyProps={{ noWrap: true, fontWeight: 600, fontSize: 13 }} secondaryTypographyProps={{ noWrap: true, fontSize: 11 }} />
-                  </ListItemButton>
+                  </ListItemButton></ListItem>
                 ))}
-                {watch.length === 0 && <Typography color="text.secondary" variant="body2" sx={{ p: 2, textAlign: 'center' }}>Add a ship to your fleet from her card</Typography>}
+                {watch.length === 0 && <ListItem><Typography color="text.secondary" variant="body2" sx={{ p: 1, textAlign: 'center', width: '100%' }}>Add a ship to your fleet from her card</Typography></ListItem>}
               </List>
             )}
           </Paper>

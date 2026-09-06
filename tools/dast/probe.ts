@@ -500,6 +500,24 @@ async function main() {
     const list = await http('/integrations', { token: agent.token });
     return list.status === 403 ? null : `an external agent could read the integration registry (${list.status})`;
   });
+  await probe('the traffic picture is the watch\'s to see, and a person\'s fleet is nobody else\'s', 'A01', 'medium', async () => {
+    const agent = await login('agent@maritime.example');
+    const picture = await http('/tracking/targets?minLat=20&maxLat=30&minLon=50&maxLon=60', { token: agent.token });
+    if (picture.status !== 403) return `an external agent could read the traffic picture (${picture.status})`;
+    const nmc = await login('nmc@maritime.example');
+    const targets: any[] = (await http('/tracking/targets?minLat=20&maxLat=30&minLon=50&maxLon=60&limit=50', { token: nmc.token })).body?.data?.targets ?? [];
+    if (!targets.length) return 'SKIP: no target on the picture';
+    const key = targets[0].mmsi;
+    const follow = await http('/tracking/watch', { method: 'POST', body: JSON.stringify({ key }), token: nmc.token });
+    if (follow.status !== 201) return `the watch could not follow a ship (${follow.status})`;
+    const admin = await login('admin@maritime.example');
+    const theirs: any[] = (await http('/tracking/watch', { token: admin.token })).body?.data ?? [];
+    await http(`/tracking/watch/${encodeURIComponent(key)}`, { method: 'DELETE', token: nmc.token });
+    if (theirs.some((w) => w.mmsi === key)) return 'one person\'s fleet was listed to another';
+    const injected = await http(`/tracking/targets/search?q=${encodeURIComponent("' OR 1=1 --")}`, { token: nmc.token });
+    if (injected.status !== 200 || (injected.body?.data ?? []).length) return `a search for an injection string returned ${injected.status} with ${(injected.body?.data ?? []).length} rows`;
+    return null;
+  });
   await probe('the federal security review is the security desk\'s to start, and a facility\'s history is not everyone\'s to read', 'A01', 'high', async () => {
     const admin = await login('admin@maritime.example');
     const all: any[] = (await http('/facilities/port-facilities?limit=100&sort=code', { token: admin.token })).body?.data ?? [];

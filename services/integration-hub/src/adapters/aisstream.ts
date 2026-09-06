@@ -10,6 +10,11 @@
  * ship not heard from for six hours is forgotten. Nothing here is a vendor secret: the protocol is the public one the
  * counterpart documents, read as strings and numbers with a default for every field it might leave out. */
 
+import { timingSafeEqual } from 'node:crypto';
+
+/** Two keys compared in constant time, as any secret is. */
+const sameSecret = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+
 export interface StreamConfig {
   url: string;
   apiKey: string;
@@ -65,7 +70,7 @@ export class AisStreamCollector {
 
   /** The same stream with a new key or new boxes: reconnect; anything else is a no-op. */
   configure(cfg: StreamConfig) {
-    const changed = cfg.url !== this.cfg.url || cfg.apiKey !== this.cfg.apiKey || JSON.stringify(cfg.boundingBoxes) !== JSON.stringify(this.cfg.boundingBoxes) || !!cfg.classB !== !!this.cfg.classB;
+    const changed = cfg.url !== this.cfg.url || !sameSecret(cfg.apiKey, this.cfg.apiKey) || JSON.stringify(cfg.boundingBoxes) !== JSON.stringify(this.cfg.boundingBoxes) || !!cfg.classB !== !!this.cfg.classB;
     this.cfg = cfg; this.stats.boxes = cfg.boundingBoxes.length;
     if (changed && this.running) { this.closeSocket(); this.connect(); }
   }

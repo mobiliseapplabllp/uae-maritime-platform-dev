@@ -83,6 +83,13 @@ pnpm e2e                                   # Playwright drives + parity diffs
   each saying who reads it. Service tests pin `MDM_URL: 'http://127.0.0.1:1'` so the seeded
   fallbacks apply, or stand up a small settings server when the test changes a value; the client
   caches for thirty seconds, so a test that changes a value invalidates the key.
+- The traffic picture (`/nmc/map`) draws real map tiles and every ship the AIS feed reports; the feed's
+  live counterpart is a websocket stream held by the integration hub (`ais-lrit`, aisstream.io by
+  default, key and boxes of sea in Settings → Integrations) and answered to the track store as the
+  `positions` operation. Ships not on our register are traffic only: no case file, no derived alert,
+  no record, a drawn silhouette rather than a photograph. Tile and stream hosts are unreachable from
+  the sandbox's egress proxy — prove them with the fake counterpart in `test/aisstream.test.ts` and
+  drive the real thing on a machine with internet.
 
 ## Verification bar
 Before calling a change done: unit and contract tests green, integration tests on the native

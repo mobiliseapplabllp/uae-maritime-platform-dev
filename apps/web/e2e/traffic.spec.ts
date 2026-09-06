@@ -11,9 +11,11 @@ test.describe('live traffic', () => {
     await expect(page.getByRole('heading', { name: 'Live traffic picture' })).toBeVisible();
     await expect(page.getByTestId('traffic-legend')).toContainText('VESSEL TYPES');
     await expect(page.getByTestId('feed-status')).toBeVisible();
-    // the register's own fleet is on the picture: search one of its ships
+    // the feed is read so the register's own fleet is on the picture, then one of its ships is searched by her IMO
+    await page.getByTestId('feed-read').click();
+    await expect(page.getByText(/Feed read:/)).toBeVisible();
     const search = page.getByTestId('traffic-search').locator('input');
-    await search.fill('MV');
+    await search.fill('9725354');
     const results = page.getByTestId('traffic-search-results');
     await expect(results).toBeVisible();
     const first = results.getByRole('button').first();
@@ -21,9 +23,10 @@ test.describe('live traffic', () => {
     await first.click();
     const card = page.getByTestId('vessel-card');
     await expect(card).toBeVisible();
-    await expect(card).toContainText(name.toUpperCase().slice(0, 12));
+    await expect(card).toContainText(name.slice(0, 12));
     await expect(card).toContainText('Received:');
-    // follow her: the fleet tab lists her
+    // follow her: the fleet tab lists her (an earlier run may have left her followed — start from not)
+    if ((await page.getByTestId('card-follow').textContent())?.includes('In my fleet')) { await page.getByTestId('card-follow').click(); await expect(page.getByTestId('card-follow')).toContainText('Add to fleet'); }
     await page.getByTestId('card-follow').click();
     await expect(page.getByTestId('card-follow')).toContainText('In my fleet');
     await page.getByRole('tab', { name: /My fleet/ }).click();
