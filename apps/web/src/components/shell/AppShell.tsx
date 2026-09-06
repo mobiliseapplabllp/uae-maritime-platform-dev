@@ -203,12 +203,6 @@ export default function AppShell() {
             </ListItemButton>
           </Tooltip>
         )}
-        <Tooltip title={rail ? t('app.allApplications') : ''} placement="right">
-          <ListItemButton onClick={() => setLauncher(true)} sx={railSx}>
-            <ListItemIcon><AppsRoundedIcon sx={{ fontSize: 19 }} /></ListItemIcon>
-            {!rail && <ListItemText primary={t('app.allApplications')} primaryTypographyProps={{ fontSize: 13.5, fontWeight: 600 }} />}
-          </ListItemButton>
-        </Tooltip>
       </List>
       <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)' }} />
       <Tooltip title={rail ? `${user?.name ?? ''} — ${user?.role?.name ?? ''}` : ''} placement="right">

@@ -17,7 +17,6 @@ import CompaniesDashboard from '../src/pages/facilities/CompaniesDashboard';
 import ServiceDeskDashboard from '../src/pages/services/ServiceDeskDashboard';
 import ServiceCatalogue from '../src/pages/services/ServiceCatalogue';
 import ApplicationDetail from '../src/pages/services/ApplicationDetail';
-import ModuleStrip, { formatKpi } from '../src/components/dashboard/ModuleStrip';
 import { toneOf } from '../src/components/dashboard/kit';
 
 // recharts measures its container with ResizeObserver, which jsdom does not ship
@@ -131,23 +130,8 @@ describe('module dashboards', () => {
     expect(within(screen.getByTestId('panel-top')).getByText('Vessel NOC')).toBeTruthy();
     expect(screen.getByText('Applications open').parentElement?.textContent).toContain('43');
   });
-  it('the module strip shows a tile per module the reader may open, with formatted numbers', async () => {
-    mockGet({ '/dashboard/modules': ok({ modules: [{ key: 'ops', kpis: [{ label: 'In port', value: 9 }, { label: 'Avg wait, 30 d', value: 11.8, format: 'hours' }] }, { key: 'finance', kpis: [{ label: 'Outstanding', value: 4783779.5, format: 'money' }] }], generatedAt: '' }), '/platform/status': ok({ summary: { services: 23, servicesUp: 23, targets: 29, targetsUp: 29, openIncidents: 0, status: 'ok' }, targets: [] }) });
-    wrap(<ModuleStrip />);
-    await screen.findByTestId('strip-ops');
-    await waitFor(() => expect(screen.getByTestId('strip-ops').textContent).toContain('11.8 h'));
-    expect(screen.getByTestId('strip-finance').textContent).toMatch(/4\.8M|4\.78M/);
-    await waitFor(() => expect(screen.getByTestId('strip-platform').textContent).toContain('23'));
-    expect(formatKpi({ label: 'x', value: 12.5, format: 'pct' })).toBe('12.5%');
+  it('a yardstick grades a value against its target', () => {
     expect(toneOf(3, 4, false)).toBe('success'); expect(toneOf(4.5, 4, false)).toBe('warning'); expect(toneOf(20, 4, false)).toBe('error'); expect(toneOf(null, 4)).toBe('default');
-  });
-  it('the strip hides modules the reader may not open', async () => {
-    store.dispatch(setSession({ user: { ...adminUser, role: { id: 'r', name: 'Finance Officer', permissions: ['invoices.view', 'dashboard.view'] }, perms: ['invoices.view', 'dashboard.view'] }, token: 't', refreshToken: 'r' } as never));
-    mockGet({ '/dashboard/modules': ok({ modules: [], generatedAt: '' }) });
-    wrap(<ModuleStrip />);
-    await screen.findByTestId('strip-finance');
-    expect(screen.queryByTestId('strip-admin')).toBeNull(); expect(screen.queryByTestId('strip-ops')).toBeNull();
-    store.dispatch(setSession(admin));
   });
 });
 

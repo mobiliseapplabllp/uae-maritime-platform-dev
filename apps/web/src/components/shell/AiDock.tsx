@@ -16,7 +16,7 @@ import { MODULES } from '../../modules';
 export function moduleOfPath(pathname: string): { key: string; short: string } | null {
   let best: { key: string; short: string; len: number } | null = null;
   for (const m of MODULES) {
-    const paths = [m.home, ...m.nav.flatMap((n) => n.items.map((i) => i.to))];
+    const paths = [m.home, ...m.nav.filter((n) => !n.crossLinks).flatMap((n) => n.items.map((i) => i.to))];
     for (const p of paths) { if (p && p !== '/' && (pathname === p || pathname.startsWith(`${p}/`) || pathname.startsWith(`${p}?`)) && p.length > (best?.len ?? 0)) best = { key: m.key, short: m.short, len: p.length }; }
   }
   if (best) return { key: best.key, short: best.short };

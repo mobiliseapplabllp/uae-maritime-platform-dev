@@ -48,7 +48,8 @@ import SpeedRoundedIcon from '@mui/icons-material/SpeedRounded';
 import RuleRoundedIcon from '@mui/icons-material/RuleRounded';
 
 export interface NavItem { to: string; label: string; icon: SvgIconComponent; perm: string; end?: boolean }
-export interface NavGroup { header: string; items: NavItem[] }
+/** `crossLinks` marks a group that opens other modules; such links never decide which module a path belongs to. */
+export interface NavGroup { header: string; items: NavItem[]; crossLinks?: boolean }
 export interface ModuleDef { key: string; name: string; short: string; color: string; desc: string; icon: SvgIconComponent; perm: string; home: string; nav: NavGroup[] }
 
 export const MODULES: ModuleDef[] = [
@@ -158,6 +159,9 @@ export const MODULES: ModuleDef[] = [
     ] }] },
 ];
 
+/** The Command Centre's side menu also lists every module dashboard, so the home module reaches each of them in one click. */
+MODULES[0].nav.push({ header: 'Module dashboards', crossLinks: true, items: MODULES.filter((m) => m.key !== 'home').map((m) => ({ to: m.home, label: m.name, icon: m.icon, perm: m.perm, end: true })) });
+
 export { HealthAndSafetyRoundedIcon };
 
 // every module carries its own settings page, looped back into behaviour
@@ -170,7 +174,7 @@ const FALLBACK: [string, string][] = [['/vessels', 'ships'], ['/seafarers', 'cre
 export const moduleOf = (pathname: string): ModuleDef => {
   if (pathname === '/') return MODULES[0];
   let best: { m: ModuleDef; len: number } | null = null;
-  for (const m of MODULES) for (const g of m.nav) for (const item of g.items) {
+  for (const m of MODULES) for (const g of m.nav) for (const item of g.crossLinks ? [] : g.items) {
     if (item.to !== '/' && pathname.startsWith(item.to) && (!best || item.to.length > best.len)) best = { m, len: item.to.length };
   }
   if (!best) { const hit = FALLBACK.find(([p]) => pathname.startsWith(p)); if (hit) return MODULES.find((m) => m.key === hit[1]) || MODULES[0]; }

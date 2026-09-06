@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { login, expectAccessible } from './helpers';
 
 /* The module dashboards: every module opens on one, each draws its yardsticks and charts from live data, and the
- * Command Centre carries a tile for each with a number and a link. */
+ * Command Centre's side menu lists each of them. */
 const DASHBOARDS: { path: string; testId: string; yardstick: string; chart: string }[] = [
   { path: '/ops/overview', testId: 'harbour-dashboard', yardstick: 'yard-waiting', chart: 'chart-months' },
   { path: '/invoices/overview', testId: 'revenue-dashboard', yardstick: 'yard-dso', chart: 'chart-months' },
@@ -14,16 +14,35 @@ const DASHBOARDS: { path: string; testId: string; yardstick: string; chart: stri
 ];
 
 test.describe('module dashboards', () => {
-  test('the Command Centre carries a tile per module, with numbers, and each opens the module dashboard', async ({ page }) => {
+  test('the Command Centre\'s side menu lists every module dashboard, and each link opens it', async ({ page }) => {
     await login(page);
-    const strip = page.getByTestId('module-strip');
-    await expect(strip).toBeVisible();
-    for (const key of ['ops', 'ships', 'crew', 'legis', 'incidents', 'inspect', 'facil', 'services', 'finance', 'mis', 'masters', 'agents', 'platform', 'admin']) await expect(page.getByTestId(`strip-${key}`)).toBeVisible();
-    // the harbour tile carries the vessels in port, and opens the harbour dashboard
-    await expect(page.getByTestId('strip-ops')).toContainText('In port', { timeout: 15_000 });
-    await page.getByTestId('strip-finance').click();
-    await expect(page).toHaveURL(/\/invoices\/overview$/);
-    await expect(page.getByTestId('revenue-dashboard')).toBeVisible({ timeout: 20_000 });
+    const nav = page.getByRole('navigation').first();
+    await expect(nav.getByText('Module dashboards')).toBeVisible({ timeout: 15_000 });
+    for (const name of ['Harbour Operations', 'Incident Desk', 'Revenue & Billing', 'Administration']) await expect(nav.getByRole('link', { name })).toBeVisible();
+    await nav.getByRole('link', { name: 'Harbour Operations' }).click();
+    await expect(page).toHaveURL(/\/ops\/overview$/);
+    await expect(page.getByTestId('harbour-dashboard')).toBeVisible({ timeout: 20_000 });
+  });
+
+  // every dashboard carries the insights band once its figures are in: a band, not a column, so it never stretches the tiles beside it
+  const BANDS: { path: string; module: string }[] = [
+    { path: '/', module: 'mis' }, { path: '/ops/overview', module: 'ops' }, { path: '/fleet', module: 'ships' }, { path: '/seafarers/overview', module: 'crew' },
+    { path: '/legislation/overview', module: 'legis' }, { path: '/incidents/overview', module: 'incidents' }, { path: '/inspections/overview', module: 'inspect' },
+    { path: '/companies/overview', module: 'facil' }, { path: '/services/overview', module: 'services' }, { path: '/invoices/overview', module: 'finance' },
+    { path: '/masters/overview', module: 'masters' }, { path: '/admin/overview', module: 'admin' }, { path: '/platform', module: 'platform' },
+  ];
+  test('every module dashboard carries its insights band, laid out wide and short', async ({ page }) => {
+    test.setTimeout(240_000);
+    await login(page);
+    for (const b of BANDS) {
+      await page.goto(b.path);
+      const band = page.getByTestId(`ai-insights-${b.module}`);
+      await expect(band).toBeVisible({ timeout: 20_000 });
+      await expect(band.locator('[data-testid^="insight-"], [data-testid="ai-insights-clear"], [data-testid="ai-insights-refused"]').first()).toBeVisible({ timeout: 30_000 });
+      const box = (await band.boundingBox())!;
+      expect(box.width, `${b.path}: the band spans the page`).toBeGreaterThan(700);
+      expect(box.height, `${b.path}: the band stays short`).toBeLessThan(box.width / 2);
+    }
   });
 
   for (const d of DASHBOARDS) {

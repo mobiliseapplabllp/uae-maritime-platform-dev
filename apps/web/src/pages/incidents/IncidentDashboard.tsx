@@ -47,7 +47,6 @@ export default function IncidentDashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
-        <Grid item xs={12} lg={4}><AiInsights module="incidents" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={86} /></Grid>)}
         <Grid item xs={12}><Skeleton variant="rounded" height={320} /></Grid>
       </Grid>
@@ -65,6 +64,7 @@ export default function IncidentDashboard() {
         <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiMttr')} value={`${k.mttrHrs} h`} sub={t('incidents.kpiMttrSub', { n: k.mttaMin })} tone="info" /></Grid>
         <Grid item xs={6} md={3}><Kpi label={t('incidents.kpiInjuries')} value={k.injuriesYtd} sub={data.injuryReportsOverdue ? t('incidents.kpiInjuriesOverdue', { n: data.injuryReportsOverdue, h: data.rules?.injuryReportHrs ?? 24 }) : t('incidents.kpiInjuriesSub')} tone={data.injuryReportsOverdue ? 'error' : k.injuriesYtd ? 'warning' : 'success'} /></Grid>
       </Grid>
+      <Box sx={{ mb: 2 }}><AiInsights module="incidents" /></Box>
 
       <Grid container spacing={2}>
         <Grid item xs={12} lg={7.5}>

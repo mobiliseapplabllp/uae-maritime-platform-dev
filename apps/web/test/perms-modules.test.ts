@@ -29,4 +29,13 @@ describe('permissions and module registry', () => {
       if (m.key !== 'home') expect(m.nav.some((g) => g.items.some((i) => i.to === `/settings/module/${m.key}`))).toBe(true);
     }
   });
+  it('the Command Centre lists every module dashboard in its side menu, each behind the module\'s own permission', () => {
+    const home = MODULES.find((m) => m.key === 'home')!;
+    const group = home.nav.find((g) => g.header === 'Module dashboards')!;
+    expect(group.items.map((i) => i.to)).toEqual(MODULES.filter((m) => m.key !== 'home').map((m) => m.home));
+    for (const item of group.items) { const m = MODULES.find((x) => x.home === item.to)!; expect(item.perm).toBe(m.perm); expect(item.label).toBe(m.name); expect(item.end).toBe(true); }
+    expect(group.items.length).toBeGreaterThanOrEqual(12);
+    expect(group.crossLinks).toBe(true);
+    expect(moduleOf('/invoices/overview').key).toBe('finance'); // a cross-link never claims the path for the home module
+  });
 });

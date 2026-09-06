@@ -17,7 +17,6 @@ import { CHART_SERIES, SERIES_ORDER, SERIES_LABELS, chartChrome, MONO } from '..
 import PageHeader from '../components/common/PageHeader';
 import AiInsights from '../components/ai/AiInsights';
 import StatCard from '../components/common/StatCard';
-import ModuleStrip from '../components/dashboard/ModuleStrip';
 import StatusChip from '../components/common/StatusChip';
 import { PORTCALL_STATUS_META, CERT_STATUS_META } from '../utils/status';
 import { fmtMT, fmtNum, fmtMoneyShort, fmtDT, fromNow, fmtD } from '../utils/format';
@@ -52,7 +51,6 @@ export default function Dashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
-        <Grid item xs={12} lg={4}><AiInsights module="mis" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={92} /></Grid>)}
         <Grid item xs={12} md={8}><Skeleton variant="rounded" height={300} /></Grid><Grid item xs={12} md={4}><Skeleton variant="rounded" height={300} /></Grid>
       </Grid>
@@ -66,7 +64,6 @@ export default function Dashboard() {
   return (
     <>
       <PageHeader title="Port operations" sub={`Live position and last 12 months — ${fmtD(new Date())}`} />
-      <ModuleStrip />
       <Grid container spacing={2}>
         <Grid item xs={6} md={3}><StatCard icon={<DirectionsBoatFilledRoundedIcon />} label="Vessels at berth" value={kpis.vesselsAtBerth} sub={`${kpis.berthOccupancyPct}% berth occupancy`} /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<AnchorRoundedIcon />} label="At anchorage" value={kpis.atAnchorage} sub={`${kpis.expectedArrivals72h} expected in 72 h`} tone="warning.main" /></Grid>
@@ -76,6 +73,7 @@ export default function Dashboard() {
         <Grid item xs={6} md={3}><StatCard icon={<ScheduleRoundedIcon />} label="Arrivals 72 h" value={kpis.expectedArrivals72h} sub="announced + confirmed" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<ReportProblemRoundedIcon />} label="Open deficiencies" value={kpis.openDeficiencies} sub={`${kpis.detentionsYTD} detention YTD`} tone="error.main" /></Grid>
         <Grid item xs={6} md={3}><StatCard icon={<WorkspacePremiumRoundedIcon />} label="Certificates flagged" value={kpis.certsExpiring + kpis.certsExpired} sub={`${kpis.certsExpired} expired · ${kpis.certsExpiring} expiring`} tone="warning.main" /></Grid>
+        <Grid item xs={12}><AiInsights module="mis" /></Grid>
         <Grid item xs={12} lg={8}>
           <ChartCard title="Cargo throughput" sub="metric tonnes handled per month, by cargo group (containers converted at 12 t/TEU)">
             <Box dir="ltr" sx={{ height: '100%' }}>{/* Charts are laid out left to right in both languages: Recharts does not mirror its axis gutters under RTL, so category labels would be painted behind the bars. */}

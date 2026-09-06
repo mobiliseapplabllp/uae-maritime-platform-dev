@@ -70,7 +70,6 @@ export default function AuditDashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
-        <Grid item xs={12} lg={4}><AiInsights module="inspect" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={86} /></Grid>)}
         <Grid item xs={12}><Skeleton variant="rounded" height={300} /></Grid>
       </Grid>
@@ -89,6 +88,7 @@ export default function AuditDashboard() {
         <Grid item xs={6} md={3}><Kpi label={t('inspections.kpiFindings')} value={k.avgFindings} sub={t('inspections.kpiFindingsSub', { n: k.openFindings })} tone={k.openFindings ? 'warning' : 'success'} /></Grid>
         <Grid item xs={6} md={3}><Kpi label={t('inspections.kpiCompliance')} value={`${k.checklistCompliancePct}%`} sub={t('inspections.kpiComplianceSub')} tone="info" /></Grid>
       </Grid>
+      <Box sx={{ mb: 2 }}><AiInsights module="inspect" /></Box>
 
       <Card sx={{ p: 2, mb: 2 }} component="section" aria-labelledby="smart-kpis">
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 1.5 }}>

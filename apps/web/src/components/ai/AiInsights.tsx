@@ -11,7 +11,10 @@ import { internalPath } from '../../utils/navigation';
 
 /* The module's insights: what its own figures say a person should look at next, computed by the agent service from the
  * dashboard read through the tool gateway as this person. An action runs the same way — as them, logged as theirs —
- * so a button here never does anything the person could not do on the module's own screens. */
+ * so a button here never does anything the person could not do on the module's own screens.
+ *
+ * The panel is a band that spans the dashboard: one short card per insight, side by side, so it never sets the
+ * height of the tiles around it. Up to six insights are shown (three when compact); the rest are counted. */
 
 export type Severity = 'info' | 'warning' | 'critical';
 export interface InsightAction { tool: string; args: Record<string, unknown>; label: string; labelAr: string; tier: 'READ' | 'ACT' }
@@ -64,49 +67,54 @@ export default function AiInsights({ module, compact = false }: { module: string
   };
 
   const insights = data?.insights ?? [];
+  const limit = compact ? 3 : 6;
+  const shown = insights.slice(0, limit);
+  const columns = { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))', lg: `repeat(${Math.min(3, Math.max(1, shown.length))}, minmax(0, 1fr))` };
   return (
-    <Card variant="outlined" data-testid={`ai-insights-${module}`} sx={{ height: '100%' }}>
-      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
+    <Card variant="outlined" data-testid={`ai-insights-${module}`}>
+      <CardContent sx={{ p: 2, '&:last-child': { pb: 1.5 } }}>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.25 }} flexWrap="wrap" useFlexGap>
           <AutoAwesomeRoundedIcon sx={{ fontSize: 18, color: '#75479C' }} />
-          <Typography sx={{ fontWeight: 700, fontSize: 13.5, flex: 1 }}>{t('ai.insights.title', 'Insights and next actions')}</Typography>
+          <Typography sx={{ fontWeight: 700, fontSize: 13.5 }}>{t('ai.insights.title', 'Insights and next actions')}</Typography>
           {data?.counts && !loading && (
             <Stack direction="row" spacing={0.5}>
               {data.counts.critical > 0 && <Chip size="small" label={`${data.counts.critical} ${t('ai.insights.critical', 'critical')}`} sx={{ height: 20, fontSize: 10.5, bgcolor: '#FBE9E5', color: COLOUR.critical, fontWeight: 700 }} />}
               {data.counts.warning > 0 && <Chip size="small" label={`${data.counts.warning} ${t('ai.insights.warning', 'to watch')}`} sx={{ height: 20, fontSize: 10.5, bgcolor: '#FFF3E0', color: COLOUR.warning, fontWeight: 700 }} />}
             </Stack>
           )}
+          <Box sx={{ flex: 1 }} />
+          {!loading && data && <Typography sx={{ fontSize: 10.5, color: 'text.secondary' }}>{t('ai.insights.footer', 'Read through the tool gateway as you, from the module\'s own figures.')}</Typography>}
           <Tooltip title={t('ai.insights.refresh', 'Read the figures again')}><span><IconButton size="small" onClick={load} disabled={loading} aria-label={t('ai.insights.refresh', 'Read the figures again')}><RefreshRoundedIcon sx={{ fontSize: 16 }} /></IconButton></span></Tooltip>
         </Stack>
-        {loading && <Stack spacing={1}>{[0, 1, 2].map((i) => <Skeleton key={i} variant="rounded" height={44} />)}</Stack>}
+        {loading && <Box sx={{ display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: 'repeat(3, minmax(0, 1fr))' } }}>{[0, 1, 2].map((i) => <Skeleton key={i} variant="rounded" height={88} />)}</Box>}
         {!loading && error && <Alert severity="warning" sx={{ fontSize: 12.5 }}>{t('ai.insights.unavailable', 'Insights could not be read just now.')} {error}</Alert>}
         {!loading && !error && data?.refused && <Alert severity="info" sx={{ fontSize: 12.5 }} data-testid="ai-insights-refused">{t('ai.insights.refused', 'The insights for this module are outside your permissions.')} {data.refused.reason}</Alert>}
         {!loading && !error && !data?.refused && insights.length === 0 && <Alert severity="success" sx={{ fontSize: 12.5 }} data-testid="ai-insights-clear">{t('ai.insights.clear', 'Nothing needs attention: every figure is within its target.')}</Alert>}
-        {!loading && !error && insights.length > 0 && (
-          <Stack spacing={1} component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
-            {insights.slice(0, compact ? 3 : 8).map((i) => (
-              <Box component="li" key={i.id} data-testid={`insight-${i.id}`} sx={{ display: 'flex', gap: 1.25, alignItems: 'flex-start', p: 1, borderRadius: 1.5, bgcolor: 'action.hover' }}>
-                <Box aria-hidden sx={{ width: 8, height: 8, borderRadius: '50%', mt: 0.8, flexShrink: 0, bgcolor: COLOUR[i.severity] }} />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
+        {!loading && !error && shown.length > 0 && (
+          <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0, display: 'grid', gap: 1.25, gridTemplateColumns: columns, alignItems: 'stretch' }}>
+            {shown.map((i) => (
+              <Box component="li" key={i.id} data-testid={`insight-${i.id}`} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, p: 1.25, borderRadius: 1.5, bgcolor: 'action.hover', minWidth: 0 }}>
+                <Stack direction="row" spacing={1} alignItems="flex-start">
+                  <Box aria-hidden sx={{ width: 8, height: 8, borderRadius: '50%', mt: 0.7, flexShrink: 0, bgcolor: COLOUR[i.severity] }} />
                   <Typography sx={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>{ar ? i.titleAr || i.title : i.title}</Typography>
-                  <Typography sx={{ fontSize: 12.25, color: 'text.secondary', lineHeight: 1.45 }}>{ar ? i.detailAr || i.detail : i.detail}</Typography>
-                  <Stack direction="row" spacing={0.75} sx={{ mt: 0.6 }} flexWrap="wrap" useFlexGap alignItems="center">
-                    {i.metric && <Chip size="small" label={`${i.metric.label}: ${fmtMetric(i.metric)}${i.metric.target !== undefined ? ` · ${t('ai.insights.target', 'target')} ${typeof i.metric.target === 'number' ? fmtMetric({ ...i.metric, value: i.metric.target }) : i.metric.target}` : ''}`} sx={{ height: 20, fontSize: 10.5 }} />}
-                    {i.link && <Button size="small" variant="text" startIcon={<OpenInNewRoundedIcon sx={{ fontSize: 13 }} />} onClick={() => navigate(internalPath(i.link!))} sx={{ fontSize: 11.5, minHeight: 0, py: 0.1 }}>{t('ai.insights.open', 'Open')}</Button>}
-                    {i.action && (
-                      <Button size="small" variant={i.action.tier === 'ACT' ? 'contained' : 'outlined'} color={i.action.tier === 'ACT' ? 'primary' : 'inherit'} disabled={running === i.id}
-                        startIcon={running === i.id ? <CircularProgress size={12} /> : <PlayArrowRoundedIcon sx={{ fontSize: 13 }} />}
-                        onClick={() => (i.action!.tier === 'ACT' ? setConfirm(i) : act(i))} data-testid={`insight-action-${i.id}`} sx={{ fontSize: 11.5, minHeight: 0, py: 0.2 }}>
-                        {ar ? i.action.labelAr || i.action.label : i.action.label}
-                      </Button>
-                    )}
-                  </Stack>
-                </Box>
+                </Stack>
+                <Typography sx={{ fontSize: 12.25, color: 'text.secondary', lineHeight: 1.45, pl: 2 }}>{ar ? i.detailAr || i.detail : i.detail}</Typography>
+                <Stack direction="row" spacing={0.75} sx={{ mt: 'auto', pt: 0.5, pl: 2 }} flexWrap="wrap" useFlexGap alignItems="center">
+                  {i.metric && <Chip size="small" label={`${i.metric.label}: ${fmtMetric(i.metric)}${i.metric.target !== undefined ? ` · ${t('ai.insights.target', 'target')} ${typeof i.metric.target === 'number' ? fmtMetric({ ...i.metric, value: i.metric.target }) : i.metric.target}` : ''}`} sx={{ height: 20, fontSize: 10.5, maxWidth: '100%' }} />}
+                  {i.link && <Button size="small" variant="text" startIcon={<OpenInNewRoundedIcon sx={{ fontSize: 13 }} />} onClick={() => navigate(internalPath(i.link!))} sx={{ fontSize: 11.5, minHeight: 0, py: 0.1 }}>{t('ai.insights.open', 'Open')}</Button>}
+                  {i.action && (
+                    <Button size="small" variant={i.action.tier === 'ACT' ? 'contained' : 'outlined'} color={i.action.tier === 'ACT' ? 'primary' : 'inherit'} disabled={running === i.id}
+                      startIcon={running === i.id ? <CircularProgress size={12} /> : <PlayArrowRoundedIcon sx={{ fontSize: 13 }} />}
+                      onClick={() => (i.action!.tier === 'ACT' ? setConfirm(i) : act(i))} data-testid={`insight-action-${i.id}`} sx={{ fontSize: 11.5, minHeight: 0, py: 0.2 }}>
+                      {ar ? i.action.labelAr || i.action.label : i.action.label}
+                    </Button>
+                  )}
+                </Stack>
               </Box>
             ))}
-          </Stack>
+          </Box>
         )}
-        {!loading && data && <Typography sx={{ mt: 1, fontSize: 10.5, color: 'text.secondary' }}>{t('ai.insights.footer', 'Read through the tool gateway as you, from the module\'s own figures.')}</Typography>}
+        {!loading && !error && insights.length > limit && <Typography sx={{ mt: 1, fontSize: 11, color: 'text.secondary' }} data-testid="ai-insights-more">{t('ai.insights.more', { defaultValue: '{{n}} more not shown', n: insights.length - limit })}</Typography>}
       </CardContent>
 
       <Dialog open={!!confirm} onClose={() => setConfirm(null)} maxWidth="xs" fullWidth>

@@ -43,7 +43,6 @@ export default function FleetDashboard() {
   if (!data) {
     return (
       <Grid container spacing={2} aria-busy="true">
-        <Grid item xs={12} lg={4}><AiInsights module="ships" /></Grid>
         {Array.from({ length: 8 }).map((_, i) => <Grid item xs={6} md={3} key={i}><Skeleton variant="rounded" height={86} /></Grid>)}
         <Grid item xs={12}><Skeleton variant="rounded" height={300} /></Grid>
       </Grid>
@@ -62,6 +61,7 @@ export default function FleetDashboard() {
         <Grid item xs={6} md={3}><Kpi label="Average age" value={`${k.avgAge} yrs`} sub="active vessels" /></Grid>
         <Grid item xs={6} md={3}><Kpi label="Certificate health" value={health === null ? '—' : `${health}%`} sub={`${data.certs.expiring} expiring · ${data.certs.expired} expired`} /></Grid>
       </Grid>
+      <Box sx={{ mb: 2 }}><AiInsights module="ships" /></Box>
 
       <Grid container spacing={2}>
         <Grid item xs={12} md={5}>
