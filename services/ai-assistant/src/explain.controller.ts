@@ -46,12 +46,14 @@ export class ExplainController {
     if (body.data !== undefined && JSON.stringify(body.data).length > 200_000) throw new ApiError(413, 'The figures sent are too large to explain; send the rows the card draws, not the whole register');
     const used = await this.pool.query<{ tokens: string }>('SELECT tokens::text FROM ai_usage WHERE day = current_date');
     const spent = Number(used.rows[0]?.tokens ?? 0);
-    if (ai.dailyTokenBudget > 0 && spent >= ai.dailyTokenBudget) throw new ApiError(429, `The assistant has spent today's token budget (${spent.toLocaleString('en-GB')} of ${ai.dailyTokenBudget.toLocaleString('en-GB')} tokens)`);
+    // a spent budget stops the provider, not the explanation: the composer's facts cost nothing and are always given
+    const budgetSpent = ai.dailyTokenBudget > 0 && spent >= ai.dailyTokenBudget;
 
     const input: ExplainInput = { ...body, value: body.value ?? undefined, target: body.target ?? undefined };
     const local = explainLocally(input);
     let text = local.text; let engine = 'platform composer'; let provider: string | undefined; let residency: string | undefined;
-    const hosted = this.env.TOOL_MODE === 'gateway' && !ai.groundedOnly && ai.provider !== 'local';
+    const hosted = this.env.TOOL_MODE === 'gateway' && !ai.groundedOnly && ai.provider !== 'local' && !budgetSpent;
+    if (budgetSpent && ai.provider !== 'local') engine = `platform composer — today's token budget is spent (${spent.toLocaleString('en-GB')} of ${ai.dailyTokenBudget.toLocaleString('en-GB')} tokens), so no provider was called`;
     if (hosted) {
       const client = new ToolGatewayCompletionClient(this.gateway, ai.profile, bearer(authorization));
       const question = body.language === 'ar'

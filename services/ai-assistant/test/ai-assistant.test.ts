@@ -690,14 +690,20 @@ describe('ai-assistant — Settings → AI assistant governs the assistant', () 
     expect((await g('/ai/status', officer)).body.data.budget.questionsToday).toBeGreaterThanOrEqual(1);
     await setAi({ model: '' });
   });
-  it('stops at the daily token budget with the reason, and resumes when the budget is raised', async () => {
+  it('keeps answering from the composer when the daily token budget is spent, says so, and resumes when the budget is raised', async () => {
+    // spend first: one answer under an unlimited budget puts today's usage past the ten tokens the budget is then set to
+    await setAi({ dailyTokenBudget: 0 });
+    expect((await chat('What incidents are open on the desk?', officer)).status).toBe(201);
     await setAi({ dailyTokenBudget: 10 });
     const spent = await chat('What incidents are open on the desk?', officer);
-    expect(spent.status).toBe(429);
-    expect(spent.body.message).toMatch(/spent today's token budget/);
+    expect(spent.status).toBe(201);
+    expect(spent.body.data.reply.length).toBeGreaterThan(20);
+    expect(spent.body.data.engine).toMatch(/ — today's token budget is spent \(\d[\d,]* of 10 tokens\), so no provider was called$/);
     expect((await g('/ai/status', officer)).body.data.budget).toMatchObject({ dailyTokens: 10, remaining: 0, exhausted: true });
     await setAi({ dailyTokenBudget: 5_000_000 });
-    expect((await chat('What incidents are open on the desk?', officer)).status).toBe(201);
+    const resumed = await chat('What incidents are open on the desk?', officer);
+    expect(resumed.status).toBe(201);
+    expect(resumed.body.data.engine).not.toMatch(/budget/);
     expect((await g('/ai/status', officer)).body.data.budget.exhausted).toBe(false);
     await setAi({ dailyTokenBudget: 0 });
   });

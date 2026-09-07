@@ -122,7 +122,9 @@ export class AssistantController {
     const ai = await aiSettingsOf(this.settings, this.env);
     if (!ai.enabled) throw new ApiError(503, 'The assistant is switched off in Settings → AI assistant');
     const used = await this.usageToday();
-    if (ai.dailyTokenBudget > 0 && used.tokens >= ai.dailyTokenBudget) throw new ApiError(429, `The assistant has spent today's token budget (${used.tokens.toLocaleString('en-GB')} of ${ai.dailyTokenBudget.toLocaleString('en-GB')}). It resumes tomorrow, or when the budget is raised in Settings → AI assistant.`);
+    // A spent budget stops the provider, not the assistant: the deterministic composer costs no tokens, so the
+    // answer is composed from the platform record as if no provider were configured, and says so in its engine line.
+    const budgetSpent = ai.dailyTokenBudget > 0 && used.tokens >= ai.dailyTokenBudget;
     const index = await this.indexCache.get();
     const language = (body.language ?? 'en') as Language;
 
@@ -143,9 +145,10 @@ export class AssistantController {
       .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.text }));
 
     const result = await answer(
-      { env: this.env, db: this.pool, completion: this.clientFor(ai, userToken), index, tools: this.toolSurface, gateway: this.gatewayMode ? this.gateway : undefined },
+      { env: this.env, db: this.pool, completion: budgetSpent ? new LocalCompletionClient(ai.profile) : this.clientFor(ai, userToken), index, tools: this.toolSurface, gateway: this.gatewayMode ? this.gateway : undefined },
       { question: body.message, permissions: user.perms, history, language, completionOptions: { profile: ai.profile, temperature: ai.temperature }, userToken },
     );
+    if (budgetSpent) result.engine = `${result.engine} — today's token budget is spent (${used.tokens.toLocaleString('en-GB')} of ${ai.dailyTokenBudget.toLocaleString('en-GB')} tokens), so no provider was called`;
     const tokens = estimateTokens(body.message, result.reply, result.citations.length);
 
     const messageId = await withTx(this.pool, async (c) => {

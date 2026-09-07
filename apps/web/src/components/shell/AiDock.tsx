@@ -54,7 +54,9 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
   const bottomRef = useRef<HTMLDivElement>(null);
   // Settings → AI assistant decides whether the dock answers at all, and how much of the day's budget is left
   useEffect(() => { if (open) api.get<typeof status>('/ai/status', { headers: { 'X-Quiet': '1' } }).then((r) => setStatus(r.data)).catch(() => setStatus(null)); }, [open, messages.length]);
-  const blocked = status ? (!status.enabled ? 'The assistant is switched off in Settings → AI assistant.' : status.budget.exhausted ? 'The assistant has spent today\'s token budget; it resumes tomorrow or when the budget is raised in Settings → AI assistant.' : null) : null;
+  const blocked = status && !status.enabled ? 'The assistant is switched off in Settings → AI assistant.' : null;
+  // a spent budget is a notice, not a block: the platform composer keeps answering, and the engine line says so
+  const notice = status?.enabled && status.budget.exhausted ? 'Today\'s token budget is spent; answers come from the platform composer until it resumes tomorrow or the budget is raised in Settings → AI assistant.' : null;
 
   // the suggestions follow the screen: on a module's pages the dock offers that module's questions first
   useEffect(() => { if (open) api.get<string[]>('/ai/suggestions', { params: here ? { module: here.key } : {}, headers: { 'X-Quiet': '1' } }).then((r) => setSuggestions(r.data)).catch(() => {}); }, [open, here?.key]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -81,6 +83,7 @@ export default function AiDock({ open, onClose, onOpenPortal }: { open: boolean;
       </Box>
       <Divider />
       {blocked && <Alert severity="warning" sx={{ m: 2, mb: 0 }} data-testid="ai-dock-blocked">{blocked}</Alert>}
+      {notice && <Alert severity="info" sx={{ m: 2, mb: 0 }} data-testid="ai-dock-notice">{notice}</Alert>}
       {status && !blocked && <Typography sx={{ px: 2, pt: 1, fontSize: 10.5, color: 'text.secondary', fontFamily: MONO }} data-testid="ai-dock-status">{status.composer} · {status.profile}{status.budget.dailyTokens > 0 ? ` · ${(status.budget.remaining ?? 0).toLocaleString('en-GB')} tokens left today` : ''}</Typography>}
       <Box sx={{ flex: 1, overflowY: 'auto', p: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         {messages.length === 0 && (
