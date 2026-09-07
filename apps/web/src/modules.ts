@@ -11,6 +11,7 @@ import PublicRoundedIcon from '@mui/icons-material/PublicRounded';
 import GavelRoundedIcon from '@mui/icons-material/GavelRounded';
 import TravelExploreRoundedIcon from '@mui/icons-material/TravelExploreRounded';
 import RadarRoundedIcon from '@mui/icons-material/RadarRounded';
+import QueryStatsRoundedIcon from '@mui/icons-material/QueryStatsRounded';
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
 import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
 import CorporateFareRoundedIcon from '@mui/icons-material/CorporateFareRounded';
@@ -65,6 +66,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/schedule', label: 'Vessel Schedule', icon: EventNoteRoundedIcon, perm: 'portcalls.view' },
       { to: '/marine-services', label: 'Marine Craft & Pilots', icon: DirectionsBoatRoundedIcon, perm: 'portcalls.view' },
       { to: '/nmc/map', label: 'Live Traffic', icon: RadarRoundedIcon, perm: 'nmc.view' },
+      { to: '/nmc/analytics', label: 'Traffic Analytics', icon: QueryStatsRoundedIcon, perm: 'nmc.view' },
     ] }] },
   { key: 'ships', name: 'Fleet Manager', short: 'Fleet', color: '#3B6FB6', desc: 'Vessel particulars, certificates, voyages and risk profiling', icon: DirectionsBoatFilledRoundedIcon, perm: 'vessels.view', home: '/fleet',
     nav: [{ header: 'Fleet', items: [

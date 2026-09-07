@@ -48,7 +48,7 @@ export const INTEGRATIONS_CARD = {
 export interface ModuleDef { key: string; blurb: string; readBy: string[]; facts: (v: Values) => Fact[] }
 export const MODULE_CARDS: ModuleDef[] = [
   { key: 'ops', blurb: 'Call numbering, tug defaults, berth window slack, anchorage waiting, the schedule span and the surveillance thresholds.',
-    readBy: ['Port calls — VCN prefix, tug defaults, berth conflicts', 'Operations board — anchorage alert, schedule window', 'Live Traffic — channel speed, AIS gap, anchor drift, zone entry'],
+    readBy: ['Port calls — VCN prefix, tug defaults, berth conflicts', 'Operations board — anchorage alert, schedule window', 'Live Traffic — channel speed, AIS gap, anchor drift, zone entry', 'Traffic analytics — cell size, window'],
     facts: (v) => [{ label: 'VCN prefix', value: text(v.vcnPrefix) }, { label: 'Channel limit', value: num(v.channelSpeedLimitKn, ' kn') }, { label: 'AIS gap', value: num(v.aisGapAlertMin, ' min') }] },
   { key: 'ships', blurb: 'The certificate expiry window, the dry-dock reminder and how long a risk score is held before it is recomputed.',
     readBy: ['Fleet — EXPIRING certificates, dry-dock due list', 'Risk register — score cache', 'Scheduler — the certificate digest'],

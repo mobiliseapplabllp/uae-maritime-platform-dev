@@ -48,6 +48,7 @@ beforeAll(async () => {
   const resolver = new StaticPrincipalResolver({
     duty: { ...base, id: 'duty', sub: 'duty', name: 'NMC Duty Officer', perms: ['nmc.view', 'nmc.manage'] },
     viewer: { ...base, id: 'viewer', sub: 'viewer', name: 'Watchkeeper', perms: ['nmc.view'] },
+    stranger: { ...base, id: 'stranger', sub: 'stranger', name: 'Nobody in particular', perms: ['vessels.view'] },
   });
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) }); await app.init(); server = app.getHttpServer(); bus = app.get(KIT_BUS);
 });
@@ -135,5 +136,22 @@ describe('the LRIT data centre', () => {
     expect((await fixOf(ships[0].id)).source).toBe('LRIT (stub contract)');
     const swept = await withTx(pool, (c) => sweepAisGaps(c, env, DEFAULT_THRESHOLDS, new Date('2026-09-05T14:00:00Z')));
     expect(swept.vessels).not.toContain(ships[0].name);
+  });
+});
+
+describe('the analytics over the fixes the feeds left', () => {
+  it('answers the watch with density, lanes, dwell and the days, refuses everyone else, and refuses a window it cannot read', async () => {
+    expect((await request(server as never).get('/tracking/analytics').set('authorization', tok('stranger'))).status).toBe(403);
+    expect((await request(server as never).get('/tracking/analytics?days=400').set('authorization', tok('viewer'))).status).toBe(400);
+    expect((await request(server as never).get('/tracking/analytics?minLat=30&maxLat=20').set('authorization', tok('viewer'))).status).toBe(400);
+    const r = await request(server as never).get('/tracking/analytics?days=7&cellNm=2').set('authorization', tok('viewer'));
+    expect(r.status).toBe(200);
+    const a = r.body.data;
+    expect(a.window.days).toBe(7); expect(a.cellNm).toBe(2);
+    expect(a.kpis.ships).toBeGreaterThanOrEqual(2); expect(a.kpis.fixes).toBeGreaterThanOrEqual(2);
+    expect(a.cells.length).toBeGreaterThan(0); expect(Array.isArray(a.areas)).toBe(true); expect(a.byDay).toHaveLength(7);
+    // the defaults come from Harbour Operations' settings when the request names nothing
+    const d = (await request(server as never).get('/tracking/analytics').set('authorization', tok('viewer'))).body.data;
+    expect(d.window.days).toBe(7); expect(d.cellNm).toBe(2);
   });
 });

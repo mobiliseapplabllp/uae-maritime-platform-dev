@@ -27,6 +27,8 @@ const FIELDS: Record<string, F[]> = {
     { k: 'channelSpeedLimitKn', label: 'Channel speed limit (kn)', type: 'number', help: 'A fix over this in the approach channel raises a speed alert' },
     { k: 'aisGapAlertMin', label: 'AIS gap alert (minutes)', type: 'number', help: 'A target silent for longer is raised by the five-minute sweep' }, { k: 'anchorDriftNm', label: 'Anchor drift threshold (NM)', type: 'number', help: 'Measured from where she anchored' },
     { k: 'zoneEntryWatch', label: 'Alert on zone entry and exit', type: 'switch', help: 'Crossings of the published sea areas that ask to be told' },
+    { k: 'trafficCellNm', label: 'Traffic analytics — cell size (nm)', type: 'number', help: 'The grid the density and lane analysis is laid over; a request may narrow it' },
+    { k: 'trafficWindowDays', label: 'Traffic analytics — window (days)', type: 'number', help: 'How far back the analysis looks unless the screen asks otherwise' },
   ],
   ships: [{ k: 'certExpiringDays', label: 'Certificate expiring window (days)', type: 'number', help: 'Drives EXPIRING status across certificates, stats and reports' }, { k: 'dryDockReminderDays', label: 'Dry-dock reminder (days ahead)', type: 'number' }, { k: 'riskRefreshMinutes', label: 'Risk score refresh (minutes)', type: 'number' }],
   crew: [{ k: 'medicalExpiringDays', label: 'Medical expiring window (days)', type: 'number', help: 'Drives the EXPIRING medical status and the crew dashboard' }, { k: 'signOnMarginDays', label: 'Sign-on margin (days)', type: 'number', help: 'A document expiring inside this margin of sign-on is queried' }, { k: 'cocVerifyOnSignOn', label: 'Verify CoC on sign-on', type: 'switch' }],

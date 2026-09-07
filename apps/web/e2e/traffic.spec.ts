@@ -44,6 +44,19 @@ test.describe('live traffic', () => {
     await page.getByRole('button', { name: 'Close' }).first().click();
     await expect(card).toBeHidden();
   });
+  test('the analytics read the period: density cells, lanes, dwell by area and the days, and the window is the reader\'s to change', async ({ page }) => {
+    await login(page);
+    await page.goto('/nmc/analytics');
+    await expect(page.getByRole('heading', { name: 'Traffic analytics' })).toBeVisible();
+    await expect(page.getByTestId('analytics-ships')).toBeVisible();
+    await expect(page.getByTestId('analytics-map')).toBeVisible();
+    await expect(page.getByTestId('analytics-by-day')).toBeVisible();
+    await expect(page.getByTestId('analytics-dwell')).toBeVisible();
+    await expect(page.getByTestId('analytics-cells')).toBeVisible();
+    await page.getByRole('button', { name: '30 d' }).click();
+    await expect(page.getByTestId('analytics-window')).toContainText('30');
+    await expectAccessible(page, 'traffic analytics');
+  });
   test('the quay twin and the picture go full screen', async ({ page }) => {
     await login(page);
     await page.goto('/quay-view');

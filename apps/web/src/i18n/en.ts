@@ -464,6 +464,15 @@ const en = {
     },
   },
 
+  traffic: {
+    analytics: {
+      title: 'Traffic analytics', sub: 'Where the traffic was, which way it ran and how long ships spent in each published area — read from the fixes of the period',
+      ships: 'Ships heard', registered: 'on the register', fixes: 'Fixes', moving: 'under way', busiestArea: 'Busiest area', noArea: 'No area visited', lanes: 'Lanes found', cellsUsed: 'cells used',
+      map: 'Density and lanes', mapSub: 'Cells shaded by the ships heard in them; an arrow where their courses agree', byDay: 'Ships and fixes per day', byDaySub: 'Distinct ships heard each day, and the fixes behind them',
+      dwell: 'Dwell by sea area', dwellSub: 'Hours ships spent inside each published area, visit by visit', cells: 'Busiest cells', cellsSub: 'Cells by distinct ships heard', window: 'Window', cell: 'Cell', days: 'd', none: 'No fixes in this period', openMap: 'Live traffic',
+      areaLine: '{{ships}} ships · {{visits}} visits · avg {{avg}} h', cellLine: '{{fixes}} fixes · courses agree {{flow}}%', cellValue: '{{ships}} ships', meanSpeed: 'mean {{kn}} kn under way',
+    },
+  },
   ai: {
     explain: {
       button: 'Explain with the assistant',

@@ -6,5 +6,6 @@ const L = (f: () => Promise<{ default: React.ComponentType<any> }>) => { const C
 
 export const routes: RouteDef[] = [
   { path: '/nmc/map', perm: 'nmc.view', element: L(() => import('./TrafficMap')) },
+  { path: '/nmc/analytics', perm: 'nmc.view', element: L(() => import('./TrafficAnalytics')) },
   { path: '/nmc/incidents', redirect: '/incidents' },
 ];

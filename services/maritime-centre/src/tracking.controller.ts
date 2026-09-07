@@ -13,6 +13,7 @@ import {
   restrictionApi, restrictionZones, trackSummary, recordFix, type AlertRow, type PositionRow, type RestrictionRow, type VesselFacts,
 } from './tracking';
 import { AIS_SOURCE, FEEDS, LRIT_SOURCE, feedApi, feedSourceOf, feedState, pollFeed } from './feed';
+import { analyticsDefaults, loadAreas, loadFixes, trafficAnalytics } from './analytics';
 import { sweepAisGaps, thresholdsOf } from './surveillance';
 import { CATEGORIES, CATEGORY_LABEL, PORTS_LAYER, searchTargets, targetApi, targetByKey, targetsWithin, trackOf, type Category } from './targets';
 import { IntegrationClient } from '@maritime/service-kit';
@@ -197,6 +198,25 @@ export class TrackingController {
       current: current.rows[0] ? positionApi(current.rows[0], facts.get(vesselId), this.env.POSITION_STALE_MIN) : null,
       track: fixes, summary: trackSummary(fixes),
     };
+  }
+
+  /** Traffic over a period: density, lanes and dwell by published area, from the fixes the store holds. The window and the cell come from Harbour Operations' settings unless the request narrows them. */
+  @RequirePerm('nmc.view') @Get('analytics')
+  async analytics(@Query('days') daysRaw?: string, @Query('cellNm') cellRaw?: string, @Query('minLat') minLat?: string, @Query('maxLat') maxLat?: string, @Query('minLon') minLon?: string, @Query('maxLon') maxLon?: string) {
+    const defaults = await analyticsDefaults(this.settings);
+    const days = daysRaw ? Number(daysRaw) : defaults.days;
+    const cellNm = cellRaw ? Number(cellRaw) : defaults.cellNm;
+    if (!Number.isFinite(days) || days < 1 || days > 90) throw badRequest('days must be between 1 and 90');
+    if (!Number.isFinite(cellNm) || cellNm < 0.25 || cellNm > 30) throw badRequest('cellNm must be between 0.25 and 30');
+    let bounds: { minLat: number; maxLat: number; minLon: number; maxLon: number } | undefined;
+    if (minLat || maxLat || minLon || maxLon) {
+      const b = { minLat: Number(minLat), maxLat: Number(maxLat), minLon: Number(minLon), maxLon: Number(maxLon) };
+      if (Object.values(b).some((v) => !Number.isFinite(v)) || b.minLat >= b.maxLat || b.minLon >= b.maxLon || Math.abs(b.minLat) > 90 || Math.abs(b.maxLat) > 90 || Math.abs(b.minLon) > 180 || Math.abs(b.maxLon) > 180) throw badRequest('the bounds must be a box: minLat < maxLat and minLon < maxLon');
+      bounds = b;
+    }
+    const now = new Date();
+    const [fixes, areas] = await Promise.all([loadFixes(this.pool, new Date(now.getTime() - Math.round(days) * 86_400_000), bounds), loadAreas(this.pool)]);
+    return trafficAnalytics(fixes, areas, { cellNm, days: Math.round(days), now, bounds });
   }
 
   /** The feeds' own account of themselves: when each was last read and what came of it. The AIS feed keeps the top level for the callers that knew only one. */

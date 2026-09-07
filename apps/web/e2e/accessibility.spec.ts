@@ -34,7 +34,7 @@ const STATIC_ROUTES = [
   '/', '/fleet', '/vessels', '/vessels/survey-planner', '/registry', '/certificates',
   '/port-calls', '/berth-planner', '/quay-view', '/schedule', '/marine-services', '/berth-board',
   '/seafarers', '/seafarers/overview', '/seafarers/met', '/seafarers/crew-lists', '/seafarers/manning', '/seafarers/foreign', '/legislation', '/legislation/imo', '/law', '/companies', '/port-facilities', '/facilities', '/accreditations',
-  '/incidents', '/incidents/overview', '/incidents/risk-matrix', '/nmc/map', '/nmc/incidents',
+  '/incidents', '/incidents/overview', '/incidents/risk-matrix', '/nmc/map', '/nmc/analytics', '/nmc/incidents',
   '/inspections', '/inspections/overview', '/checklist-builder', '/risk', '/risk/targeting',
   '/invoices', '/invoices/overview', '/mis', '/reports',
   '/ops/overview', '/legislation/overview', '/companies/overview', '/services/overview', '/services', '/services/requests', '/services/studio', '/masters/overview', '/admin/overview', '/agents', '/agents/decisions', '/agents/escalations', '/agents/assurance', '/agents/gateway',

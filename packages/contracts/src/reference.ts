@@ -81,7 +81,7 @@ export const lookupCategory = (key: string): LookupCategory | undefined => LOOKU
 
 /** Per-module settings — defaults merged under the setting key `module:<key>`. */
 export const MODULE_SETTING_DEFAULTS: Record<string, Record<string, unknown>> = {
-  ops:       { vcnPrefix: 'REF', anchorageAlertHrs: 24, berthWindowSlackHrs: 4, defaultTugsUnder250m: 2, defaultTugsOver250m: 3, scheduleWindowDays: 5, channelSpeedLimitKn: 8, aisGapAlertMin: 30, anchorDriftNm: 0.2, zoneEntryWatch: true },
+  ops:       { vcnPrefix: 'REF', anchorageAlertHrs: 24, berthWindowSlackHrs: 4, defaultTugsUnder250m: 2, defaultTugsOver250m: 3, scheduleWindowDays: 5, channelSpeedLimitKn: 8, aisGapAlertMin: 30, anchorDriftNm: 0.2, zoneEntryWatch: true , trafficCellNm: 2, trafficWindowDays: 7},
   ships:     { certExpiringDays: 30, dryDockReminderDays: 60, riskRefreshMinutes: 30 },
   crew:      { medicalExpiringDays: 45, signOnMarginDays: 30, cocVerifyOnSignOn: true },
   legis:     { ackRequiredDefault: false, ackReminderDays: 7, showSupersededDays: 365 },
