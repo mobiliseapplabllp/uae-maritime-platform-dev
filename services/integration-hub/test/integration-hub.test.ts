@@ -42,7 +42,7 @@ afterAll(async () => { await app?.close(); await pool?.end(); });
 describe('the adapter registry', () => {
   it('covers every external system RFP §5.4 names, each with a counterpart and a traceable reference', () => {
     expect(ADAPTERS.map((a) => a.key).sort()).toEqual(
-      ['ais-lrit','classification','gisis','icp','messaging','mohre','payment','uae-pass']);
+      ['ais-lrit','classification','gisis','icp','lrit','messaging','mohre','payment','uae-pass']);
     for (const a of ADAPTERS) {
       expect(a.counterpart.length, a.key).toBeGreaterThan(3);
       expect(a.reference, a.key).toMatch(/RFP|TAD/);

@@ -28,6 +28,17 @@ export const ADAPTERS: AdapterDefinition[] = [
     ],
   },
   {
+    key: 'lrit', name: 'LRIT data centre', nameAr: 'مركز بيانات التعرف والتتبع بعيد المدى', counterpart: 'The flag’s LRIT Data Centre, reached through the International Data Exchange',
+    // SOLAS V/19-1: every ship on the register reports her position to the flag's data centre four times a day wherever she is,
+    // which is what the picture has of a ship beyond terrestrial AIS range. Read on a schedule since a watermark; a report
+    // can also be asked for now, for a search-and-rescue or security case.
+    reference: 'RFP §5.3 D4 R-D4-01 · SOLAS V/19-1', baseUrlEnv: 'LRIT_URL', defaultBaseUrl: 'https://stub.local/lrit', protocol: 'rest',
+    operations: [
+      { key: 'positions', summary: 'Position reports for the flag’s ships since a watermark', method: 'GET', path: '/v1/reports', required: ['since'], idempotent: false },
+      { key: 'requestReport', summary: 'Ask the data centre for a ship’s position now, by IMO number', method: 'POST', path: '/v1/requests', required: ['imo', 'reason'], idempotent: true },
+    ],
+  },
+  {
     key: 'icp', name: 'ICP exchange', nameAr: 'تبادل الهيئة الاتحادية للهوية', counterpart: 'Federal Authority for Identity, Citizenship, Customs and Port Security',
     reference: 'RFP §5.3 D6 R-D6-01/03', baseUrlEnv: 'ICP_URL', defaultBaseUrl: 'https://stub.local/icp', protocol: 'soap',
     operations: [

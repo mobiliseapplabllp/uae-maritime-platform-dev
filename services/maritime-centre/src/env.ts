@@ -19,6 +19,8 @@ export const envSchema = baseEnvSchema.extend({
   POSITION_STALE_MIN: z.coerce.number().default(45),
   /** How often the scheduler reads the AIS/LRIT feed; the traffic screen shows it beside the last read. */
   AIS_POLL_MINUTES: z.coerce.number().int().min(1).default(2),
+  /** How often the LRIT data centre is read; a report per ship arrives every six hours, so the half hour is generous. */
+  LRIT_POLL_MINUTES: z.coerce.number().int().min(1).default(30),
   /** Forces the geodesic path even where PostGIS is installed. Its reason for existing is that the
    *  two implementations must agree: the test suite runs the same queries both ways over the same
    *  rows, and an operator can do the same to check a result they doubt. */

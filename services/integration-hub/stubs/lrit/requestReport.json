@@ -1,0 +1,11 @@
+{
+  "status": 202,
+  "body": {
+    "requestId": "LRIT-REQ-{imo}",
+    "imo": "{imo}",
+    "reason": "{reason}",
+    "status": "ACCEPTED",
+    "expectedWithinMinutes": 15,
+    "note": "The data centre relays the request to the ship’s communication service provider; the report arrives with the next scheduled read."
+  }
+}

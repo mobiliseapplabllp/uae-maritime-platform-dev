@@ -12,7 +12,7 @@ import {
   ALERT_SEVERITIES, ALERT_TYPES, NAV_STATUS, RESTRICTION_KINDS, alertApi, chartZones, coverageNote, portCentre, positionApi, publishAlert, publishPosition, publishRestriction,
   restrictionApi, restrictionZones, trackSummary, recordFix, type AlertRow, type PositionRow, type RestrictionRow, type VesselFacts,
 } from './tracking';
-import { AIS_SOURCE, feedApi, feedState, pollAis } from './feed';
+import { AIS_SOURCE, FEEDS, LRIT_SOURCE, feedApi, feedSourceOf, feedState, pollFeed } from './feed';
 import { sweepAisGaps, thresholdsOf } from './surveillance';
 import { CATEGORIES, CATEGORY_LABEL, PORTS_LAYER, searchTargets, targetApi, targetByKey, targetsWithin, trackOf, type Category } from './targets';
 import { IntegrationClient } from '@maritime/service-kit';
@@ -199,16 +199,22 @@ export class TrackingController {
     };
   }
 
-  /** The feed's own account of itself: when it was last read and what came of it. */
+  /** The feeds' own account of themselves: when each was last read and what came of it. The AIS feed keeps the top level for the callers that knew only one. */
   @RequirePerm('nmc.view') @Get('feed')
-  async feed() { return feedApi(await feedState(this.pool), this.env.AIS_POLL_MINUTES); }
+  async feed() {
+    const [ais, lrit] = await Promise.all([feedState(this.pool, AIS_SOURCE), feedState(this.pool, LRIT_SOURCE)]);
+    const sources = [feedApi(ais, this.env.AIS_POLL_MINUTES, AIS_SOURCE), feedApi(lrit, this.env.LRIT_POLL_MINUTES, LRIT_SOURCE)];
+    return { ...sources[0], sources };
+  }
 
-  /** Read the feed now rather than at the next scheduled minute — after switching the adapter live, for instance. */
+  /** Read a feed now rather than at its next scheduled minute — after switching the adapter live, for instance. */
   @RequirePerm('nmc.manage', 'settings.manage') @Post('feed/poll')
-  async pollNow(@CurrentUser() user: Principal) {
+  async pollNow(@CurrentUser() user: Principal, @Query('source') sourceRaw?: string) {
+    const source = sourceRaw ? feedSourceOf(sourceRaw) : AIS_SOURCE;
+    if (!source) throw badRequest(`Unknown feed "${sourceRaw}"; the feeds are ${Object.keys(FEEDS).join(' and ')}`);
     const thresholds = await thresholdsOf(this.settings);
-    const out = await withTx(this.pool, async (c) => pollAis(c, { env: this.env, hub: this.hub, thresholds }, { correlationId: `feed:${user.id}` }));
-    await this.audit.record(this.pool, { action: 'POLL', entity: 'Feed', entityId: AIS_SOURCE, entityLabel: 'AIS/LRIT feed', after: { status: out.status, mode: out.mode, received: out.received, matched: out.matched } });
+    const out = await withTx(this.pool, async (c) => pollFeed(c, source, { env: this.env, hub: this.hub, thresholds }, { correlationId: `feed:${user.id}` }));
+    await this.audit.record(this.pool, { action: 'POLL', entity: 'Feed', entityId: source, entityLabel: FEEDS[source].label, after: { status: out.status, mode: out.mode, received: out.received, matched: out.matched } });
     return out;
   }
 

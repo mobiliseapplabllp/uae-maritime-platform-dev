@@ -107,7 +107,7 @@ export default function VesselCard({ target, trackShown, onClose, onTrack, onFol
       </Stack>
       <Divider />
       <Box sx={{ px: 1.5, py: 1 }}>
-        <Typography variant="caption" color="text.secondary">Received: <b>{ageWords(target.receivedAt)}</b> (AIS source: {target.source || '—'})</Typography>
+        <Typography variant="caption" color="text.secondary">Received: <b>{ageWords(target.receivedAt)}</b> (source: {target.source || '—'})</Typography>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{fmtCoord(target.lat, target.lon)} · MMSI {target.mmsi}{target.imo ? ` · IMO ${target.imo}` : ''}{target.callSign ? ` · ${target.callSign}` : ''}</Typography>
         {target.alerts.length > 0 && <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }} flexWrap="wrap" useFlexGap>{target.alerts.map((a) => <Chip key={a.id} size="small" color={a.severity === 'error' ? 'error' : a.severity === 'warning' ? 'warning' : 'info'} label={a.type.replace(/_/g, ' ')} sx={{ height: 20, fontSize: 10 }} />)}</Stack>}
       </Box>

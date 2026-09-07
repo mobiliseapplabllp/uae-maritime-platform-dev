@@ -518,6 +518,18 @@ async function main() {
     if (injected.status !== 200 || (injected.body?.data ?? []).length) return `a search for an injection string returned ${injected.status} with ${(injected.body?.data ?? []).length} rows`;
     return null;
   });
+  await probe('a feed is read on request by the duty officer only, and only the feeds that exist', 'A01', 'medium', async () => {
+    const agent = await login('agent@maritime.example');
+    const outsider = await http('/tracking/feed/poll?source=lrit', { method: 'POST', token: agent.token });
+    if (outsider.status !== 403) return `an external agent could read the LRIT data centre (${outsider.status})`;
+    const admin = await login('admin@maritime.example');
+    const unknown = await http('/tracking/feed/poll?source=radar%27%20OR%201%3D1', { method: 'POST', token: admin.token });
+    if (unknown.status !== 400) return `a feed that does not exist was accepted (${unknown.status})`;
+    const feeds = await http('/tracking/feed', { token: admin.token });
+    const sources: any[] = feeds.body?.data?.sources ?? [];
+    if (sources.map((s) => s.source).join(',') !== 'ais-lrit,lrit') return `the feeds answered are ${sources.map((s) => s.source).join(',') || 'none'}`;
+    return null;
+  });
   await probe('the federal security review is the security desk\'s to start, and a facility\'s history is not everyone\'s to read', 'A01', 'high', async () => {
     const admin = await login('admin@maritime.example');
     const all: any[] = (await http('/facilities/port-facilities?limit=100&sort=code', { token: admin.token })).body?.data ?? [];

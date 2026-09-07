@@ -39,6 +39,10 @@ const ZONE_STYLE: Record<string, L.PathOptions> = {
   TSS: { color: '#75479C', weight: 1.2, dashArray: '2 6', fillOpacity: 0.03 }, FISHING: { color: '#F2861F', weight: 1.2, dashArray: '3 5', fillOpacity: 0.03 }, CUSTOM: { color: '#4A6472', weight: 1.2, dashArray: '3 5', fillOpacity: 0.03 },
 };
 const words = (s?: string) => String(s || '').replace(/_/g, ' ');
+interface FeedSourceStatus { source: string; label: string; lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number; lastError?: string | null }
+type FeedStatus = FeedSourceStatus & { sources?: FeedSourceStatus[] };
+const FEED_SHORT: Record<string, string> = { 'ais-lrit': 'AIS', lrit: 'LRIT' };
+const feedChip = (f: FeedSourceStatus) => (f.lastStatus === 'never' ? `${FEED_SHORT[f.source] ?? f.source} feed not yet read` : `${FEED_SHORT[f.source] ?? f.source} · ${f.lastMode ?? ''} · ${f.lastStatus}${f.ageMinutes != null ? ` · ${f.ageMinutes} min ago` : ''} · every ${f.pollMinutes} min`);
 const debounce = <A extends unknown[]>(fn: (...a: A) => void, ms: number) => { let t: ReturnType<typeof setTimeout> | undefined; return (...a: A) => { if (t) clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
 export default function TrafficMap() {
@@ -54,7 +58,7 @@ export default function TrafficMap() {
   const [alerts, setAlerts] = useState<MdaAlert[]>([]);
   const [openCases, setOpenCases] = useState<OpenIncident[]>([]);
   const [watch, setWatch] = useState<WatchItem[]>([]);
-  const [feed, setFeed] = useState<{ lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number; lastError?: string | null } | null>(null);
+  const [feed, setFeed] = useState<FeedStatus | null>(null);
   const [selected, setSelected] = useState<TargetDetail | null>(null);
   const [track, setTrack] = useState<TargetTrack | null>(null);
   const [hidden, setHidden] = useState<Set<Category>>(new Set());
@@ -190,10 +194,12 @@ export default function TrafficMap() {
   const centreOn = (t: Target) => { map.current?.setView([t.lat, t.lon], Math.max(map.current.getZoom(), 11)); select(t); setResults([]); setQuery(''); };
   const search = useMemo(() => debounce((q: string) => { if (q.trim().length < 2) { setResults([]); return; } api.get<Target[]>('/tracking/targets/search', { params: { q, limit: 8 }, headers: { 'X-Quiet': '1' } }).then((r) => setResults(r.data)).catch(() => setResults([])); }, 220), []);
   const ack = (a: MdaAlert) => api.post(`/tracking/alerts/${a.id}/ack`).then(loadSide).catch(err);
-  const readFeed = () => api.post<{ status: string; received: number; matched: number; targets?: number; error?: string }>('/tracking/feed/poll').then((r) => { dispatch(notify(r.data.status === 'ok' ? `Feed read: ${r.data.received} reports, ${r.data.targets ?? 0} on the picture, ${r.data.matched} on the register` : `Feed ${r.data.status}${r.data.error ? ` — ${r.data.error}` : ''}`)); refresh(); }).catch(err);
+  // both feeds are read: the AIS picture and the LRIT data centre, each reported in its own words
+  const readFeed = () => Promise.all((feed?.sources ?? [{ source: 'ais-lrit' }]).map((f) => api.post<{ source: string; status: string; received: number; matched: number; targets?: number; error?: string }>('/tracking/feed/poll', null, { params: { source: f.source } }).then((r) => r.data)))
+    .then((outs) => { dispatch(notify(`Feed read: ${outs.map((o) => `${FEED_SHORT[o.source] ?? o.source} ${o.status === 'ok' ? `${o.received} reports, ${o.targets ?? 0} on the picture, ${o.matched} on the register` : `${o.status}${o.error ? ` — ${o.error}` : ''}`}`).join(' · ')}`)); refresh(); }).catch(err);
   const toggleFull = () => { if (document.fullscreenElement) document.exitFullscreen?.(); else stage.current?.requestFullscreen?.(); };
   const onFollow = (following: boolean) => { if (selected) setSelected({ ...selected, following }); loadSide(); dispatch(notify(following ? 'Added to your fleet' : 'Removed from your fleet')); };
-  const feedLabel = feed ? (feed.lastStatus === 'never' ? 'AIS feed not yet read' : `AIS feed · ${feed.lastMode ?? ''} · ${feed.lastStatus}${feed.ageMinutes != null ? ` · ${feed.ageMinutes} min ago` : ''} · every ${feed.pollMinutes} min`) : null;
+  const feeds: FeedSourceStatus[] = feed ? (feed.sources?.length ? feed.sources : [feed]) : [];
   const visible = data?.targets.filter((t) => !hidden.has(t.category)) ?? [];
 
   return (
@@ -201,7 +207,7 @@ export default function TrafficMap() {
       <PageHeader icon={RadarRoundedIcon} iconColor="#0B4F8A" title="Live traffic picture"
         sub={data ? `${data.totals.all.toLocaleString('en-GB')} ships on the picture · ${data.totals.registered} on the register · ${data.total.toLocaleString('en-GB')} in view · ${data.coverage}` : 'Loading the picture…'}
         actions={<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          {feedLabel && <Tooltip title={feed?.lastError || ''}><Chip size="small" label={feedLabel} color={feed?.lastStatus === 'ok' ? 'success' : feed?.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid="feed-status" /></Tooltip>}
+          {feeds.map((f, i) => <Tooltip key={f.source} title={f.lastError || f.label || ''}><Chip size="small" label={feedChip(f)} color={f.lastStatus === 'ok' ? 'success' : f.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid={i === 0 ? 'feed-status' : `feed-status-${f.source}`} /></Tooltip>)}
           {data?.thresholds && <Chip size="small" variant="outlined" data-testid="surveillance-thresholds" onClick={() => navigate('/settings/module/ops')} label={`Alerts at: channel ${data.thresholds.channelSpeedLimitKn} kn · AIS gap ${data.thresholds.aisGapAlertMin} min · drift ${data.thresholds.anchorDriftNm} nm`} />}
           {canAck && <Button size="small" variant="outlined" onClick={readFeed} data-testid="feed-read">Read feed now</Button>}
           <Button size="small" startIcon={<RefreshRoundedIcon />} onClick={refresh}>Refresh</Button>

@@ -8,13 +8,18 @@ import { KIT_BUS, MemoryBus, PRINCIPAL_RESOLVER, StaticPrincipalResolver, create
 import { envSchema } from '../src/env';
 import { buildAppModule } from '../src/app.module';
 import { seedMaritimeCentre } from '../src/seed';
-import { advance, pollAis } from '../src/feed';
+import { LRIT_SOURCE, advance, pollAis, pollFeed } from '../src/feed';
+import { DEFAULT_THRESHOLDS, sweepAisGaps } from '../src/surveillance';
 
 /* The AIS/LRIT feed read through the hub: a fake hub answers with three fixes — two ships on the register, one not. */
 const DB = 'maritime_maritime_centre_feed_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
 let app: INestApplication; let server: unknown; let pool: Pool; let env: ReturnType<typeof loadEnv<typeof envSchema>>; let bus: MemoryBus;
 let fake: Server; let port = 0; let mode: 'stub' | 'live' = 'stub'; let down = false; let ships: { id: string; imo: string; mmsi: string; name: string }[] = [];
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
+const lritReports = () => [
+  { imo: ships[0].imo, mmsi: ships[0].mmsi, lat: 22.415, lon: 60.221, sog: 13.4, cog: 312, heading: 310, navStatus: 'UNDER_WAY', destination: 'AEFJR', at: '2026-09-05T06:00:00Z' },
+  { imo: ships[1].imo, mmsi: ships[1].mmsi, lat: 25.796, lon: 56.904, sog: 0, cog: 0, heading: 95, navStatus: 'AT_ANCHOR', destination: 'AEKLF', at: '2026-09-05T06:00:00Z' },
+];
 const positions = () => [
   { imo: ships[0].imo, mmsi: ships[0].mmsi, lat: 25.2, lon: 55.2, sog: 12, cog: 90, heading: 92, navStatus: 'UNDER_WAY', at: '2026-09-04T05:58:12Z' },
   { imo: ships[1].imo, mmsi: ships[1].mmsi, lat: 24.98, lon: 55.01, sog: 0.1, cog: 0, heading: 270, navStatus: 'MOORED', at: '2026-09-04T05:58:40Z' },
@@ -31,7 +36,10 @@ beforeAll(async () => {
       const json = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
       if (down) return json(503, { success: false, message: 'hub down' });
       const b = JSON.parse(raw);
-      json(200, { success: true, data: { callId: '1', adapter: 'ais-lrit', operation: b.operation, status: 'ok', mode, httpStatus: 200, attempts: 1, durationMs: 2, data: { since: b.payload.since, positions: positions() } } });
+      // the LRIT data centre answers reports for the register's own ships, far out and six-hourly; AIS answers the near picture
+      const adapter = String(req.url ?? '').split('?')[0].split('/').pop();
+      const data = adapter === 'lrit' ? { since: b.payload.since, source: 'LRIT', dataCentre: 'Test data centre', reports: lritReports() } : { since: b.payload.since, positions: positions() };
+      json(200, { success: true, data: { callId: '1', adapter, operation: b.operation, status: 'ok', mode, httpStatus: 200, attempts: 1, durationMs: 2, data } });
     });
   });
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', () => { port = (fake.address() as { port: number }).port; r(); }));
@@ -93,5 +101,39 @@ describe('the AIS/LRIT feed', () => {
     await bus.publish(subjectFor(EVENTS.scheduler.pollAisPositions), makeEvent({ type: EVENTS.scheduler.pollAisPositions, source: 'scheduler', data: {} })); await bus.drain();
     const feed = (await request(server as never).get('/tracking/feed').set('authorization', tok('viewer'))).body.data;
     expect(feed.polls).toBe(6);
+  });
+});
+
+describe('the LRIT data centre', () => {
+  it('records the long-range reports as fixes that name their source, keeps a ledger beside the AIS one, and is read on its own event', async () => {
+    const t = new Date('2026-09-05T11:00:00Z');
+    const out = await withTx(pool, (c) => pollFeed(c, LRIT_SOURCE, { env, hub: hub() }, { now: t }));
+    expect(out).toMatchObject({ source: 'lrit', status: 'ok', mode: 'stub', received: 2, matched: 2, targets: 2 });
+    const a = await fixOf(ships[0].id);
+    expect(a).toMatchObject({ source: 'LRIT (stub contract)', nav_status: 'UNDERWAY' }); expect(Number(a.lat)).toBe(22.415); expect(Number(a.lon)).toBe(60.221);
+    expect((await pool.query<{ source: string }>('SELECT source FROM ais_targets WHERE mmsi = $1', [ships[1].mmsi])).rows[0].source).toBe('LRIT (stub contract)');
+    const feed = (await request(server as never).get('/tracking/feed').set('authorization', tok('viewer'))).body.data;
+    expect(feed.source).toBe('ais-lrit'); expect(feed.sources.map((s: { source: string }) => s.source)).toEqual(['ais-lrit', 'lrit']);
+    expect(feed.sources[1]).toMatchObject({ label: 'LRIT data centre', lastStatus: 'ok', lastMode: 'stub', received: 2, matched: 2, polls: 1, pollMinutes: 30 });
+    expect((await request(server as never).post('/tracking/feed/poll?source=lrit').set('authorization', tok('viewer'))).status).toBe(403);
+    expect((await request(server as never).post('/tracking/feed/poll?source=radar').set('authorization', tok('duty'))).status).toBe(400);
+    const now = await request(server as never).post('/tracking/feed/poll?source=lrit').set('authorization', tok('duty'));
+    expect(now.status).toBe(201); expect(now.body.data).toMatchObject({ source: 'lrit', status: 'ok', matched: 2 });
+    await bus.publish(subjectFor(EVENTS.scheduler.pollLritPositions), makeEvent({ type: EVENTS.scheduler.pollLritPositions, source: 'scheduler', data: {} })); await bus.drain();
+    const after = (await request(server as never).get('/tracking/feed').set('authorization', tok('viewer'))).body.data;
+    expect(after.sources[1].polls).toBe(3);
+    // the live counterpart's own name reaches the picture
+    mode = 'live';
+    await withTx(pool, (c) => pollFeed(c, LRIT_SOURCE, { env, hub: hub() }, { now: new Date('2026-09-05T11:30:00Z') }));
+    expect((await fixOf(ships[0].id)).source).toBe('LRIT data centre');
+    expect((await pool.query<{ source: string }>('SELECT source FROM ais_targets WHERE mmsi = $1', [ships[0].mmsi])).rows[0].source).toBe('LRIT · Test data centre');
+    mode = 'stub';
+  });
+  it('does not raise an AIS gap for a ship whose last word came by LRIT: beyond AIS range is not silence', async () => {
+    const t = new Date('2026-09-05T12:00:00Z');
+    await withTx(pool, (c) => pollFeed(c, LRIT_SOURCE, { env, hub: hub() }, { now: t }));
+    expect((await fixOf(ships[0].id)).source).toBe('LRIT (stub contract)');
+    const swept = await withTx(pool, (c) => sweepAisGaps(c, env, DEFAULT_THRESHOLDS, new Date('2026-09-05T14:00:00Z')));
+    expect(swept.vessels).not.toContain(ships[0].name);
   });
 });

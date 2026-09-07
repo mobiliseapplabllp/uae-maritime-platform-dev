@@ -117,6 +117,7 @@ export async function sweepAisGaps(c: Queryable, env: Env, t: Thresholds, now = 
   const r = await c.query<PositionRow>(
     `SELECT * FROM positions
       WHERE nav_status <> 'MOORED' AND received_at < $1::timestamptz - ($2::text || ' minutes')::interval AND received_at > $1::timestamptz - interval '24 hours'
+        AND source NOT ILIKE 'LRIT%'
         AND NOT EXISTS (SELECT 1 FROM mda_alerts a WHERE a.type = 'AIS_GAP' AND a.vessel_id = positions.vessel_id AND NOT a.acknowledged)
       ORDER BY received_at LIMIT 200`, [now, String(t.aisGapAlertMin)]);
   const vessels: string[] = [];

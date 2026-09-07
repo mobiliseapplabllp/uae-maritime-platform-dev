@@ -1,0 +1,47 @@
+{
+  "status": 200,
+  "body": {
+    "since": "{since}",
+    "source": "LRIT",
+    "dataCentre": "National Data Centre (recorded contract)",
+    "count": 3,
+    "reports": [
+      {
+        "imo": "9721475",
+        "mmsi": "470027214",
+        "lat": 22.415,
+        "lon": 60.221,
+        "sog": 13.4,
+        "cog": 312.0,
+        "heading": 310,
+        "navStatus": "UNDER_WAY",
+        "destination": "AEFJR",
+        "at": "2026-09-04T00:00:00Z"
+      },
+      {
+        "imo": "9718569",
+        "mmsi": "470023503",
+        "lat": 12.883,
+        "lon": 52.117,
+        "sog": 11.1,
+        "cog": 48.0,
+        "heading": 50,
+        "navStatus": "UNDER_WAY",
+        "destination": "AEJEA",
+        "at": "2026-09-04T00:00:00Z"
+      },
+      {
+        "imo": "9715658",
+        "mmsi": "470019792",
+        "lat": 25.796,
+        "lon": 56.904,
+        "sog": 0.0,
+        "cog": 0.0,
+        "heading": 95,
+        "navStatus": "AT_ANCHOR",
+        "destination": "AEKLF",
+        "at": "2026-09-04T00:00:00Z"
+      }
+    ]
+  }
+}
