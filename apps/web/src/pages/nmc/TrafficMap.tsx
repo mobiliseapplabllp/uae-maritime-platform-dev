@@ -42,7 +42,9 @@ const words = (s?: string) => String(s || '').replace(/_/g, ' ');
 interface FeedSourceStatus { source: string; label: string; lastStatus: string; lastMode: string | null; ageMinutes: number | null; received: number; matched: number; pollMinutes: number; lastError?: string | null }
 type FeedStatus = FeedSourceStatus & { sources?: FeedSourceStatus[] };
 const FEED_SHORT: Record<string, string> = { 'ais-lrit': 'AIS', lrit: 'LRIT' };
-const feedChip = (f: FeedSourceStatus) => (f.lastStatus === 'never' ? `${FEED_SHORT[f.source] ?? f.source} feed not yet read` : `${FEED_SHORT[f.source] ?? f.source} · ${f.lastMode ?? ''} · ${f.lastStatus}${f.ageMinutes != null ? ` · ${f.ageMinutes} min ago` : ''} · every ${f.pollMinutes} min`);
+// the chip stays short so the header holds both feeds on one line; the cadence and any error sit in its tooltip
+const feedChip = (f: FeedSourceStatus) => (f.lastStatus === 'never' ? `${FEED_SHORT[f.source] ?? f.source} · not read yet` : `${FEED_SHORT[f.source] ?? f.source} · ${f.lastMode ?? ''} · ${f.lastStatus}${f.ageMinutes != null ? ` · ${f.ageMinutes} min` : ''}`);
+const feedTip = (f: FeedSourceStatus) => `${f.label || f.source}: read every ${f.pollMinutes} min${f.lastError ? ` — ${f.lastError}` : ''}`;
 const debounce = <A extends unknown[]>(fn: (...a: A) => void, ms: number) => { let t: ReturnType<typeof setTimeout> | undefined; return (...a: A) => { if (t) clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
 
 export default function TrafficMap() {
@@ -207,7 +209,7 @@ export default function TrafficMap() {
       <PageHeader icon={RadarRoundedIcon} iconColor="#0B4F8A" title="Live traffic picture"
         sub={data ? `${data.totals.all.toLocaleString('en-GB')} ships on the picture · ${data.totals.registered} on the register · ${data.total.toLocaleString('en-GB')} in view · ${data.coverage}` : 'Loading the picture…'}
         actions={<Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          {feeds.map((f, i) => <Tooltip key={f.source} title={f.lastError || f.label || ''}><Chip size="small" label={feedChip(f)} color={f.lastStatus === 'ok' ? 'success' : f.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid={i === 0 ? 'feed-status' : `feed-status-${f.source}`} /></Tooltip>)}
+          {feeds.map((f, i) => <Tooltip key={f.source} title={feedTip(f)}><Chip size="small" label={feedChip(f)} color={f.lastStatus === 'ok' ? 'success' : f.lastStatus === 'never' ? 'default' : 'warning'} variant="outlined" data-testid={i === 0 ? 'feed-status' : `feed-status-${f.source}`} /></Tooltip>)}
           {data?.thresholds && <Chip size="small" variant="outlined" data-testid="surveillance-thresholds" onClick={() => navigate('/settings/module/ops')} label={`Alerts at: channel ${data.thresholds.channelSpeedLimitKn} kn · AIS gap ${data.thresholds.aisGapAlertMin} min · drift ${data.thresholds.anchorDriftNm} nm`} />}
           {canAck && <Button size="small" variant="outlined" onClick={readFeed} data-testid="feed-read">Read feed now</Button>}
           <Button size="small" startIcon={<RefreshRoundedIcon />} onClick={refresh}>Refresh</Button>
@@ -238,7 +240,7 @@ export default function TrafficMap() {
               {CATEGORIES.map((c) => (
                 <Chip key={c} size="small" label={CATEGORY_LABEL[c]} onClick={() => setHidden((h) => { const n = new Set(h); if (n.has(c)) n.delete(c); else n.add(c); return n; })}
                   variant={hidden.has(c) ? 'outlined' : 'filled'} aria-pressed={!hidden.has(c)}
-                  sx={{ height: 22, fontSize: 11, bgcolor: hidden.has(c) ? 'transparent' : `${CATEGORY_COLOR[c]}33`, borderColor: CATEGORY_COLOR[c], '& .MuiChip-label': { pl: 0.75 }, opacity: hidden.has(c) ? 0.55 : 1 }}
+                  sx={{ height: 24, fontSize: 11, bgcolor: hidden.has(c) ? 'transparent' : `${CATEGORY_COLOR[c]}33`, borderColor: CATEGORY_COLOR[c], '& .MuiChip-label': { pl: 0.75 }, opacity: hidden.has(c) ? 0.55 : 1 }}
                   icon={<Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: CATEGORY_COLOR[c], ml: 0.75 }} aria-hidden />} />
               ))}
             </Stack>

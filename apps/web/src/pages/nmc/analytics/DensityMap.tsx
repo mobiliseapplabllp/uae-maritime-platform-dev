@@ -70,5 +70,5 @@ export default function DensityMap({ data, areas, home }: { data: AnalyticsData 
     if (!fitted.current && bounds.isValid()) { m.fitBounds(bounds.pad(0.15), { maxZoom: 10 }); fitted.current = true; }
   }, [data]);
 
-  return <Box ref={el} data-testid="analytics-map" role="img" aria-label="Traffic density and lanes on the map" sx={{ height: 440, borderRadius: 1.5, overflow: 'hidden', bgcolor: dark ? '#0B1B26' : '#D7E7EF', '& .leaflet-tile-pane': dark ? { filter: 'invert(1) hue-rotate(190deg) brightness(0.85) contrast(0.9)' } : {} }} />;
+  return <Box ref={el} data-testid="analytics-map" role="region" aria-label="Traffic density and lanes on the map" sx={{ height: 440, borderRadius: 1.5, overflow: 'hidden', bgcolor: dark ? '#0B1B26' : '#D7E7EF', '& .leaflet-tile-pane': dark ? { filter: 'invert(1) hue-rotate(190deg) brightness(0.85) contrast(0.9)' } : {} }} />;
 }
