@@ -1,14 +1,18 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query } from '@nestjs/common';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
 import type { Pool } from 'pg';
 import { EVENTS } from '@maritime/contracts';
 import {
-  AuditClient, CurrentUser, KIT_ENV, KIT_POOL, RequirePerm, conflict, enqueue, eventFromContext,
-  getContext, notFound, withTx, zod, type Principal,
+  AiGatewayClient, AuditClient, CurrentUser, KIT_ENV, KIT_LOGGER, KIT_POOL, RequirePerm, conflict, enqueue, eventFromContext,
+  getContext, notFound, withTx, zod, type AppLogger, type Principal,
 } from '@maritime/service-kit';
 import type { Env } from './env';
 import { ENVIRONMENTS, type DeploymentRow, type Environment, type ModelRow } from './registry';
 import { HttpProvider, StubProvider, percentiles, serve, type ServingProvider } from './serving';
+import { LocalVisionProvider } from './vision';
+import { CommandSpeechProvider, parseArgs } from './speech';
 
 const features = z.record(z.unknown()).default({});
 const inferBody = z.object({
@@ -48,11 +52,34 @@ const actor = () => getContext()?.actor ?? { id: 'system', name: 'system' };
  */
 @Controller('ai-platform')
 export class ServingController {
-  private readonly provider: ServingProvider;
-  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient) {
-    this.provider = env.SERVING_MODE === 'live' && env.SERVING_ENDPOINT
+  /** What answers when a deployment names no server of its own: the configured endpoint, or the stub. */
+  private readonly fallback: ServingProvider;
+  /** The platform's own pipelines: vision in-country, speech on the host when a command is configured. */
+  private readonly visionPipeline: LocalVisionProvider;
+  private readonly speechPipeline: CommandSpeechProvider | null;
+  constructor(@Inject(KIT_POOL) private readonly pool: Pool, @Inject(KIT_ENV) private readonly env: Env, private readonly audit: AuditClient, @Inject(KIT_LOGGER) log: AppLogger) {
+    this.fallback = env.SERVING_MODE === 'live' && env.SERVING_ENDPOINT
       ? new HttpProvider(env.SERVING_ENDPOINT, env.SERVING_TOKEN)
       : new StubProvider();
+    this.visionPipeline = new LocalVisionProvider({
+      langs: env.VISION_LANGS, cachePath: env.VISION_CACHE_PATH || join(tmpdir(), 'maritime-tessdata'), documentsUrl: env.DOCUMENTS_URL,
+      ocrTimeoutMs: env.VISION_OCR_TIMEOUT_MS, refine: env.VISION_REFINE, gateway: env.VISION_REFINE === 'off' ? null : new AiGatewayClient(env.AI_TOOL_GATEWAY_URL, env.SERVICE_TOKEN), caller: 'svc:ai-platform', log,
+    });
+    this.speechPipeline = env.AI_SPEECH_COMMAND ? new CommandSpeechProvider({ command: env.AI_SPEECH_COMMAND, args: parseArgs(env.AI_SPEECH_ARGS), timeoutMs: env.AI_SPEECH_TIMEOUT_MS, documentsUrl: env.DOCUMENTS_URL, log }) : null;
+  }
+
+  /**
+   * The deployment says where its version is served. `ai-models://<key>` is the platform's own model server, reached on
+   * the service token; an http(s) address is a server of the deployment's own, reached with the configured bearer; a
+   * pipeline the platform runs itself, or no address at all, falls back to what the environment configured.
+   */
+  private providerFor(d: DeploymentRow): ServingProvider {
+    const endpoint = (d.endpoint ?? '').trim();
+    if (/^https?:\/\//i.test(endpoint)) return new HttpProvider(endpoint, this.env.SERVING_TOKEN);
+    if (/^ai-models:\/\//i.test(endpoint)) return new HttpProvider(this.env.AI_MODELS_URL, undefined, fetch, { 'x-service-token': this.env.SERVICE_TOKEN }, 'ai-models');
+    if (/^platform:\/\/vision/i.test(endpoint)) return this.visionPipeline;
+    if (/^platform:\/\/speech/i.test(endpoint)) return this.speechPipeline ?? this.fallback;
+    return this.fallback;
   }
 
   private async live(key: string, environment?: Environment): Promise<{ model: ModelRow; deployment: DeploymentRow }> {
@@ -104,12 +131,13 @@ export class ServingController {
       await this.record({ model: null, key, version: 0, environment: b.environment ?? 'PROD', status: 'REFUSED', latencyMs: 0, withinSla: true, features: b.features, output: {}, confidence: 0, subject: b.subject, error: err instanceof Error ? err.message : 'refused' }, user);
       throw err;
     }
-    const outcome = await serve(this.provider, { modelKey: model.key, task: model.task, version: deployment.version, features: b.features, fields: b.fields, subject: b.subject }, this.env.INFERENCE_SLA_MS);
+    const provider = this.providerFor(deployment);
+    const outcome = await serve(provider, { modelKey: model.key, task: model.task, version: deployment.version, features: b.features, fields: b.fields, subject: b.subject }, this.env.INFERENCE_SLA_MS);
     await this.record({ model, key: model.key, version: deployment.version, environment: deployment.environment, status: outcome.status, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla, features: b.features, output: outcome.output, confidence: outcome.confidence, subject: b.subject, error: outcome.error }, user);
     if (outcome.status !== 'OK') throw conflict(`${outcome.error ?? 'Inference failed'} (${outcome.latencyMs} ms against a ${this.env.INFERENCE_SLA_MS} ms budget)`);
     return {
       model: model.key, version: deployment.version, environment: deployment.environment,
-      residency: model.residency_region, mode: this.provider.mode,
+      residency: model.residency_region, mode: provider.mode, servedBy: provider.servedBy,
       output: outcome.output, confidence: outcome.confidence,
       latencyMs: outcome.latencyMs, budgetMs: this.env.INFERENCE_SLA_MS, withinSla: outcome.withinSla,
     };
@@ -117,24 +145,30 @@ export class ServingController {
 
   /** Document extraction. A certificate photographed at a gangway is the case this exists for. */
   @RequirePerm('ai.use') @Post('vision/extract')
-  async vision(@Body(zod(visionBody)) b: z.infer<typeof visionBody>, @CurrentUser() user: Principal) {
+  async vision(@Body(zod(visionBody)) b: z.infer<typeof visionBody>, @CurrentUser() user: Principal, @Headers('authorization') authorization?: string) {
     const { model, deployment } = await this.live(b.modelKey);
+    // what is recorded about the request: the reference, the hints and the size — never the document itself
     const feat = { ...b.hints, documentRef: b.documentRef ?? '', pages: b.pages, contentLength: b.content?.length ?? 0 };
-    const outcome = await serve(this.provider, { modelKey: model.key, task: model.task, version: deployment.version, features: feat, fields: b.fields, subject: b.subject }, this.env.INFERENCE_SLA_MS);
+    const provider = this.providerFor(deployment);
+    const request = provider === this.visionPipeline ? { documentRef: b.documentRef ?? '', pages: b.pages, content: b.content, hints: b.hints } : feat;
+    const userToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    const outcome = await serve(provider, { modelKey: model.key, task: model.task, version: deployment.version, features: request, fields: b.fields, subject: b.subject, userToken }, this.env.INFERENCE_SLA_MS);
     await this.record({ model, key: model.key, version: deployment.version, environment: deployment.environment, status: outcome.status, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla, features: feat, output: outcome.output, confidence: outcome.confidence, subject: b.subject, error: outcome.error }, user);
     if (outcome.status !== 'OK') throw conflict(outcome.error ?? 'Extraction failed');
-    return { model: model.key, version: deployment.version, residency: model.residency_region, mode: this.provider.mode, ...outcome.output, confidence: outcome.confidence, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla };
+    return { model: model.key, version: deployment.version, residency: model.residency_region, mode: provider.mode, servedBy: provider.servedBy, ...outcome.output, confidence: outcome.confidence, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla };
   }
 
   /** Transcription. A VHF exchange or a port-control recording attached to an incident. */
   @RequirePerm('ai.use') @Post('speech/transcribe')
-  async speech(@Body(zod(speechBody)) b: z.infer<typeof speechBody>, @CurrentUser() user: Principal) {
+  async speech(@Body(zod(speechBody)) b: z.infer<typeof speechBody>, @CurrentUser() user: Principal, @Headers('authorization') authorization?: string) {
     const { model, deployment } = await this.live(b.modelKey);
     const feat = { audioRef: b.audioRef ?? '', durationSec: b.durationSec, language: b.language, transcriptHint: b.transcriptHint ?? '' };
-    const outcome = await serve(this.provider, { modelKey: model.key, task: model.task, version: deployment.version, features: feat, subject: b.subject }, this.env.INFERENCE_SLA_MS);
+    const provider = this.providerFor(deployment);
+    const userToken = authorization?.startsWith('Bearer ') ? authorization.slice(7) : undefined;
+    const outcome = await serve(provider, { modelKey: model.key, task: model.task, version: deployment.version, features: feat, subject: b.subject, userToken }, this.env.INFERENCE_SLA_MS);
     await this.record({ model, key: model.key, version: deployment.version, environment: deployment.environment, status: outcome.status, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla, features: feat, output: outcome.output, confidence: outcome.confidence, subject: b.subject, error: outcome.error }, user);
     if (outcome.status !== 'OK') throw conflict(outcome.error ?? 'Transcription failed');
-    return { model: model.key, version: deployment.version, residency: model.residency_region, mode: this.provider.mode, ...outcome.output, confidence: outcome.confidence, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla };
+    return { model: model.key, version: deployment.version, residency: model.residency_region, mode: provider.mode, servedBy: provider.servedBy, ...outcome.output, confidence: outcome.confidence, latencyMs: outcome.latencyMs, withinSla: outcome.withinSla };
   }
 
   /**
@@ -166,7 +200,10 @@ export class ServingController {
     const all = rows.rows.filter((r) => r.status === 'OK').map((r) => r.latency_ms);
     const breaches = rows.rows.filter((r) => !r.within_sla).length;
     return {
-      windowDays: days, budgetMs: this.env.INFERENCE_SLA_MS, mode: this.provider.mode,
+      windowDays: days, budgetMs: this.env.INFERENCE_SLA_MS, mode: this.fallback.mode,
+      // where the answers come from: the platform's own model server for an `ai-models://` deployment, a deployment's own
+      // address, or the fallback the environment configured
+      servers: { modelServer: this.env.AI_MODELS_URL, endpoint: this.env.SERVING_ENDPOINT ?? null, fallback: this.fallback.servedBy, vision: this.visionPipeline.servedBy, speech: this.speechPipeline?.servedBy ?? this.fallback.servedBy },
       calls: rows.rows.length, breaches,
       withinSlaPct: rows.rows.length ? Math.round(((rows.rows.length - breaches) / rows.rows.length) * 1000) / 10 : 100,
       latencyMs: percentiles(all), models,

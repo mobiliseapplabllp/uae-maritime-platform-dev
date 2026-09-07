@@ -1,8 +1,8 @@
 {
-  "name": "@maritime/ai-platform",
+  "name": "@maritime/ai-models",
   "version": "0.1.0",
   "private": true,
-  "description": "AI/ML infrastructure: the model registry with training runs and versioned approval, serving with a latency budget, drift detection against a registered baseline, and the vision and speech pipelines",
+  "description": "The model server: training on the platform's own records, versioned artefacts, and serving on the contract the model platform calls",
   "main": "dist/main.js",
   "scripts": {
     "build": "swc src -d dist --config-file ../../.swcrc.template.json --strip-leading-paths && tsc -p tsconfig.json --noEmit",
@@ -22,12 +22,9 @@
     "@nestjs/core": "11.2.3",
     "@nestjs/platform-express": "11.2.3",
     "@nestjs/swagger": "11.4.7",
-    "@tesseract.js-data/ara": "1.0.0",
-    "@tesseract.js-data/eng": "1.0.0",
     "pg": "8.23.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2",
-    "tesseract.js": "7.0.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

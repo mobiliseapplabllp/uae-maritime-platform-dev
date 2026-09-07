@@ -120,9 +120,24 @@ function smartFor(rng: Prng, i: { startedAt: Date; closedAt: Date; detained: boo
   };
 }
 
+/* What makes a boarding find something. The world is fictional, but it is not a coin: an older ship, one with deficiencies
+ * and a detention behind it, one not boarded for a year, and a bulk or general-cargo ship carry more risk than a young
+ * container ship on a liner run — the shape the regional PSC statistics show in general terms. Flags and class societies
+ * are not ranked: those are real bodies, and the world attributes nothing to them. */
+interface InspectionHistory { deficiencies: number; detentions: number; lastAt: Date | null }
+const TYPE_RISK: Record<string, number> = { CONT: -0.3, TANK: 0, RORO: 0, OSV: 0.1, GEN: 0.4, BULK: 0.5 };
+export function propensity(v: WorldVessel, h: InspectionHistory, at: Date): { detention: number; clean: number; maxFindings: number } {
+  const age = Math.max(0, at.getUTCFullYear() - v.built);
+  const days = h.lastAt ? (at.getTime() - h.lastAt.getTime()) / D : 400;
+  const z = -5.0 + 0.12 * age + 0.5 * Math.min(h.detentions, 2) + 0.04 * Math.min(h.deficiencies, 12) + (days > 365 ? 0.4 : 0) + (TYPE_RISK[v.type] ?? 0);
+  const p = 1 / (1 + Math.exp(-z));
+  return { detention: Math.min(0.4, p), clean: Math.max(0.2, 0.75 - 3 * p), maxFindings: p > 0.1 ? 4 : 3 };
+}
+
 export function buildInspections(rng: Prng, portCalls: WorldPortCall[], vessels: WorldVessel[], templates: WorldChecklistTemplate[], users: WorldUser[], lookups: WorldLookup[], now: Date, subjects: { companies?: WorldCompany[]; berths?: WorldBerth[] } = {}): WorldInspection[] {
   const srng = rng.fork('smart');
   const priorByVessel = new Map<string, string[]>();
+  const historyByVessel = new Map<string, InspectionHistory>();
   const vById = new Map(vessels.map((v) => [v.id, v]));
   const fictional = (id: string) => vById.get(id)?.real === false;
   const inspectors = users.filter((u) => u.roleName === 'Marine Surveyor' && /surveyor/i.test(u.designation)).slice(0, 3);
@@ -142,8 +157,11 @@ export function buildInspections(rng: Prng, portCalls: WorldPortCall[], vessels:
   picked.forEach((call, idx) => {
     const type: InspectionType = rng.chance(0.55) ? 'PSC' : rng.chance(0.5) ? 'FSI' : rng.pick(['ISM', 'MLC', 'ISPS']);
     const tpl = tplFor(type); const startedAt = new Date(new Date(call.atb!).getTime() + 5 * H);
-    const detained = idx % 16 === 4; // ~6% detention rate, in line with the regional PSC figure
-    const nFind = detained ? rng.int(3, 5) : rng.chance(0.5) ? 0 : rng.int(1, 3);
+    const v = vById.get(call.vesselId)!; const history = historyByVessel.get(call.vesselId) ?? { deficiencies: 0, detentions: 0, lastAt: null };
+    const p = propensity(v, history, new Date(call.atb!));
+    // around a 6% detention rate overall, in line with the regional PSC figure — carried by the old ship with a record
+    const detained = rng.chance(p.detention);
+    const nFind = detained ? rng.int(3, 5) : rng.chance(p.clean) ? 0 : rng.int(1, p.maxFindings);
     const findings: WorldFinding[] = Array.from({ length: nFind }, (_, i2) => {
       const def = defs[(idx + i2 * 3) % defs.length]; const closed = !detained && rng.chance(0.8);
       return { deficiencyCode: def.code, deficiencyLabel: def.label, description: `${def.label} — observed during ${type} inspection`, actionCode: detained && i2 === 0 ? '30' : rng.pick(actions),
@@ -156,6 +174,7 @@ export function buildInspections(rng: Prng, portCalls: WorldPortCall[], vessels:
     const priorCodes = priorByVessel.get(call.vesselId) ?? [];
     const smart = smartFor(srng, { startedAt, closedAt, detained, findings, priorCodes }, now);
     priorByVessel.set(call.vesselId, [...priorCodes, ...findings.map((f) => f.deficiencyCode)].slice(-8));
+    historyByVessel.set(call.vesselId, { deficiencies: history.deficiencies + findings.length, detentions: history.detentions + (detained ? 1 : 0), lastAt: startedAt });
     out.push({ id: stableId('inspection', number), number, vesselId: call.vesselId, vesselName: call.vesselName, portCallId: call.id, vcn: call.vcn, type, templateId: tpl.id, subjectKind: 'VESSEL', subjectId: call.vesselId, subjectName: call.vesselName,
       inspectorId: inspector.id, inspector: inspector.name,
       plannedAt: iso(startedAt.getTime() - srng.int(12, 48) * H), startedAt: iso(startedAt), closedAt: iso(closedAt), status: 'CLOSED', result: detained ? 'DETAINED' : nFind ? 'DEFICIENCIES' : 'SATISFACTORY',

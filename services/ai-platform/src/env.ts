@@ -14,6 +14,30 @@ export const envSchema = baseEnvSchema.extend({
   SERVING_MODE: z.enum(['stub', 'live']).default('stub'),
   SERVING_ENDPOINT: z.string().optional(),
   SERVING_TOKEN: z.string().optional(),
+  /**
+   * The platform's own model server. A deployment whose endpoint is `ai-models://<key>` is served from it, on the
+   * service token; it fits the tabular models on the platform's records and answers from a versioned artefact.
+   */
+  AI_MODELS_URL: z.string().default('http://127.0.0.1:5505'),
+  /** Where a document or a recording is read from, as the person asking. */
+  DOCUMENTS_URL: z.string().default('http://127.0.0.1:5410'),
+  /** The tool gateway, through which a document read may be refined by the hosted provider Settings → AI names — masked and fenced there. */
+  AI_TOOL_GATEWAY_URL: z.string().default('http://127.0.0.1:5504'),
+  /**
+   * Vision: the OCR languages (tesseract's names, joined with `+`; the data ships with the service's dependencies), where the
+   * engine keeps its language data, the time one page may take, and whether what stayed unread is sent through the gateway.
+   */
+  VISION_LANGS: z.string().default('eng+ara'),
+  VISION_CACHE_PATH: z.string().default(''),
+  VISION_OCR_TIMEOUT_MS: z.coerce.number().int().positive().default(20_000),
+  VISION_REFINE: z.enum(['off', 'when-unread', 'always']).default('when-unread'),
+  /**
+   * Speech: a speech model installed on the host, reached as a command. The command and its arguments come from here and
+   * nowhere else; `{file}`, `{language}` and `{dir}` are filled in; the command runs without a shell. Unset, the stub answers.
+   */
+  AI_SPEECH_COMMAND: z.string().default(''),
+  AI_SPEECH_ARGS: z.string().default('{file}'),
+  AI_SPEECH_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   /** The RFP's commitment. A request past this is abandoned and recorded as a breach rather than left hanging. */
   INFERENCE_SLA_MS: z.coerce.number().int().positive().default(5000),
   /**

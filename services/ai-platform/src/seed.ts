@@ -23,6 +23,12 @@ interface Def {
   /** Feature generator. `t` runs 0 (oldest) to 1 (most recent) so a definition can make a feature drift. */
   features: (t: number, rnd: () => number) => Record<string, unknown>;
   versions: { artifact: string; metrics: Record<string, number>; note: string }[];
+  /**
+   * Where the deployed version is served. `ai-models://<key>` is the platform's own model server, which fits the model
+   * on the platform's records and reports the measured metrics to this registry; `platform://<pipeline>` is a pipeline
+   * the platform runs itself.
+   */
+  endpoint: string;
 }
 
 /** A small deterministic generator, so a reseed produces the same world. */
@@ -33,51 +39,60 @@ function prng(seed: number) {
 const pick = <T,>(rnd: () => number, xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length) % xs.length];
 const around = (rnd: () => number, mid: number, spread: number) => Math.round((mid + (rnd() - 0.5) * 2 * spread) * 100) / 100;
 
-const SHIP_TYPES = ['CONTAINER', 'BULK_CARRIER', 'TANKER', 'GENERAL_CARGO', 'RORO'] as const;
-const FLAGS = ['AE', 'PA', 'LR', 'MH', 'SG', 'MT'] as const;
+/* The ship types and agents as the shared world names them, and the previous ports as UN/LOCODEs: the generated traffic
+ * carries the same feature names and vocabularies the model server fits on, so the baseline and the drift report read
+ * the world the model actually sees. */
+const SHIP_TYPES = ['CONT', 'BULK', 'TANK', 'GEN', 'RORO', 'OSV'] as const;
+const AGENTS = ['GSS', 'ABM', 'OAP', 'WCM', 'SSL', 'TMA'] as const;
+const PORTS = ['CNSHA', 'SGSIN', 'SAJED', 'MYPKG', 'NLRTM', 'KWKWI', 'OMSLL', 'QAHMD', 'INNSA', 'KRPUS'] as const;
 
 const DEFS: Def[] = [
   {
     key: 'inspection-targeting', name: 'Port state inspection targeting', nameAr: 'استهداف التفتيش',
     task: 'CLASSIFICATION', purpose: 'Scores an expected arrival for how much a port state control inspection would be worth, from the ship’s age, detention history, class standing and time since its last inspection.',
-    owner: 'Maritime Safety', framework: 'gradient-boosting', residency: 'AE', residencyNote: 'Served in-country; no feature leaves the platform.',
+    owner: 'Maritime Safety', framework: 'gradient-boosted trees (ai-models)', residency: 'AE', residencyNote: 'Served in-country by the platform’s own model server; no feature leaves the platform.',
     // Fleet age drifts upward across the window: the shift a targeting model would want to be told about.
     features: (t, rnd) => ({
       shipAgeYears: Math.round(around(rnd, 12 + t * 6, 5)),
       daysSinceLastInspection: Math.round(around(rnd, 210, 150)),
       priorDeficiencies: Math.max(0, Math.round(around(rnd, 3, 3))),
       priorDetentions: rnd() > 0.88 ? 1 : 0,
-      shipType: pick(rnd, SHIP_TYPES), flag: pick(rnd, FLAGS),
+      shipType: pick(rnd, SHIP_TYPES), homeFlag: rnd() > 0.45 ? 'home' : 'foreign',
     }),
+    // The metrics are not typed in: the model server fits each version on the platform's records and reports what it
+    // measured on held-out rows, on its boot and after every fit.
     versions: [
-      { artifact: 'registry://models/inspection-targeting/1', metrics: { auc: 0.79, precision: 0.61, recall: 0.55 }, note: 'First fit on three years of inspection outcomes' },
-      { artifact: 'registry://models/inspection-targeting/2', metrics: { auc: 0.83, precision: 0.66, recall: 0.6 }, note: 'Added class-standing and detention history' },
+      { artifact: 'ai-models://inspection-targeting/1', metrics: {}, note: 'First fit on the inspection outcomes: age, time since the last boarding, type and flag' },
+      { artifact: 'ai-models://inspection-targeting/2', metrics: {}, note: 'Added the ship’s own deficiency and detention history' },
     ],
+    endpoint: 'ai-models://inspection-targeting',
   },
   {
     key: 'eta-prediction', name: 'Arrival time prediction', nameAr: 'التنبؤ بوقت الوصول',
-    task: 'REGRESSION', purpose: 'Predicts hours to arrival from the reported ETA, current speed, distance to the pilot station and the anchorage queue.',
-    owner: 'Harbour Operations', framework: 'gradient-boosting', residency: 'AE', residencyNote: 'Served in-country alongside the traffic picture.',
+    task: 'REGRESSION', purpose: 'Predicts the hours a ship will wait between its reported arrival and its berth, from what is known when the call is announced: the ship, its agent, the hour and day of arrival, the queue ahead, the cargo and the previous port.',
+    owner: 'Harbour Operations', framework: 'gradient-boosted trees (ai-models)', residency: 'AE', residencyNote: 'Served in-country by the platform’s own model server, alongside the traffic picture.',
     features: (_t, rnd) => ({
-      distanceNm: around(rnd, 180, 140), speedKn: around(rnd, 12.5, 4),
-      queueAhead: Math.max(0, Math.round(around(rnd, 4, 4))), reportedEtaHours: around(rnd, 15, 10),
-      shipType: pick(rnd, SHIP_TYPES),
+      shipType: pick(rnd, SHIP_TYPES), agentCode: pick(rnd, AGENTS), etaHour: Math.floor(rnd() * 24), etaWeekday: String(Math.floor(rnd() * 7)),
+      queueAhead: Math.max(0, Math.round(around(rnd, 3, 3))), teu: rnd() > 0.6 ? Math.round(around(rnd, 2300, 1900)) : 0, cargoMt: Math.round(around(rnd, 40000, 38000)), prevPort: pick(rnd, PORTS),
     }),
-    versions: [{ artifact: 'registry://models/eta-prediction/1', metrics: { mae: 1.9, rmse: 3.1 }, note: 'Fit on two years of arrivals' }],
+    versions: [{ artifact: 'ai-models://eta-prediction/1', metrics: {}, note: 'Fit on the port calls that reached a berth' }],
+    endpoint: 'ai-models://eta-prediction',
   },
   {
     key: 'document-extraction', name: 'Certificate and form extraction', nameAr: 'استخراج بيانات الشهادات',
     task: 'VISION', purpose: 'Reads a photographed or scanned statutory certificate and returns its fields with a confidence for each, so an officer confirms rather than retypes.',
-    owner: 'Registrar of Ships', framework: 'document-vision', residency: 'AE', residencyNote: 'Images are processed in-country and are not retained after extraction.',
+    owner: 'Registrar of Ships', framework: 'in-country OCR (tesseract) with governed refinement', residency: 'AE', residencyNote: 'Images are read in the platform’s own process and are not retained after extraction; only text that stayed unread may be refined through the tool gateway, masked and fenced there.',
     features: (_t, rnd) => ({ pages: 1 + Math.floor(rnd() * 3), documentRef: `documents://scan/${Math.floor(rnd() * 9000) + 1000}`, contentLength: Math.round(around(rnd, 2400, 1800)) }),
     versions: [{ artifact: 'registry://models/document-extraction/1', metrics: { fieldAccuracy: 0.94, characterErrorRate: 0.021 }, note: 'Statutory certificate layouts, English and Arabic' }],
+    endpoint: 'platform://vision',
   },
   {
     key: 'speech-transcription', name: 'Port control transcription', nameAr: 'تفريغ الاتصالات الصوتية',
     task: 'SPEECH', purpose: 'Transcribes VHF and port-control recordings attached to an incident so the case file is searchable.',
-    owner: 'Maritime Surveillance', framework: 'speech-to-text', residency: 'AE', residencyNote: 'Audio is processed in-country and the recording stays in the documents service.',
+    owner: 'Maritime Surveillance', framework: 'speech model on the host, through a command', residency: 'AE', residencyNote: 'Audio is transcribed on the platform’s own host and the recording stays in the documents service.',
     features: (_t, rnd) => ({ durationSec: Math.round(around(rnd, 95, 80)), language: rnd() > 0.7 ? 'ar' : 'en', audioRef: `documents://audio/${Math.floor(rnd() * 9000) + 1000}` }),
     versions: [{ artifact: 'registry://models/speech-transcription/1', metrics: { wordErrorRate: 0.11 }, note: 'Bilingual, maritime vocabulary' }],
+    endpoint: 'platform://speech',
   },
 ];
 
@@ -128,11 +143,12 @@ export async function seedAiPlatform(databaseUrl: string): Promise<Record<string
       await c.query(
         `INSERT INTO deployments(model_id, version, environment, status, endpoint, replicas, residency_region, note, deployed_by, deployed_at)
          VALUES ($1,$2,'PROD','ACTIVE',$3,$4,$5,$6,$7,$8)`,
-        [modelId, deployedVersion, `https://serving.internal/${def.key}`, 2, def.residency, 'Approved for production serving', 'Platform Administrator', deployedAt]);
+        [modelId, deployedVersion, def.endpoint, 2, def.residency, 'Approved for production serving', 'Platform Administrator', deployedAt]);
       counts.deployments += 1;
       await c.query('UPDATE models SET current_version = $2 WHERE id = $1', [modelId, deployedVersion]);
 
-      // A year of traffic, played through the same provider the API uses.
+      // A year of traffic, played through the stub provider: the history is generated, and a figure in it is a
+      // demonstration of the machinery, not a measurement of the model.
       const rnd = prng(9_000 + di * 17);
       const total = 420;
       const samples: { features: Record<string, unknown>; output: Record<string, unknown>; at: Date; latency: number; ok: boolean }[] = [];

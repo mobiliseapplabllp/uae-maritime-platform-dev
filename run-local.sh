@@ -71,6 +71,8 @@ start_runtime() {
   ok "PostgreSQL reachable"
 }
 
+# The services whose database this run created — a new service's, on an update — so they can be seeded once.
+CREATED_SERVICES=""
 create_databases() {
   say "Creating databases"
   local made=0 failed=""
@@ -81,7 +83,7 @@ create_databases() {
       # A bare `createdb ... && made=$((made+1))` counted a failure as nothing to do, so with the
       # server down this printed "0 database(s) created" and every service then failed to boot with
       # no clue as to why. A create that fails has to say so.
-      if createdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" "$db" 2>/dev/null; then made=$((made+1)); else failed="$failed $db"; fi
+      if createdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" "$db" 2>/dev/null; then made=$((made+1)); CREATED_SERVICES="$CREATED_SERVICES $s"; else failed="$failed $db"; fi
     fi
   done
   [ -z "$failed" ] || die "could not create:$failed
@@ -205,8 +207,14 @@ case "${1:-up}" in
     # it up and dies with a clear message if it cannot.
     start_runtime
     # A pull can bring a service that did not exist last time, and a service with no database fails
-    # on boot. create_databases only creates what is missing, so this is cheap on an ordinary update.
+    # on boot. create_databases only creates what is missing, so this is cheap on an ordinary update;
+    # a database it did create is empty, so that service is seeded from the shared world before it starts.
     create_databases
+    if [ -n "$CREATED_SERVICES" ]; then
+      say "Seeding the new service(s):$CREATED_SERVICES"
+      bash infra/local/services.sh seed $CREATED_SERVICES 2>&1 | grep -Ei "SEED COMPLETE|error|applied" | tail -10 | sed 's/^/   /'
+      ok "seeded"
+    fi
     say "Restarting services (each applies its own new migrations as it boots)"
     bash infra/local/services.sh stop > /dev/null 2>&1
     bash infra/local/services.sh start > "$LOG/start.log" 2>&1

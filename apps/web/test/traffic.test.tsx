@@ -49,7 +49,7 @@ describe('the vessel card', () => {
     expect(card).toHaveTextContent('GULF TRADER'); expect(card).toHaveTextContent('🇦🇪'); expect(card).toHaveTextContent('Cargo');
     expect(screen.getByTestId('card-voyage')).toHaveTextContent('Jebel Ali'); expect(card).toHaveTextContent('HIGH SEAS');
     expect(card).toHaveTextContent('Underway using engine'); expect(card).toHaveTextContent('11.8 kn / 120°'); expect(card).toHaveTextContent('9.4 m');
-    expect(card).toHaveTextContent('6 hours, 2 minutes ago'); expect(card).toHaveTextContent('AIS source: aisstream'); expect(card).toHaveTextContent('MMSI 470032162 · IMO 9725354 · A6E123');
+    expect(card).toHaveTextContent('6 hours, 2 minutes ago'); expect(card).toHaveTextContent('(source: aisstream)'); expect(card).toHaveTextContent('MMSI 470032162 · IMO 9725354 · A6E123');
     fireEvent.click(screen.getByTestId('card-follow'));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/tracking/watch', { key: '470032162' }));
     await waitFor(() => expect(onFollow).toHaveBeenCalledWith(true));

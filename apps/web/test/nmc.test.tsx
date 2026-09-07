@@ -31,7 +31,7 @@ const alerts: MdaAlert[] = [{ id: 'a1', type: 'AIS_GAP', severity: 'warning', ve
 const cases: OpenIncident[] = [{ id: 'i1', number: 'INC-2026-0007', severity: 'HIGH', position: { lat: 24.72, lon: 54.62 } }];
 const detail: TargetDetail = { ...stranger, following: false, alerts: [], destinationPort: 'Jebel Ali' };
 const fleet: WatchItem[] = [{ mmsi: '470000001', vesselId: 'v1', name: 'MV Coral Reach', addedAt: now, target: coral }];
-const routes = () => ({ '/tracking/targets': ok(picture), '/tracking/layers': ok(layers), '/tracking/alerts': ok({ items: alerts, total: 1 }), '/incidents': ok(cases, { total: 1 }), '/tracking/feed': ok({ lastStatus: 'ok', lastMode: 'stub', ageMinutes: 1, received: 3, matched: 2, pollMinutes: 2 }), '/tracking/watch': ok(fleet), '/tracking/targets/search': ok([stranger]), '/tracking/targets/470000002': ok(detail) });
+const routes = () => ({ '/tracking/targets': ok(picture), '/tracking/layers': ok(layers), '/tracking/alerts': ok({ items: alerts, total: 1 }), '/incidents': ok(cases, { total: 1 }), '/tracking/feed': ok({ source: 'ais-lrit', lastStatus: 'ok', lastMode: 'stub', ageMinutes: 1, received: 3, matched: 2, pollMinutes: 2 }), '/tracking/watch': ok(fleet), '/tracking/targets/search': ok([stranger]), '/tracking/targets/470000002': ok(detail) });
 
 describe('Live traffic picture', () => {
   beforeAll(() => { store.dispatch(setSession(session as never)); });
@@ -42,7 +42,7 @@ describe('Live traffic picture', () => {
     wrap(<TrafficMap />);
     expect(await screen.findByText('Live traffic picture')).toBeInTheDocument();
     expect(await screen.findByText(/1,240 ships on the picture · 26 on the register · 2 in view/)).toBeInTheDocument();
-    expect(screen.getByTestId('feed-status')).toHaveTextContent('AIS feed · stub · ok');
+    expect(screen.getByTestId('feed-status')).toHaveTextContent('AIS · stub · ok');
     expect(screen.getByTestId('surveillance-thresholds')).toHaveTextContent('channel 8 kn');
     const table = screen.getByRole('table', { name: 'Targets in view' });
     expect(within(table).getByText('MV Coral Reach')).toBeInTheDocument();

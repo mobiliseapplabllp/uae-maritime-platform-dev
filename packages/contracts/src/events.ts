@@ -129,7 +129,7 @@ export const EVENTS = {
     // added with the dynamic adapters: an operator changed how a counterpart is reached, a call ran out of attempts, a counterpart pushed a delivery
     adapterChanged: 'integration.adapter.changed', callDead: 'integration.call.dead', inboundReceived: 'integration.inbound.received',
   },
-  scheduler: { escalateNotifications: 'scheduler.escalate.notifications', sweepAuditRetention: 'scheduler.sweep.audit-retention', slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant', pollAisPositions: 'scheduler.poll.ais-positions', pollLritPositions: 'scheduler.poll.lrit-positions' },
+  scheduler: { escalateNotifications: 'scheduler.escalate.notifications', sweepAuditRetention: 'scheduler.sweep.audit-retention', slaBreached: 'scheduler.sla.breached', jobCompleted: 'scheduler.job.completed', sweepSla: 'scheduler.sweep.sla', digestCertificates: 'scheduler.digest.certificates', remindersLicences: 'scheduler.reminders.licences', digestInvoices: 'scheduler.digest.invoices', sweepAis: 'scheduler.sweep.ais', sweepDecisions: 'scheduler.sweep.decisions', sweepRetention: 'scheduler.sweep.retention', verifyAudit: 'scheduler.verify.audit', sweepAccreditations: 'scheduler.sweep.accreditations', pollImoSources: 'scheduler.poll.imo-sources', sweepFindings: 'scheduler.sweep.findings' , openAccessReview: 'scheduler.access-review.open', sweepDormant: 'scheduler.sweep.dormant', pollAisPositions: 'scheduler.poll.ais-positions', pollLritPositions: 'scheduler.poll.lrit-positions', retrainModels: 'scheduler.retrain.models' },
   ai: {
     draftPrepared: 'ai.draft.prepared', decisionRecorded: 'ai.decision.recorded',
     // added by the agentic runtime: the escalation the autonomy ladder forced, the human outcome on it, and every change to what an agent is allowed to do
@@ -141,6 +141,8 @@ export const EVENTS = {
     // answer slower than the platform committed to, and start being asked about a different world than it was fitted to
     modelRegistered: 'ai.model.registered', modelApproved: 'ai.model.approved', modelDeployed: 'ai.model.deployed',
     modelRetired: 'ai.model.retired', modelDrifted: 'ai.model.drifted', inferenceBreached: 'ai.inference.breached',
+    // added by the model server: a fit that was executed, reported to the registry with the metrics it measured
+    modelTrained: 'ai.model.trained',
     // added by the tool gateway: an action carried through to a record, a call refused at the choke point, and a change to what a caller may do
     toolActed: 'ai.tool.acted', toolRefused: 'ai.tool.refused', callerConfigured: 'ai.gateway.caller-configured',
   },

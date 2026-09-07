@@ -462,6 +462,27 @@ const ar: Dictionary = {
     },
   },
 
+  models: {
+    title: 'النماذج', sub: 'كل نموذج على المنصة بوجهيه: إصداراته واعتماداته ونشره في السجل، وتدريباته على خادم النماذج — على ماذا دُرِّب كل منها، وكيف كان أداؤه على صفوف لم يرها',
+    reconcile: 'إبلاغ السجل بالتدريبات', reconciled: 'أُبلغ السجل بـ {{reported}} من {{artefacts}} تدريبات',
+    statRegistered: 'النماذج في السجل', statRegisteredSub: '{{n}} قيد الخدمة', statFitted: 'مدرَّبة على خادم النماذج', statFittedSub: '{{n}} تدريبات مسجلة',
+    statCalls: 'الاستدلالات، 30 يوماً', statCallsSub: '{{pct}}% ضمن ميزانية {{budget}} م.ث', statLatency: 'زمن الاستجابة p95', statLatencySub: 'p50 {{p50}} م.ث · خادم النماذج {{server}}',
+    colModel: 'النموذج', colTask: 'المهمة', colServing: 'الخدمة', colServedBy: 'يخدمه', colLatestFit: 'آخر تدريب', colQuality: 'الجودة', colRows: 'الصفوف', colLastFitted: 'آخر تدريب في',
+    notServing: 'غير قيد الخدمة', byServer: 'خادم نماذج المنصة', byPipeline: 'خط معالجة المنصة نفسها', byEndpoint: 'نقطة نهاية مهيأة', noFit: 'لا تدريب على خادم النماذج', empty: 'لا نماذج في السجل',
+    previewDataset: 'اقرأ مجموعة البيانات الآن', fitAgain: 'درِّب مجدداً', trained: 'دُرِّب كإصدار v{{version}}: {{quality}}',
+    trainedDetail: 'دُرِّب كإصدار v{{version}} على {{rows}} صفاً خلال {{ms}} م.ث — {{quality}}.', registryOk: 'يحتفظ به السجل كإصدار v{{version}}، {{status}}.', registryFailed: 'تعذر إبلاغ السجل: {{error}}',
+    pipelineOnly: 'يعمل هذا النموذج على خط معالجة المنصة نفسها؛ لا تدريب على خادم النماذج لعرضه.',
+    versions: 'الإصدارات في السجل', versionsSub: 'يصبح التدريب مسودة هنا؛ يتحقق منها شخص ويعتمدها آخر قبل نشرها',
+    colVersion: 'الإصدار', colStatus: 'الحالة', colNote: 'ملاحظة', colBy: 'بواسطة', approvedBy: 'اعتمده {{name}}', deployments: 'عمليات النشر',
+    fit: 'التدريب', latestFitLine: 'v{{version}} على مجموعة السمات {{set}}: {{rows}} صفاً، {{heldOut}} منها محجوزة للقياس، {{trees}} شجرة.',
+    targetingLine: '{{rate}}% من عمليات الصعود كانت تستحق؛ الصعود بالنسبة نفسها وفق هذه الدرجة يجد {{precision}}% تستحق.',
+    regressionLine: 'R² {{r2}}؛ تتفاوت فترات الانتظار بمقدار {{std}} {{unit}} حول متوسطها.',
+    importance: 'ما وجده التدريب مؤثراً', features: 'السمات', datasetNow: 'مجموعة البيانات كما هي الآن', datasetLine: '{{rows}} صفاً على مجموعة السمات {{set}} · {{positives}} إيجابي · متوسط التسمية {{mean}}، الانتشار {{std}}',
+    median: 'الوسيط', categories: 'فئات', runs: 'دورات التدريب', runsSub: 'كل تدريب نُفِّذ على خادم النماذج، بما فيها ما رُفض',
+    colStarted: 'بدأ', colParams: 'المعاملات', colDuration: 'استغرق', colRegistry: 'السجل', registryVersion: 'v{{version}} في السجل', registryPending: 'لم يُبلَّغ بعد', noRuns: 'لا دورة تدريب بعد',
+    fitAgainTitle: 'تدريب {{name}} مجدداً', fitAgainSub: 'يُدرَّب النموذج على السجلات كما هي الآن ({{rows}} صفاً عند آخر قراءة). تصبح النتيجة إصداراً جديداً، مسودة في السجل حتى يعتمدها شخص.',
+    featureSet: 'مجموعة السمات', rounds: 'الجولات', depth: 'العمق', learningRate: 'معدل التعلم', note: 'ملاحظة', cancel: 'إلغاء', run: 'درِّب الآن',
+  },
   traffic: {
     analytics: {
       title: 'تحليلات الحركة', sub: 'أين كانت الحركة، وفي أي اتجاه سارت، وكم مكثت السفن في كل منطقة بحرية منشورة — من ثوابت الفترة',

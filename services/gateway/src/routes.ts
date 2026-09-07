@@ -80,6 +80,7 @@ export const SERVICES: UpstreamService[] = [
   { name: 'ai-agents', envKey: 'AI_AGENTS_URL', port: 5502 },
   { name: 'ai-platform', envKey: 'AI_PLATFORM_URL', port: 5503 },
   { name: 'ai-tool-gateway', envKey: 'AI_TOOL_GATEWAY_URL', port: 5504 },
+  { name: 'ai-models', envKey: 'AI_MODELS_URL', port: 5505 },
 ];
 
 /** Public prefix → service. Order is irrelevant; resolution sorts longest prefix first. */
@@ -148,6 +149,8 @@ export const ROUTES: RoutePrefix[] = [
   { prefix: '/api/ai-platform', service: 'ai-platform' },
   // the tool gateway's governance face; its service face answers only to the service token, which never leaves the cluster
   { prefix: '/api/ai-gateway', service: 'ai-tool-gateway' },
+  // the model server's own face (what it fitted, on what, how well; fit again); its serving face answers only to the service token
+  { prefix: '/api/ai-models', service: 'ai-models' },
 ];
 
 /** Upstream URL for a service: the env override when set, otherwise the native default. */

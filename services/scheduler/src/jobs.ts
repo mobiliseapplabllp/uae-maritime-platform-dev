@@ -34,6 +34,8 @@ export const SEED_JOBS: JobDefinition[] = [
   { key: 'ais-positions-poll', name: 'AIS/LRIT feed read', nameAr: 'قراءة تغذية AIS/LRIT', cron: '*/2 * * * *', eventType: EVENTS.scheduler.pollAisPositions, payload: {}, owner: 'maritime-centre' },
   // the long-range picture: the LRIT data centre holds a report per ship every six hours, so it is read on the half hour
   { key: 'lrit-positions-poll', name: 'LRIT data centre read', nameAr: 'قراءة مركز بيانات التعرف والتتبع بعيد المدى', cron: '*/30 * * * *', eventType: EVENTS.scheduler.pollLritPositions, payload: {}, owner: 'maritime-centre' },
+  // the models: fitted again each week on the records that have accrued, as drafts for a person to approve
+  { key: 'model-retraining', name: 'Model retraining', nameAr: 'إعادة تدريب النماذج', cron: '0 4 * * 1', eventType: EVENTS.scheduler.retrainModels, payload: {}, owner: 'ai-models' },
   // accounts: who still holds what, every quarter; and a daily look for accounts nobody has used
   { key: 'access-review-open', name: 'Access review — open the quarterly cycle', nameAr: 'مراجعة الصلاحيات — فتح الدورة الفصلية', cron: '0 6 1 */3 *', eventType: EVENTS.scheduler.openAccessReview, owner: 'identity-access' },
   { key: 'dormant-account-sweep', name: 'Dormant account sweep', nameAr: 'مسح الحسابات الخاملة', cron: '20 5 * * *', eventType: EVENTS.scheduler.sweepDormant, owner: 'identity-access' },

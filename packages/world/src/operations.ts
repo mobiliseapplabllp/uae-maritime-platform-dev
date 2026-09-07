@@ -18,6 +18,20 @@ const berthFor = (rng: Prng, berths: WorldBerth[], type: string): WorldBerth => 
   return rng.pick(berths.filter((b) => b.berthType === want && b.status === 'OPERATIONAL'));
 };
 
+/* The wait at anchorage is not a dice roll. A container ship on a liner window berths sooner than a bulk carrier waiting
+ * for a discharge berth; a queue of arrivals ahead lengthens the wait; a weekend or a night arrival adds to it. The draw
+ * sets the spread and the factors set the shape — so the world's own arrivals carry something a model can learn. */
+const TYPE_WAIT_H: Record<string, number> = { CONT: 0, OSV: 0, RORO: 1, GEN: 3, BULK: 6, TANK: 8 };
+/** The home port's clock, for what counts as a night or a weekend arrival. */
+export const HOME_UTC_OFFSET_H = 4;
+/** Arrivals expected in the 24 hours before this one — the queue this ship joins. */
+export const queueAhead = (calls: { eta: string }[], eta: Date): number => { const from = eta.getTime() - 24 * H; return calls.reduce((n, c) => { const t = new Date(c.eta).getTime(); return t >= from && t < eta.getTime() ? n + 1 : n; }, 0); };
+export const waitHours = (draw: number, type: string, eta: Date, queue: number): number => {
+  const local = new Date(eta.getTime() + HOME_UTC_OFFSET_H * H);
+  const weekend = local.getUTCDay() === 6 || local.getUTCDay() === 0; const night = local.getUTCHours() >= 22 || local.getUTCHours() < 5;
+  return Math.round(2 + 0.35 * draw + (TYPE_WAIT_H[type] ?? 2) + 1.6 * Math.min(queue, 8) + (weekend ? 5 : 0) + (night ? 2 : 0));
+};
+
 /** Port calls from January 2023 to now on a growth ramp, plus a live snapshot at the end. */
 export function buildPortCalls(rng: Prng, vessels: WorldVessel[], berths: WorldBerth[], now: Date, vcnPrefix = 'MAR'): WorldPortCall[] {
   const out: WorldPortCall[] = [];
@@ -32,8 +46,8 @@ export function buildPortCalls(rng: Prng, vessels: WorldVessel[], berths: WorldB
       const v = rng.pick(vessels); const b = berthFor(rng, berths, v.type);
       const eta = new Date(mStart.getTime() + rng.int(0, daysInMonth - 1) * D + rng.int(0, 23) * H);
       if (eta.getTime() > now.getTime() - 3 * D) continue;
-      const wait = rng.int(2, 30) * H; const stay = rng.int(14, 72) * H;
-      const atb = new Date(eta.getTime() + wait); const atd = new Date(atb.getTime() + stay);
+      const draw = rng.int(2, 30); const stay = rng.int(14, 72) * H;
+      const atb = new Date(eta.getTime() + waitHours(draw, v.type, eta, queueAhead(out, eta)) * H); const atd = new Date(atb.getTime() + stay);
       out.push({ id: stableId('portcall', `${eta.toISOString()}:${v.imo}`), vcn: next(eta), vesselId: v.id, vesselName: v.name, agentCode: v.agentCode, status: 'SAILED', eta: eta.toISOString(), etb: new Date(eta.getTime() + 6 * H).toISOString(), etd: new Date(atb.getTime() + stay - 4 * H).toISOString(),
         ata: eta.toISOString(), atb: atb.toISOString(), atd: atd.toISOString(), berthCode: b.code, prevPort: rng.pick(PORTS), nextPort: rng.pick(PORTS), cargoOps: cargoFor(rng, v.type) });
     }

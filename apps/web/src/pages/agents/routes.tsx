@@ -12,4 +12,5 @@ export const routes: RouteDef[] = [
   { path: '/agents/escalations', perm: 'agents.view', element: L(() => import('./EscalationQueue')) },
   { path: '/agents/assurance', perm: 'agents.view', element: L(() => import('./Assurance')) },
   { path: '/agents/gateway', perm: 'agents.view', element: L(() => import('./ToolGateway')) },
+  { path: '/agents/models', perm: 'models.view', element: L(() => import('./Models')) },
 ];

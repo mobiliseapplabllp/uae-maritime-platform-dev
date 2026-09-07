@@ -28,3 +28,6 @@ apps/mobile/.dart_tool/
 # playwright
 apps/web/playwright-report/
 apps/web/test-results/
+
+# OCR language data copied beside the engine at run time (the source ships as a dependency)
+.tessdata*/

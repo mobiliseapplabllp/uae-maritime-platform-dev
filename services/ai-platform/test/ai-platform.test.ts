@@ -2,6 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { Pool } from 'pg';
+import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { EVENTS, subjectFor } from '@maritime/contracts';
 import { PRINCIPAL_RESOLVER, StaticPrincipalResolver, createApp, loadEnv, signHS256 } from '@maritime/service-kit';
 import { envSchema } from '../src/env';
@@ -10,8 +13,17 @@ import { seedAiPlatform } from '../src/seed';
 import { applyBins, compare, psi, summarise, verdictFor } from '../src/drift';
 import { StubProvider, percentiles, serve } from '../src/serving';
 
-const DB = 'maritime_ai_platform_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret';
+const DB = 'maritime_ai_platform_test'; const URL = `postgres://maritime:maritime@127.0.0.1:5432/${DB}`; const SECRET = 'test-secret-test-secret'; const TOKEN = 'test-service-token-test-service-token';
 let app: INestApplication; let server: unknown; let pool: Pool;
+/* A model server standing in for ai-models: it answers on the contract, only on the service token, and from the features. */
+let models: Server; let modelsUrl = ''; const served: { key: string; body: Record<string, unknown>; token: string }[] = [];
+/* A documents service standing in: the specimen certificate and a recording, read only by a session that carries a token. */
+let docs: Server; let docsUrl = ''; const docReads: { id: string; token: string }[] = [];
+const FIXTURE = readFileSync(join(__dirname, 'fixtures', 'certificate.png'));
+const WAV = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVEfmt '), Buffer.from([16, 0, 0, 0, 1, 0, 1, 0, 0x80, 0x3e, 0, 0, 0, 0x7d, 0, 0, 2, 0, 16, 0]), Buffer.from('data'), Buffer.alloc(4), Buffer.alloc(3200)]);
+/* A tool gateway standing in: answers a completion as a hosted provider would, or says no provider is configured. */
+let gateway: Server; let gatewayUrl = ''; const completions: Record<string, unknown>[] = []; let hostedProvider = false;
+const bands = (score: number) => (score >= 0.66 ? 'HIGH' : score >= 0.33 ? 'MEDIUM' : 'LOW');
 const tok = (sub: string) => `Bearer ${signHS256({ sub, typ: 'access' }, SECRET, { expiresInSec: 600, issuer: 'maritime-platform' })}`;
 const admin = tok('admin'); const scientist = tok('scientist'); const assurance = tok('assurance'); const viewer = tok('viewer'); const officer = tok('officer');
 const g = (p: string, t = admin) => request(server as never).get(p).set('authorization', t);
@@ -22,7 +34,48 @@ beforeAll(async () => {
   const a = new Pool({ connectionString: 'postgres://maritime:maritime@127.0.0.1:5432/postgres' });
   await a.query(`DROP DATABASE IF EXISTS ${DB}`); await a.query(`CREATE DATABASE ${DB}`); await a.end();
   await seedAiPlatform(URL);
-  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, MDM_URL: 'http://127.0.0.1:1', ALLOWED_PROD_RESIDENCY: 'AE' } as never);
+  models = createServer((req, res) => {
+    let raw = ''; req.on('data', (c) => { raw += c; }); req.on('end', () => {
+      const m = /\/v1\/models\/([^/]+)\/infer$/.exec(req.url ?? '');
+      if (!m || req.method !== 'POST') { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"success":false}'); return; }
+      if (req.headers['x-service-token'] !== TOKEN) { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"success":false,"message":"Service token required"}'); return; }
+      const body = JSON.parse(raw) as { task?: string; features?: Record<string, unknown> }; served.push({ key: m[1], body, token: String(req.headers['x-service-token']) });
+      const f = body.features ?? {};
+      const answer = body.task === 'REGRESSION'
+        ? { output: { value: 3 + 1.5 * Number(f.queueAhead ?? 0) + (f.shipType === 'TANK' ? 7 : 0), unit: 'hours' }, confidence: 0.7 }
+        : (() => { const score = Math.round(Math.min(0.95, (Number(f.shipAgeYears ?? 0) / 25) * 0.5 + Number(f.priorDetentions ?? 0) * 0.3 + Number(f.priorDeficiencies ?? 0) / 20) * 1000) / 1000; return { output: { score, label: bands(score) }, confidence: 0.8 }; })();
+      res.writeHead(201, { 'content-type': 'application/json' }); res.end(JSON.stringify({ success: true, data: answer }));
+    });
+  });
+  await new Promise<void>((r) => models.listen(0, '127.0.0.1', () => r()));
+  modelsUrl = `http://127.0.0.1:${(models.address() as { port: number }).port}`;
+  docs = createServer((req, res) => {
+    const m = /^\/documents\/([^/]+)\/content$/.exec(req.url ?? '');
+    const token = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+    if (!m) { res.writeHead(404); res.end(); return; }
+    if (!token) { res.writeHead(401); res.end(); return; }
+    docReads.push({ id: m[1], token });
+    if (m[1] === 'cert-1') { res.writeHead(200, { 'content-type': 'image/png' }); res.end(FIXTURE); return; }
+    if (m[1] === '2210') { res.writeHead(200, { 'content-type': 'audio/wav' }); res.end(WAV); return; }
+    if (m[1] === 'form-7') { res.writeHead(200, { 'content-type': 'application/pdf' }); res.end(Buffer.from('%PDF-1.4 specimen')); return; }
+    res.writeHead(404, { 'content-type': 'application/json' }); res.end('{"success":false,"message":"Document not found"}');
+  });
+  await new Promise<void>((r) => docs.listen(0, '127.0.0.1', () => r()));
+  docsUrl = `http://127.0.0.1:${(docs.address() as { port: number }).port}`;
+  gateway = createServer((req, res) => {
+    let raw = ''; req.on('data', (c) => { raw += c; }); req.on('end', () => {
+      if (req.url !== '/ai-gateway/complete' || req.method !== 'POST') { res.writeHead(404); res.end('{}'); return; }
+      if (req.headers['x-service-token'] !== TOKEN) { res.writeHead(401); res.end('{"success":false}'); return; }
+      const body = JSON.parse(raw) as Record<string, unknown>; completions.push(body);
+      const answer = hostedProvider
+        ? { outcome: 'OK', provider: 'hosted-test', profile: 'default', residency: 'AE', latencyMs: 40, text: 'Here is the JSON: {"issuer": "MARITIME ADMINISTRATION (SAMPLE)", "holderName": null}', redactions: 0, redactionKinds: {}, injection: { score: 0, flags: [] } }
+        : { outcome: 'LOCAL', provider: '', profile: '', residency: '', latencyMs: 1, code: 'NO_PROVIDER', reason: 'No hosted provider is configured in Settings → AI', redactions: 0, redactionKinds: {}, injection: { score: 0, flags: [] } };
+      res.writeHead(201, { 'content-type': 'application/json' }); res.end(JSON.stringify({ success: true, data: answer }));
+    });
+  });
+  await new Promise<void>((r) => gateway.listen(0, '127.0.0.1', () => r()));
+  gatewayUrl = `http://127.0.0.1:${(gateway.address() as { port: number }).port}`;
+  const env = loadEnv(envSchema, { ...process.env, DATABASE_URL: URL, PORT: '0', AUTH_MODE: 'local', EVENT_BUS: 'memory', LOG_LEVEL: 'silent', JWT_SECRET: SECRET, SERVICE_TOKEN: TOKEN, MDM_URL: 'http://127.0.0.1:1', ALLOWED_PROD_RESIDENCY: 'AE', AI_MODELS_URL: modelsUrl, DOCUMENTS_URL: docsUrl, AI_TOOL_GATEWAY_URL: gatewayUrl, VISION_LANGS: 'eng', VISION_CACHE_PATH: join(__dirname, '..', '.tessdata-test'), AI_SPEECH_COMMAND: process.execPath, AI_SPEECH_ARGS: `${join(__dirname, 'fixtures', 'fake-transcriber.js')} {file} --language {language}` } as never);
   const base = { scope: { level: 'NATIONAL' as const }, kind: 'user' as const, active: true, email: 'x@maritime.example' };
   const resolver = new StaticPrincipalResolver({
     admin: { ...base, id: 'admin', sub: 'admin', name: 'Platform Administrator', perms: ['*'] },
@@ -34,7 +87,7 @@ beforeAll(async () => {
   app = await createApp({ env, module: buildAppModule(env, { provide: PRINCIPAL_RESOLVER, useValue: resolver }) });
   await app.init(); server = app.getHttpServer(); pool = new Pool({ connectionString: URL });
 });
-afterAll(async () => { await app?.close(); await pool?.end(); });
+afterAll(async () => { await app?.close(); await pool?.end(); for (const s of [models, docs, gateway]) await new Promise<void>((r) => s.close(() => r())); });
 
 describe('the registry', () => {
   it('lists the seeded models with what is serving in each environment', async () => {
@@ -134,7 +187,7 @@ describe('the registry', () => {
 describe('serving', () => {
   it('answers from the deployment and reports the latency against the budget', async () => {
     const r = await post('/ai-platform/infer/inspection-targeting', {
-      features: { shipAgeYears: 22, daysSinceLastInspection: 410, priorDeficiencies: 9, priorDetentions: 1, shipType: 'BULK_CARRIER', flag: 'PA' },
+      features: { shipAgeYears: 22, daysSinceLastInspection: 410, priorDeficiencies: 9, priorDetentions: 1, shipType: 'BULK', homeFlag: 'foreign' },
       subject: 'IMO9123456',
     }, officer);
     expect(r.status).toBe(201);
@@ -143,13 +196,34 @@ describe('serving', () => {
     expect(r.body.data.withinSla).toBe(true);
     expect(r.body.data.budgetMs).toBe(5000);
     expect(r.body.data.output.label).toBe('HIGH');
+    // the deployment names the platform's own model server, reached live on the service token with the deployed version
+    expect(r.body.data).toMatchObject({ mode: 'live', servedBy: 'ai-models', version: 2 });
+    expect(served[served.length - 1]).toMatchObject({ key: 'inspection-targeting', token: TOKEN, body: { version: 2, task: 'CLASSIFICATION' } });
   });
 
   it('moves with the evidence rather than answering at random', async () => {
     const clean = await post('/ai-platform/infer/inspection-targeting', {
-      features: { shipAgeYears: 3, daysSinceLastInspection: 30, priorDeficiencies: 0, priorDetentions: 0, shipType: 'CONTAINER', flag: 'AE' },
+      features: { shipAgeYears: 3, daysSinceLastInspection: 30, priorDeficiencies: 0, priorDetentions: 0, shipType: 'CONT', homeFlag: 'home' },
     }, officer);
     expect(clean.body.data.output.score).toBeLessThan(0.4);
+    const wait = await post('/ai-platform/infer/eta-prediction', { features: { shipType: 'TANK', agentCode: 'GSS', etaHour: 23, etaWeekday: '6', queueAhead: 6, teu: 0, cargoMt: 80000, prevPort: 'SAJED' } }, officer);
+    expect(wait.body.data.output).toMatchObject({ unit: 'hours' }); expect(wait.body.data.output.value).toBeGreaterThan(10);
+  });
+
+  it('records a model server that does not answer as an error against the budget, and a pipeline of the platform’s own answers from the fallback', async () => {
+    await post('/ai-platform/models', { key: 'remote-scoring', name: 'A model served elsewhere', task: 'CLASSIFICATION', residencyRegion: 'AE' }, scientist);
+    await post('/ai-platform/models/remote-scoring/versions', { artifactRef: 'registry://remote-scoring/1' }, scientist);
+    await post('/ai-platform/models/remote-scoring/versions/1/validate', {}, scientist);
+    await post('/ai-platform/models/remote-scoring/versions/1/approve', {}, assurance);
+    const deployed = await post('/ai-platform/models/remote-scoring/versions/1/deploy', { environment: 'DEV', endpoint: 'http://127.0.0.1:1' }, assurance);
+    expect(deployed.status).toBe(201);
+    const r = await post('/ai-platform/infer/remote-scoring', { features: { x: 1 } }, officer);
+    expect(r.status).toBe(409); expect(r.body.message).toMatch(/fetch failed|ECONNREFUSED|Model server/i);
+    const rows = await pool.query(`SELECT status, error FROM inferences WHERE model_key = 'remote-scoring'`);
+    expect(rows.rows[0].status).toBe('ERROR'); expect(rows.rows[0].error).toBeTruthy();
+    // vision runs on the platform's own pipeline, in-country, whatever else is configured
+    const v = await post('/ai-platform/vision/extract', { fields: ['certificateNo'], hints: { certificateNo: 'X-1' } }, officer);
+    expect(v.body.data).toMatchObject({ mode: 'live', servedBy: 'platform-vision' });
   });
 
   it('refuses a model with no deployment, and keeps the refusal on the record', async () => {
@@ -160,28 +234,82 @@ describe('serving', () => {
     expect(rows.rows[0].status).toBe('REFUSED');
   });
 
-  it('extracts document fields and is honest about the ones it could not read', async () => {
+  it('keeps a caller’s hints as hints and is honest about the fields it could not read when the document is not there', async () => {
     const r = await post('/ai-platform/vision/extract', {
       documentRef: 'documents://scan/4471', pages: 2,
       fields: ['certificateType', 'certificateNo', 'issuedDate'],
       hints: { certificateType: 'IOPP Certificate', certificateNo: 'IOPP-2026-0442' },
     }, officer);
     expect(r.status).toBe(201);
-    expect(r.body.data.fields.certificateNo.value).toBe('IOPP-2026-0442');
+    expect(r.body.data.fields.certificateNo).toMatchObject({ value: 'IOPP-2026-0442', source: 'hint' });
     expect(r.body.data.fields.certificateNo.confidence).toBeGreaterThan(0.8);
-    // Nothing was supplied for the issue date, so it is returned with low confidence rather than invented
-    // at high confidence — the difference between a field to confirm and a field to check.
-    expect(r.body.data.fields.issuedDate.confidence).toBeLessThan(0.5);
+    // Nothing was supplied for the issue date and nothing could be read, so it is returned unfound with no
+    // confidence rather than invented — the difference between a field to confirm and a field to check.
+    expect(r.body.data.fields.issuedDate).toMatchObject({ value: null, confidence: 0, source: 'none' });
+    expect(r.body.data.warning).toMatch(/documents service answered 404/);
+    expect(r.body.data.source).toBe('none');
+    // the document was asked for as the person, never on the service token
+    expect(docReads[docReads.length - 1]).toMatchObject({ id: '4471' }); expect(docReads[docReads.length - 1].token).not.toBe(TOKEN);
   });
 
-  it('transcribes a recording and counts what it heard', async () => {
+  it('reads a photographed certificate in-country: the fields by their labels and their shape, the hints confirmed, every field with a source', async () => {
+    hostedProvider = false; const before = completions.length;
+    const r = await post('/ai-platform/vision/extract', {
+      documentRef: 'cert-1', fields: ['certificateType', 'certificateNo', 'vesselName', 'imo', 'portOfRegistry', 'grossTonnage', 'issuedDate', 'expiryDate', 'issuer'],
+      hints: { certificateNo: 'IOPP-2026-0442' }, subject: 'KHOR FAKKAN STAR',
+    }, officer);
+    expect(r.status).toBe(201);
+    const f = r.body.data.fields;
+    expect(r.body.data).toMatchObject({ mode: 'live', servedBy: 'platform-vision', source: 'image' });
+    expect(r.body.data.ocr).toMatchObject({ engine: 'tesseract', languages: ['eng'] }); expect(r.body.data.ocr.confidence).toBeGreaterThan(0.8); expect(r.body.data.ocr.words).toBeGreaterThan(40);
+    expect(f.certificateType.value).toMatch(/INTERNATIONAL OIL POLLUTION PREVENTION/); expect(f.certificateType.source).toBe('read');
+    expect(f.certificateNo).toMatchObject({ value: 'IOPP-2026-0442', source: 'read+hint' }); expect(f.certificateNo.confidence).toBeGreaterThan(0.85);
+    expect(f.vesselName).toMatchObject({ value: 'KHOR FAKKAN STAR', source: 'read' }); expect(f.vesselName.confidence).toBeGreaterThan(0.7);
+    expect(f.imo).toMatchObject({ value: '9700196', source: 'read' }); expect(f.imo.confidence).toBeGreaterThan(0.8); // the check digit holds, so the read is trusted beyond the engine's word-level figure
+    expect(f.portOfRegistry.value).toBe('ABU DHABI'); expect(f.grossTonnage.value).toBe('54,320');
+    expect(f.issuedDate).toMatchObject({ value: '14 March 2026', normalised: '2026-03-14', source: 'read' });
+    expect(f.expiryDate).toMatchObject({ value: '13 March 2031', normalised: '2031-03-13', source: 'read' });
+    // no label for the issuer on the specimen: unread, and with no hosted provider the gateway said LOCAL and the field stays unread
+    expect(f.issuer).toMatchObject({ value: null, source: 'none' });
+    expect(completions.length).toBe(before + 1); expect(completions[completions.length - 1]).toMatchObject({ caller: 'svc:ai-platform', purpose: 'extract' });
+    expect(String((completions[completions.length - 1].grounding as { text: string }[])[0].text)).toMatch(/KHOR FAKKAN STAR/);
+    expect(r.body.data.refined).toEqual([]);
+    expect(r.body.data.confidence).toBeGreaterThan(0.7);
+    // recorded without the image: the reference, the hints and the size
+    const row = await pool.query(`SELECT features, output FROM inferences WHERE model_key = 'document-extraction' AND subject = 'KHOR FAKKAN STAR'`);
+    expect(row.rows[0].features).toMatchObject({ documentRef: 'cert-1', certificateNo: 'IOPP-2026-0442' }); expect(JSON.stringify(row.rows[0].output)).not.toMatch(/iVBOR/);
+  });
+
+  it('refines what stayed unread through the gateway when a hosted provider is configured, and says which fields came from it', async () => {
+    hostedProvider = true;
+    const r = await post('/ai-platform/vision/extract', { documentRef: 'documents://cert-1', fields: ['certificateNo', 'issuer', 'holderName'] }, officer);
+    expect(r.body.data.fields.issuer).toMatchObject({ value: 'MARITIME ADMINISTRATION (SAMPLE)', source: 'hosted', confidence: 0.7 });
+    expect(r.body.data.fields.holderName).toMatchObject({ value: null, source: 'none' });
+    expect(r.body.data.fields.certificateNo.source).toBe('read');
+    expect(r.body.data.refined).toEqual(['issuer']);
+    hostedProvider = false;
+    // a page of text needs no engine at all, and a document that is not an image is said to be one
+    const text = await post('/ai-platform/vision/extract', { content: 'Certificate No. NAV-2026-0091\nName of ship SAADIYAT BREEZE\nValid until 2027-05-01', fields: ['certificateNo', 'vesselName', 'expiryDate'] }, officer);
+    expect(text.body.data.source).toBe('text');
+    expect(text.body.data.fields.certificateNo.value).toBe('NAV-2026-0091'); expect(text.body.data.fields.vesselName.value).toBe('SAADIYAT BREEZE'); expect(text.body.data.fields.expiryDate.normalised).toBe('2027-05-01');
+    const pdf = await post('/ai-platform/vision/extract', { documentRef: 'form-7', fields: ['certificateNo'] }, officer);
+    expect(pdf.body.data.warning).toMatch(/application\/pdf is not an image/); expect(pdf.body.data.fields.certificateNo.source).toBe('none');
+  });
+
+  it('transcribes a recording through the speech model on the host, as a command with no shell, and cleans up after itself', async () => {
     const r = await post('/ai-platform/speech/transcribe', {
       audioRef: 'documents://audio/2210', durationSec: 48, language: 'en',
       transcriptHint: 'Port control this is Falcon Trader requesting permission to shift to berth CT1-3',
     }, officer);
-    expect(r.body.data.words).toBe(13);
-    expect(r.body.data.language).toBe('en');
-    expect(r.body.data.confidence).toBeGreaterThan(0.7);
+    expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ mode: 'live', servedBy: 'platform-speech', words: 13, language: 'en', durationSec: 48 });
+    expect(r.body.data.transcript).toMatch(/^Port control this is Falcon Trader/);
+    expect(r.body.data.segments).toHaveLength(2); expect(r.body.data.segments[1]).toMatchObject({ from: 21.5, to: 48 });
+    expect(r.body.data.confidence).toBeGreaterThan(0.7); expect(r.body.data.engine.confidenceBasis).toBe('reported by the command');
+    expect(docReads.some((d) => d.id === '2210')).toBe(true);
+    // a recording that is not there is an answer with a reason, not a crash
+    const missing = await post('/ai-platform/speech/transcribe', { audioRef: 'documents://audio/nope', durationSec: 5 }, officer);
+    expect(missing.body.data).toMatchObject({ words: 0, confidence: 0 }); expect(missing.body.data.warning).toMatch(/404/);
   });
 
   it('reports latency as percentiles, not as an average', async () => {
@@ -192,6 +320,37 @@ describe('serving', () => {
     expect(r.body.data.latencyMs.p95).toBeGreaterThanOrEqual(r.body.data.latencyMs.p50);
     expect(r.body.data.latencyMs.p99).toBeGreaterThanOrEqual(r.body.data.latencyMs.p95);
     expect(r.body.data.models.length).toBeGreaterThanOrEqual(4);
+    expect(r.body.data.servers).toMatchObject({ modelServer: modelsUrl, endpoint: null, fallback: 'stub' });
+  });
+});
+
+describe('the registry’s service face', () => {
+  const trained = (key: string, body: Record<string, unknown>, token = TOKEN) => request(server as never).post(`/ai-platform/internal/models/${key}/trained`).set('x-service-token', token).send(body as never);
+  const report = { artifactRef: 'ai-models://inspection-targeting/3', framework: 'gradient-boosted trees (ai-models)', featureSet: 'history', params: { rounds: 150, depth: 3 }, metrics: { auc: 0.71, rows: 176, heldOut: 35, confidence: 0.71 }, datasetRef: 'ai-models://datasets/d-1', datasetRows: 176, note: 'Fitted again on the records that accrued', initiatedBy: 'Data Scientist', startedAt: '2026-09-07T08:00:00Z', finishedAt: '2026-09-07T08:00:01Z' };
+  it('records a fit the model server executed as a run and a draft version carrying the measured metrics, on the service token only', async () => {
+    expect((await trained('inspection-targeting', { ...report, version: 3 }, 'wrong')).status).toBe(401);
+    expect((await request(server as never).post('/ai-platform/internal/models/inspection-targeting/trained').set('authorization', admin).send({ ...report, version: 3 } as never)).status).toBe(401);
+    const r = await trained('inspection-targeting', { ...report, version: 3 });
+    expect(r.status).toBe(201);
+    expect(r.body.data).toMatchObject({ version: 3, status: 'DRAFT', created: true, artifactRef: 'ai-models://inspection-targeting/3', metrics: { auc: 0.71 }, createdBy: 'Data Scientist' });
+    const runs = await g('/ai-platform/models/inspection-targeting/training-runs', viewer);
+    const run = runs.body.data.find((x: { id: string }) => x.id === r.body.data.trainingRunId);
+    expect(run).toMatchObject({ status: 'SUCCEEDED', datasetRows: 176, metrics: { auc: 0.71 }, note: 'Fitted again on the records that accrued' });
+    const events = await outbox(EVENTS.ai.modelTrained);
+    expect(events.some((e) => e.data.key === 'inspection-targeting' && e.data.version === 3 && e.data.created === true)).toBe(true);
+  });
+  it('brings a version it already knows up to date rather than duplicating it — the seeded fits carry the measured metrics after the model server reports them', async () => {
+    const again = await trained('inspection-targeting', { ...report, version: 3, metrics: { auc: 0.74, rows: 190 } });
+    expect(again.body.data).toMatchObject({ version: 3, created: false, metrics: { auc: 0.74 } });
+    const versions = await g('/ai-platform/models/inspection-targeting/versions', viewer);
+    expect(versions.body.data.filter((v: { version: number }) => v.version === 3)).toHaveLength(1);
+    // the deployed version, seeded with no metrics, takes the model server's word
+    const seeded = await trained('inspection-targeting', { ...report, version: 2, artifactRef: 'ai-models://inspection-targeting/2', metrics: { auc: 0.69, heldOut: 35 } });
+    expect(seeded.body.data).toMatchObject({ version: 2, status: 'DEPLOYED', created: false, metrics: { auc: 0.69 } });
+    const runs = await g('/ai-platform/models/inspection-targeting/training-runs', viewer);
+    expect(runs.body.data.filter((x: { datasetRef: string }) => x.datasetRef === 'ai-models://datasets/d-1')).toHaveLength(2);
+    expect((await trained('no-such-model', { ...report, version: 1 })).status).toBe(404);
+    expect((await trained('inspection-targeting', { ...report, version: 0 })).status).toBe(400);
   });
 });
 

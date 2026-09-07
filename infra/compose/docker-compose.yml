@@ -320,8 +320,17 @@ services:
     profiles: [ai]
     build: { <<: *build, args: { SERVICE: services/ai-platform, PORT: "5503" } }
     image: maritime/ai-platform:${IMAGE_TAG:-dev}
-    environment: { <<: *common-env, SERVICE_NAME: ai-platform, PORT: "5503", DATABASE_URL: "${POSTGRES_PREFIX:-postgres://maritime:maritime@postgres:5432}/maritime_ai_platform", SERVING_MODE: "${SERVING_MODE:-stub}", ALLOWED_PROD_RESIDENCY: "${ALLOWED_PROD_RESIDENCY:-AE}" }
+    environment: { <<: *common-env, SERVICE_NAME: ai-platform, PORT: "5503", DATABASE_URL: "${POSTGRES_PREFIX:-postgres://maritime:maritime@postgres:5432}/maritime_ai_platform", SERVING_MODE: "${SERVING_MODE:-stub}", ALLOWED_PROD_RESIDENCY: "${ALLOWED_PROD_RESIDENCY:-AE}", AI_MODELS_URL: http://ai-models:5505 }
     ports: ["5503:5503"]
+  # The model server. Fits the platform's tabular models on its own records with gradient-boosted trees, keeps every fit
+  # as a versioned artefact, reports each to ai-platform's registry, and serves an approved version to ai-platform only.
+  ai-models:
+    <<: *service
+    profiles: [ai]
+    build: { <<: *build, args: { SERVICE: services/ai-models, PORT: "5505" } }
+    image: maritime/ai-models:${IMAGE_TAG:-dev}
+    environment: { <<: *common-env, SERVICE_NAME: ai-models, PORT: "5505", DATABASE_URL: "${POSTGRES_PREFIX:-postgres://maritime:maritime@postgres:5432}/maritime_ai_models", AI_PLATFORM_URL: http://ai-platform:5503 }
+    ports: ["5505:5505"]
   # The tool gateway: the one path between the AI layer and the platform. Every upstream it calls is named by
   # the same service URLs the edge gateway uses; a hosted model is configured in Settings → AI, never here.
   ai-tool-gateway:
@@ -388,6 +397,7 @@ services:
       AI_AGENTS_URL: http://ai-agents:5502
       AI_PLATFORM_URL: http://ai-platform:5503
       AI_TOOL_GATEWAY_URL: http://ai-tool-gateway:5504
+      AI_MODELS_URL: http://ai-models:5505
     ports: ["5200:5200"]
     depends_on:
       identity-access:

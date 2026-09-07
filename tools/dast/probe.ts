@@ -530,6 +530,23 @@ async function main() {
     if (sources.map((s) => s.source).join(',') !== 'ais-lrit,lrit') return `the feeds answered are ${sources.map((s) => s.source).join(',') || 'none'}`;
     return null;
   });
+  await probe('a model is fitted again by AI governance only, and the model server\'s serving face and the registry\'s service face never answer a person', 'A01', 'high', async () => {
+    const agent = await login('agent@maritime.example');
+    const fit = await http('/ai-models/inspection-targeting/train', { method: 'POST', token: agent.token, body: JSON.stringify({ note: 'probe' }) });
+    if (fit.status !== 403) return `an external agent could fit a model (${fit.status})`;
+    const list = await http('/ai-models', { token: agent.token });
+    if (list.status !== 403) return `an external agent could read the model server (${list.status})`;
+    const admin = await login('admin@maritime.example');
+    // the serving contract is reachable only inside the cluster on the service token; through the front door it does not exist
+    const serve = await http('/ai-models/v1/models/inspection-targeting/infer', { method: 'POST', token: admin.token, headers: { 'x-service-token': 'development-service-token' }, body: JSON.stringify({ version: 2, features: {} }) });
+    if (serve.status !== 404) return `the model server's serving face answered through the gateway (${serve.status})`;
+    // the registry's service face takes a fit from the model server, never from a session — even an administrator's
+    const trained = await http('/ai-platform/internal/models/inspection-targeting/trained', { method: 'POST', token: admin.token, headers: { 'x-service-token': 'development-service-token' }, body: JSON.stringify({ version: 9, artifactRef: 'probe', metrics: { auc: 1 } }) });
+    if (trained.status !== 401) return `a session could report a fit to the registry (${trained.status})`;
+    const versions = await http('/ai-platform/models/inspection-targeting/versions', { token: admin.token });
+    if ((versions.body?.data ?? []).some((v: any) => v.version === 9)) return 'a probe version reached the registry';
+    return null;
+  });
   await probe('the federal security review is the security desk\'s to start, and a facility\'s history is not everyone\'s to read', 'A01', 'high', async () => {
     const admin = await login('admin@maritime.example');
     const all: any[] = (await http('/facilities/port-facilities?limit=100&sort=code', { token: admin.token })).body?.data ?? [];

@@ -8,7 +8,7 @@ import type { Tier } from './policy';
 /* The callers the platform ships with: the assistant, each agent, and the services that act for a person.
  * Every ceiling here is the agent's own latitude as the agentic runtime configures it — a supervised agent
  * proposes, an assisted one may act on the reversible, and nothing here may reach a hosted model but the
- * assistant. An administrator may narrow any of these at any time; a re-seed never widens what was narrowed. */
+ * assistant and the model platform's document reader. An administrator may narrow any of these at any time; a re-seed never widens what was narrowed. */
 export interface CallerSeed { callerId: string; label: string; kind: 'ASSISTANT' | 'AGENT' | 'SERVICE'; allowedTools: string[]; maxTier: Tier; hourlyQuota: number; dailyQuota: number; note: string }
 const mod = (...modules: string[]) => TOOLS.filter((t) => modules.includes(t.module) && t.tier === 'READ').map((t) => t.name);
 export const CALLERS: CallerSeed[] = [
@@ -22,6 +22,7 @@ export const CALLERS: CallerSeed[] = [
   { callerId: 'agent:a7_maritime_intelligence', label: 'National Maritime Intelligence Agent', kind: 'AGENT', allowedTools: mod('incidents', 'nmc', 'ships', 'inspect', 'ops'), maxTier: 'READ', hourlyQuota: 600, dailyQuota: 6000, note: 'Publishes the national picture from what it reads' },
   { callerId: 'agent:insights', label: 'Module insights', kind: 'AGENT', allowedTools: TOOLS.filter((t) => t.tier === 'READ').map((t) => t.name), maxTier: 'READ', hourlyQuota: 1200, dailyQuota: 12000, note: 'Reads each module\'s dashboard as the person looking at it' },
   { callerId: 'svc:ai-agents', label: 'Agentic runtime', kind: 'SERVICE', allowedTools: ['*'], maxTier: 'ACT', hourlyQuota: 600, dailyQuota: 6000, note: 'Carries a person\'s approval of an agent\'s conclusion through to the record, as that person' },
+  { callerId: 'svc:ai-platform', label: 'Model platform', kind: 'SERVICE', allowedTools: ['infer.complete'], maxTier: 'INFER', hourlyQuota: 300, dailyQuota: 3000, note: 'Refines what its in-country document reader could not read, through the hosted provider Settings → AI names; the image never leaves the platform' },
   { callerId: 'svc:workflow', label: 'Service Desk', kind: 'SERVICE', allowedTools: ['docs.search', 'services.application', 'facil.company', 'ships.vessel', 'crew.seafarer'], maxTier: 'READ', hourlyQuota: 600, dailyQuota: 6000, note: 'Reads a subject for a form, as the applicant' },
 ];
 

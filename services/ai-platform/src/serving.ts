@@ -22,11 +22,15 @@ export interface InferRequest {
   /** Named outputs an extraction or vision request wants back. */
   fields?: string[];
   subject?: string;
+  /** The caller's own session, for a pipeline that reads a document or a recording as that person. Never stored. */
+  userToken?: string;
 }
 export interface InferResult { output: Record<string, unknown>; confidence: number }
 
 export interface ServingProvider {
   readonly mode: 'stub' | 'live';
+  /** Where the answer comes from, for the record: the stub, the platform's model server, or a configured endpoint. */
+  readonly servedBy: string;
   infer(req: InferRequest, signal: AbortSignal): Promise<InferResult>;
 }
 
@@ -46,6 +50,7 @@ const numericOf = (features: Record<string, unknown>): number[] =>
  */
 export class StubProvider implements ServingProvider {
   readonly mode = 'stub' as const;
+  readonly servedBy = 'stub';
   async infer(req: InferRequest): Promise<InferResult> {
     const nums = numericOf(req.features);
     const base = unit(req.modelKey, req.version, req.features);
@@ -99,19 +104,27 @@ export class StubProvider implements ServingProvider {
   }
 }
 
-/** Calls a deployed model server over HTTP. The endpoint is configuration, never a value from a request. */
+/**
+ * Calls a model server over HTTP. The endpoint is configuration — the deployment's own address, or the platform's
+ * model server for an `ai-models://` deployment — never a value from a request; the credentials are the service's.
+ */
 export class HttpProvider implements ServingProvider {
   readonly mode = 'live' as const;
-  constructor(private readonly endpoint: string, private readonly token?: string, private readonly fetchImpl: typeof fetch = fetch) {}
+  readonly servedBy: string;
+  constructor(private readonly endpoint: string, private readonly token?: string, private readonly fetchImpl: typeof fetch = fetch, private readonly headers: Record<string, string> = {}, servedBy?: string) {
+    this.servedBy = servedBy ?? endpoint.replace(/^(https?:\/\/[^/]+).*$/i, '$1');
+  }
   async infer(req: InferRequest, signal: AbortSignal): Promise<InferResult> {
-    const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
+    const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json', ...this.headers };
     if (this.token) headers.authorization = `Bearer ${this.token}`;
     const res = await this.fetchImpl(`${this.endpoint.replace(/\/+$/, '')}/v1/models/${encodeURIComponent(req.modelKey)}/infer`, {
       method: 'POST', headers, signal,
       body: JSON.stringify({ version: req.version, task: req.task, features: req.features, fields: req.fields }),
     });
     if (!res.ok) throw new Error(`Model server answered ${res.status}`);
-    const body = (await res.json()) as { output?: Record<string, unknown>; confidence?: number };
+    // the platform's own model server answers inside the standard envelope; another server may answer bare
+    const raw = (await res.json()) as { data?: { output?: Record<string, unknown>; confidence?: number }; output?: Record<string, unknown>; confidence?: number };
+    const body = raw.data && typeof raw.data === 'object' ? raw.data : raw;
     return { output: body.output ?? {}, confidence: typeof body.confidence === 'number' ? body.confidence : 0 };
   }
 }

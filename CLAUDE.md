@@ -40,7 +40,7 @@ Eight domain services (`ships`, `seafarers`, `legislation`, `maritime-centre`, `
 `ports`, `facilities`, `revenue`) and ten platform services (`identity-access`, `mdm`,
 `workflow`, `rules`, `instruments`, `documents`, `notifications`, `audit-ledger`, `scheduler`,
 `integration-hub`) plus `reporting` (CQRS read models), `gateway`, and four AI services
-(`ai-tool-gateway`, `ai-agents`, `ai-assistant`, `ai-platform`). Each service owns its
+(`ai-tool-gateway`, `ai-agents`, `ai-assistant`, `ai-platform`, `ai-models`). Each service owns its
 PostgreSQL schema, publishes CloudEvents-style domain events through a transactional outbox to
 NATS JetStream, consumes through an idempotent inbox, exposes an OpenAPI contract generated from
 code, validates the identity service's tokens itself (Keycloak's when that mode is on), and

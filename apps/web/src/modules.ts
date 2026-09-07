@@ -17,6 +17,7 @@ import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
 import CorporateFareRoundedIcon from '@mui/icons-material/CorporateFareRounded';
 import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import HubRoundedIcon from '@mui/icons-material/HubRounded';
+import ModelTrainingRoundedIcon from '@mui/icons-material/ModelTrainingRounded';
 import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import AssessmentRoundedIcon from '@mui/icons-material/AssessmentRounded';
@@ -142,6 +143,7 @@ export const MODULES: ModuleDef[] = [
       { to: '/agents/escalations', label: 'Escalation Queue', icon: PendingActionsRoundedIcon, perm: 'agents.view' },
       { to: '/agents/assurance', label: 'Assurance', icon: VerifiedUserRoundedIcon, perm: 'agents.view' },
       { to: '/agents/gateway', label: 'Tool Gateway', icon: HubRoundedIcon, perm: 'agents.view' },
+      { to: '/agents/models', label: 'Models', icon: ModelTrainingRoundedIcon, perm: 'models.view' },
     ] }] },
   { key: 'platform', name: 'Platform Operations', short: 'Platform', color: '#1E7A6F', desc: 'Service health, infrastructure, event backlog, service levels and outage history', icon: MonitorHeartRoundedIcon, perm: 'platform.view', home: '/platform',
     nav: [{ header: 'Platform', items: [

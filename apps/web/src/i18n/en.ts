@@ -464,6 +464,27 @@ const en = {
     },
   },
 
+  models: {
+    title: 'Models', sub: 'Every model on the platform on both its faces: its versions, approvals and deployments in the registry, and its fits on the model server — what each was fitted on, and how well it did on rows it never saw',
+    reconcile: 'Report fits to the registry', reconciled: '{{reported}} of {{artefacts}} fits reported to the registry',
+    statRegistered: 'Models in the registry', statRegisteredSub: '{{n}} serving', statFitted: 'Fitted on the model server', statFittedSub: '{{n}} fits on record',
+    statCalls: 'Inferences, 30 days', statCallsSub: '{{pct}}% within the {{budget}} ms budget', statLatency: 'Latency p95', statLatencySub: 'p50 {{p50}} ms · model server {{server}}',
+    colModel: 'Model', colTask: 'Task', colServing: 'Serving', colServedBy: 'Served by', colLatestFit: 'Latest fit', colQuality: 'Quality', colRows: 'Rows', colLastFitted: 'Last fitted',
+    notServing: 'Not serving', byServer: 'The platform’s model server', byPipeline: 'The platform’s own pipeline', byEndpoint: 'A configured endpoint', noFit: 'No fit on the model server', empty: 'No models in the registry',
+    previewDataset: 'Read the dataset now', fitAgain: 'Fit again', trained: 'Fitted as v{{version}}: {{quality}}',
+    trainedDetail: 'Fitted as v{{version}} on {{rows}} rows in {{ms}} ms — {{quality}}.', registryOk: 'The registry holds it as v{{version}}, {{status}}.', registryFailed: 'The registry could not be told: {{error}}',
+    pipelineOnly: 'This model runs on the platform’s own pipeline; there is no fit on the model server to show.',
+    versions: 'Versions in the registry', versionsSub: 'A fit becomes a draft here; a person validates it and another approves it before it can be deployed',
+    colVersion: 'Version', colStatus: 'Status', colNote: 'Note', colBy: 'By', approvedBy: 'approved by {{name}}', deployments: 'Deployments',
+    fit: 'The fit', latestFitLine: 'v{{version}} on the {{set}} feature set: {{rows}} rows, {{heldOut}} held out to measure it, {{trees}} trees.',
+    targetingLine: '{{rate}}% of the boardings were worth making; boarding the same share by this score finds {{precision}}% worth making.',
+    regressionLine: 'R² {{r2}}; the waits vary by {{std}} {{unit}} around their mean.',
+    importance: 'What the fit found to matter', features: 'Features', datasetNow: 'The dataset as it stands', datasetLine: '{{rows}} rows on the {{set}} feature set · {{positives}} positive · label mean {{mean}}, spread {{std}}',
+    median: 'median', categories: 'categories', runs: 'Training runs', runsSub: 'Every fit executed on the model server, including the ones that were refused',
+    colStarted: 'Started', colParams: 'Parameters', colDuration: 'Took', colRegistry: 'Registry', registryVersion: 'v{{version}} in the registry', registryPending: 'Not yet reported', noRuns: 'No training run yet',
+    fitAgainTitle: 'Fit {{name}} again', fitAgainSub: 'The model is fitted on the records as they stand now ({{rows}} rows at the last read). The result becomes a new version, a draft in the registry until a person approves it.',
+    featureSet: 'Feature set', rounds: 'Rounds', depth: 'Depth', learningRate: 'Learning rate', note: 'Note', cancel: 'Cancel', run: 'Fit now',
+  },
   traffic: {
     analytics: {
       title: 'Traffic analytics', sub: 'Where the traffic was, which way it ran and how long ships spent in each published area — read from the fixes of the period',
