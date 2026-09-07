@@ -31,13 +31,29 @@ test.describe('port facilities — the federal security review', () => {
     await page.getByTestId('submit-review-confirm').click();
     await expect(page.getByTestId('review-status')).toContainText('Submitted');
     await expect(page.getByTestId('security-review')).toContainText('ICP-REV-');
-    // the outcome, asked of the authority — the recorded contract clears it
-    await page.getByTestId('check-review').click();
-    await expect(page.getByTestId('review-status')).toContainText('Cleared');
-    await expect(page.getByTestId('review-history').getByRole('row').filter({ hasText: 'ICP-REV-' }).first()).toContainText('Cleared');
+    // the answer names where it came from: the recorded contract, or — with the sandbox counterpart running
+    // (./run-local.sh sandbox icp) — the authority reached live, as SOAP over the network
+    const sandbox = !!process.env.E2E_ICP_SANDBOX;
+    await expect(page.getByTestId('review-status')).toContainText(sandbox ? 'From the authority' : 'Recorded contract');
+    // the outcome: the recorded contract clears at once when asked; the sandbox decides in its own time and pushes the
+    // decision to the platform, so it is either on the record already or there to be asked for
+    if (sandbox) {
+      await expect(async () => {
+        await page.reload();
+        await expect(page.getByTestId('security-review')).toBeVisible();
+        if (await page.getByTestId('check-review').isVisible()) await page.getByTestId('check-review').click();
+        await expect(page.getByTestId('review-status')).toContainText(/Cleared|Rejected/, { timeout: 2000 });
+      }).toPass({ timeout: 120_000, intervals: [4000] });
+    } else {
+      await page.getByTestId('check-review').click();
+      await expect(page.getByTestId('review-status')).toContainText('Cleared');
+    }
+    const rejected = (await page.getByTestId('review-status').innerText()).includes('Rejected');
+    const outcome = rejected ? 'REJECTED' : 'CLEARED'; const label = rejected ? 'Rejected' : 'Cleared';
+    await expect(page.getByTestId('review-history').getByRole('row').filter({ hasText: 'ICP-REV-' }).first()).toContainText(label);
     await expect(page.getByTestId('submit-review')).toBeVisible();
     // and the register shows the same standing
-    await page.goto('/port-facilities?review=CLEARED');
-    await expect(page.getByRole('row').filter({ hasText: facility.code }).first()).toContainText('Cleared');
+    await page.goto(`/port-facilities?review=${outcome}`);
+    await expect(page.getByRole('row').filter({ hasText: facility.code }).first()).toContainText(label);
   });
 });

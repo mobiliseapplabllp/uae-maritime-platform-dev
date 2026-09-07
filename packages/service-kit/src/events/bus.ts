@@ -62,8 +62,20 @@ export class NatsBus implements EventBus {
   }
   async subscribe(name: string, subjects: string[], handler: EventHandler): Promise<Subscription> {
     const durable = name.replace(/[^A-Za-z0-9_-]/g, '_');
-    try { await this.jsm.consumers.info(STREAM_NAME, durable); } catch {
-      await this.jsm.consumers.add(STREAM_NAME, { durable_name: durable, ack_policy: 'explicit' as never, deliver_policy: 'all' as never, filter_subjects: subjects, max_deliver: 20, ack_wait: 30 * 1e9 } as never);
+    const wanted = [...new Set(subjects)].sort();
+    let existing: string[] | null = null;
+    try {
+      const info = await this.jsm.consumers.info(STREAM_NAME, durable);
+      const cfg = info.config as { filter_subjects?: string[]; filter_subject?: string };
+      existing = [...new Set(cfg.filter_subjects ?? (cfg.filter_subject ? [cfg.filter_subject] : []))].sort();
+    } catch { existing = null; }
+    if (existing === null) {
+      await this.jsm.consumers.add(STREAM_NAME, { durable_name: durable, ack_policy: 'explicit' as never, deliver_policy: 'all' as never, filter_subjects: wanted, max_deliver: 20, ack_wait: 30 * 1e9 } as never);
+    } else if (existing.join('\n') !== wanted.join('\n')) {
+      // A durable consumer outlives the code that created it. When a service learns to listen to a new subject, the
+      // filter it left on the server must follow, or the new events would sit in the stream and never be delivered.
+      await this.jsm.consumers.update(STREAM_NAME, durable, { filter_subjects: wanted } as never);
+      this.log?.info({ consumer: durable, added: wanted.filter((s) => !existing!.includes(s)), removed: existing.filter((s) => !wanted.includes(s)) }, 'consumer filter brought up to date');
     }
     const consumer = await this.js.consumers.get(STREAM_NAME, durable);
     const messages = await consumer.consume({ max_messages: 50 });

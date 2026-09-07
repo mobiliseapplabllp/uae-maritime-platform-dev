@@ -7,6 +7,8 @@
 #   ./run-local.sh status     what is up and on which port
 #   ./run-local.sh update     pull the latest cloud work, rebuild, restart (the daily loop)
 #   ./run-local.sh reset      drop the databases and seed again from the shared world
+#   ./run-local.sh sandbox icp   start the ICP sandbox counterpart, hand it a signed inbound address and switch the adapter live
+#   ./run-local.sh sandbox stop  stop the counterparts and switch the adapters back to their recorded contracts
 #
 # Prerequisites: Node 22+, pnpm 10+, PostgreSQL 16 (role `maritime`, password `maritime`),
 # and a NATS server on the PATH. `infra/local/runtime.sh` starts PostgreSQL and NATS for you
@@ -34,6 +36,11 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '   \033[33m!\033[0m %s\n' "$*"; }
 die()  { printf '\n\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+# A token for the seeded administrator, for the commands that speak to the platform as an operator would.
+admin_token() {
+  local pw; pw=$(node -p "require('./packages/world/dist/index.js').DEMO_PASSWORD" 2>/dev/null) || return 1
+  curl -fs -X POST "http://127.0.0.1:$GATEWAY_PORT/api/auth/login" -H 'content-type: application/json' -d "{\"email\":\"admin@maritime.example\",\"password\":\"$pw\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).data.token'
+}
 
 # Every service that owns a database, and the database it owns.
 db_of() { case "$1" in
@@ -165,6 +172,7 @@ case "${1:-up}" in
     [ -f "$LOCAL/run/web.pid" ] && kill "$(cat "$LOCAL/run/web.pid")" 2>/dev/null
     kill_port "$WEB_PORT"; rm -f "$LOCAL/run/web.pid"
     bash infra/local/services.sh stop 2>&1 | sed 's/^/   /'
+    bash infra/local/counterparts.sh stop 2>&1 | sed 's/^/   /'
     bash infra/local/runtime.sh stop 2>&1 | sed 's/^/   /'
     ok "stopped" ;;
   update)
@@ -222,5 +230,41 @@ case "${1:-up}" in
     bash infra/local/services.sh stop >/dev/null 2>&1
     for s in $(ls services); do db=$(db_of "$s"); [ -n "$db" ] && dropdb -h "$PGHOST_" -p "$PGPORT_" -U "$PGUSER_" --if-exists "$db"; done
     create_databases; seed_all; start_services; report ;;
-  *) echo "usage: ./run-local.sh [up|start|stop|status|update|reset]" >&2; exit 2 ;;
+  sandbox)
+    # A counterpart that stands in for an authority with no public endpoint yet. The platform is spoken to as an
+    # administrator would: sign in, hand the counterpart a signed inbound address, point the adapter at it live.
+    API="http://127.0.0.1:$GATEWAY_PORT/api"
+    which="${2:-icp}"
+    if [ "$which" = "stop" ]; then
+      say "Stopping the counterparts and switching the adapters back to their recorded contracts"
+      bash infra/local/counterparts.sh stop 2>&1 | sed 's/^/   /'
+      TOKEN=$(admin_token) || die "could not sign in to switch the adapters back"
+      for a in $(ls tools/counterparts); do
+        curl -fs -X PUT "$API/integrations/$a" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"mode":"stub"}' >/dev/null && ok "$a answers from its recorded contract again" || warn "$a could not be switched back"
+      done
+      exit 0
+    fi
+    [ -f "tools/counterparts/$which/sandbox.mjs" ] || die "no sandbox for '$which' — the counterparts are: $(ls tools/counterparts | tr '\n' ' ')"
+    curl -fs "$API/../health" >/dev/null 2>&1 || curl -fs "http://127.0.0.1:$GATEWAY_PORT/health" >/dev/null 2>&1 || die "the platform is not running — ./run-local.sh start first"
+    say "Signing in as the administrator"
+    TOKEN=$(admin_token) || die "could not sign in as admin@maritime.example"
+    say "Handing the $which counterpart a signed inbound address"
+    ROTATED=$(curl -fs -X POST "$API/integrations/$which/inbound/rotate" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json') || die "could not rotate the inbound secret"
+    SECRET=$(node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).data.secret' <<<"$ROTATED")
+    INBOUND=$(node -pe 'JSON.parse(require("fs").readFileSync(0,"utf8")).data.url' <<<"$ROTATED")
+    case "$INBOUND" in http*) : ;; *) INBOUND="$API/integrations/inbound/$which" ;; esac
+    PORT_="${SANDBOX_PORT:-5710}"
+    mkdir -p "$LOCAL/counterparts"
+    umask 077
+    printf 'ICP_SANDBOX_PORT=%s\nICP_SANDBOX_DECISION_SECONDS=%s\nICP_SANDBOX_MIX=%s\nHUB_INBOUND_URL=%s\nHUB_INBOUND_SECRET=%s\n' "$PORT_" "${SANDBOX_DECISION_SECONDS:-30}" "${SANDBOX_MIX:-70,20,10}" "$INBOUND" "$SECRET" > "$LOCAL/counterparts/$which.env"
+    ok "secret kept in .local/counterparts/$which.env (mode 600), never printed"
+    bash infra/local/counterparts.sh stop "$which" >/dev/null 2>&1
+    bash infra/local/counterparts.sh start "$which" 2>&1 | sed 's/^/   /'
+    for _ in $(seq 1 20); do curl -fs "http://127.0.0.1:$PORT_/health" >/dev/null 2>&1 && break; sleep 0.5; done
+    curl -fs "http://127.0.0.1:$PORT_/health" >/dev/null 2>&1 || die "the sandbox did not come up — see .local/log/counterpart-$which.log"
+    say "Pointing the $which adapter at the sandbox, live"
+    curl -fs -X PUT "$API/integrations/$which" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d "{\"mode\":\"live\",\"baseUrl\":\"http://localhost:$PORT_\",\"auth\":{\"type\":\"none\"},\"inboundEnabled\":true}" >/dev/null || die "the adapter refused the sandbox address"
+    TEST=$(curl -fs -X POST "$API/integrations/$which/test" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json') && ok "$(node -pe 'const d=JSON.parse(require("fs").readFileSync(0,"utf8")).data; (d.ok?"connection test passed: ":"connection test failed: ")+d.detail' <<<"$TEST")"
+    printf '\n   The %s adapter now speaks SOAP over the network to the sandbox on :%s; a review submitted from a facility record\n   is answered with a reference at once, decided after %s s, and pushed back through the signed inbound address.\n   Switch back with ./run-local.sh sandbox stop\n\n' "$which" "$PORT_" "${SANDBOX_DECISION_SECONDS:-30}" ;;
+  *) echo "usage: ./run-local.sh [up|start|stop|status|update|reset|sandbox icp|sandbox stop]" >&2; exit 2 ;;
 esac

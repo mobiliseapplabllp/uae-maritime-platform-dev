@@ -8,6 +8,7 @@ import type { AdapterDefinition, AdapterOperation, CallOutcome, CallRequest } fr
 import { ROW_COLUMNS, loadAdapter, type AdapterRow } from './catalogue';
 import { loadFixture, materialise } from './stubs';
 import { AisStreamCollector, boxesOf, isStreamUrl, positionsAnswer, probeStream, type StreamStats } from './adapters/aisstream';
+import { parseSoapAnswer } from './soap';
 
 export interface TestOutcome { key: string; mode: 'stub' | 'live'; ok: boolean; httpStatus: number | null; durationMs: number; detail: string; target: string | null }
 /** The adapter whose live counterpart is a stream rather than a request: the hub keeps the connection and answers from its buffer. */
@@ -188,7 +189,9 @@ export class HubClient implements OnModuleInit {
     const res = await fetch(url, { method: op.method, headers, body, signal: AbortSignal.timeout(row.timeout_ms) });
     const text = await res.text();
     let parsed: unknown = text;
-    try { parsed = JSON.parse(text); } catch { /* a SOAP or plain-text answer is returned as given */ }
+    try { parsed = JSON.parse(text); } catch { /* a SOAP or plain-text answer is read below, or returned as given */ }
+    // a SOAP counterpart's envelope is read into the fields the caller expects, the same shape the recorded contract gives
+    if (def.protocol === 'soap' && typeof parsed === 'string') { const soap = parseSoapAnswer(parsed); if (soap !== null) parsed = soap; }
     return { status: res.status, body: parsed };
   }
 
