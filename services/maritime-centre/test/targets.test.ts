@@ -49,7 +49,7 @@ describe('targets — the classes and the flag, without a database', () => {
 
 describe('targets — the store', () => {
   it('upserts a batch, keeps a fact a later report leaves blank, thins the track, and prunes what has gone quiet', async () => {
-    const t0 = new Date('2026-09-06T06:00:00Z');
+    const t0 = new Date(Date.now() - 3_600_000); // an hour ago, so the prune window below never swallows the fixture as the days pass
     expect(await upsertTargets(pool, [target('470100001', 25.10, 55.10, { at: t0, destination: 'AEJEA', draught: 8.2, length: 180 }), target('470100002', 25.20, 55.20, { at: t0, shipType: 80 })])).toBe(2);
     expect(await upsertTargets(pool, [target('470100001', 25.11, 55.11, { at: new Date(t0.getTime() + 60_000), destination: '', draught: null, length: null, shipType: null })])).toBe(1);
     const row = (await pool.query('SELECT * FROM ais_targets WHERE mmsi = $1', ['470100001'])).rows[0];
